@@ -157,8 +157,11 @@ app.post('/commander', async (req, res) => {
 
 // Routes pour récupérer les commandes
 app.get('/commandes', verifyToken, async(req,res) =>{
-    const token = req.headers.authorization?.split(' ')[1];
-    console.log(token);
+    const admin = await Admin.findById(req.user.userId);
+    if (!admin) {
+        return res.status(401).json({ message: "Admin non trouvé" });
+    }
+    console.log(admin);
     if (!token) {
         return res.status(401).json({ message: 'Token manquant' });
     }
