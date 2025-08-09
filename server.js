@@ -157,6 +157,11 @@ app.post('/commander', async (req, res) => {
 
 // Routes pour récupérer les commandes
 app.get('/commandes', async(req,res) =>{
+    const token = req.headers.authorization?.split(' ')[1];
+    console.log(token);
+    if (!token) {
+        return res.status(401).json({ message: 'Token manquant' });
+    }
     try {
         const commandes = await Commande.find().sort({createdAt: 1});
         res.json(commandes);
