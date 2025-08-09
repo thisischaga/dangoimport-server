@@ -28,11 +28,11 @@ const createDefaultAdmin = async()=>{
     const existingAdmin = await Admin.findOne({adminName: 'CHAGA@228'});
 
     if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash('passwordChaga@2025', 10);
+        const hashedPassword = await bcrypt.hash('psswordChaga@2025', 10);
         const newAdmin = new Admin({
             adminFirstname: 'Chaga', 
             adminSurname: 'Crédo', 
-            adminName: 'CHAGA@228', 
+            adminName: 'CHAGA@22', 
             adminPassword: hashedPassword,
             role: 'dev'
         });
