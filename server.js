@@ -162,9 +162,6 @@ app.get('/commandes', verifyToken, async(req,res) =>{
         return res.status(401).json({ message: "Admin non trouvé" });
     }
     console.log(admin);
-    if (!token) {
-        return res.status(401).json({ message: 'Token manquant' });
-    }
     try {
         const commandes = await Commande.find().sort({createdAt: 1});
         res.json(commandes);
