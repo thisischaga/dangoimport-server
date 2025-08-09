@@ -28,11 +28,11 @@ const createDefaultAdmin = async()=>{
     const existingAdmin = await Admin.findOne({adminName: 'CHAGA@228'});
 
     if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash('psswordChaga@2025', 10);
+        const hashedPassword = await bcrypt.hash('passwordChaga@2025', 10);
         const newAdmin = new Admin({
             adminFirstname: 'Chaga', 
             adminSurname: 'Crédo', 
-            adminName: 'CHAGA@22', 
+            adminName: 'CHAGA@228', 
             adminPassword: hashedPassword,
             role: 'dev'
         });
@@ -156,7 +156,7 @@ app.post('/commander', async (req, res) => {
 });
 
 // Routes pour récupérer les commandes
-app.get('/commandes', async(req,res) =>{
+app.get('/commandes', verifyToken, async(req,res) =>{
     const token = req.headers.authorization?.split(' ')[1];
     console.log(token);
     if (!token) {
