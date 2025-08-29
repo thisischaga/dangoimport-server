@@ -18,7 +18,7 @@ const app = express ();
 const port = 8000;
 
 app.use(cors({
-    origin: 'https://dango-import.vercel.app',
+    origin: 'https://www.dangoimport.com',
     credentials: true,
 }))
 app.use(express.json({limit: '125mb'}));
