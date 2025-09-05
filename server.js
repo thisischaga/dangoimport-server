@@ -161,13 +161,14 @@ function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Configure le transporteur (SMTP Gmail ou autre)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL,       
-    pass: process.env.EMAIL_PASS,
-  },
+    host: 'smtp.hostinger.com',
+    port: 465,
+    secure: true, 
+    auth: {
+        user: process.env.EMAIL,
+        pass: process.env.EMAIL_PASS,
+    }
 });
 
 // Route pour envoyer l'OTP
@@ -182,6 +183,7 @@ app.post('/api/send-otp', (req, res) => {
     to:userEmail,
     subject: 'Confirmer votre adresse email',
     text: `Votre code OTP est : ${otp}`,
+    
   };
 
   transporter.sendMail(mailOptions, (error, info) => {
