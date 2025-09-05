@@ -127,11 +127,11 @@ app.get('/admin_data', verifyToken, async (req, res) => {
 });
 // Route pour commander
 app.post('/commander', async (req, res) => {
-  const { userName, userEmail, productDescription, productQuantity, picture, selectedCountry, status} = req.body;
+  const { userName, userEmail, categorie, productQuantity, picture, selectedCountry, status} = req.body;
   const date = new Date();
 
   // Validation des champs requis
-  if (!userEmail || !userName || !productDescription || !productQuantity || !picture || !selectedCountry || !status) {
+  if (!userEmail || !userName || !categorie || !productQuantity || !picture || !selectedCountry || !status) {
     return res.status(400).json({ message: "Champs manquants. Veuillez remplir tous les champs obligatoires." });
   }
 
@@ -139,7 +139,7 @@ app.post('/commander', async (req, res) => {
     const newCommande = new Commande({
         userName,
         userEmail,
-        productDescription,
+        categorie,
         productQuantity,
         picture,
         selectedCountry,
@@ -179,7 +179,7 @@ app.post('/api/send-otp', (req, res) => {
 
   otpStore.set(userEmail, { otp, expiration });
   const mailOptions = {
-    from: process.env.EMAIL,
+    from: 'Dango Import <'+process.env.EMAIL+'>',
     to:userEmail,
     subject: 'Confirmer votre adresse email',
     text: `Votre code OTP est : ${otp}`,
