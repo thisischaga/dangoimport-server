@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -153,6 +154,64 @@ app.post('/commander', async (req, res) => {
     console.error("Erreur:", error);
     res.status(500).json({ message: "Erreur interne du serveur" });
   }
+});
+const otpStore = new Map();
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Configure le transporteur (SMTP Gmail ou autre)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL,       
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// Route pour envoyer l'OTP
+app.post('/api/send-otp', (req, res) => {
+  const { userEmail } = req.body;
+  const otp = generateOTP();
+  const expiration = Date.now() + 5 * 60 * 1000;
+
+  otpStore.set(userEmail, { otp, expiration });
+  const mailOptions = {
+    from: process.env.EMAIL,
+    to:userEmail,
+    subject: 'Confirmer votre adresse email',
+    text: `Votre code OTP est : ${otp}`,
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.log(error);
+      return res.status(500).json({ message: 'Erreur envoi email' });
+    } else{
+        res.status(200).json({message: 'otp envoyé'});
+    }
+  });
+});
+
+// Route pour vérifier l'OTP
+app.post('/api/verify-otp', (req, res) => {
+  const { userEmail, otp } = req.body;
+  const record = otpStore.get(userEmail);
+
+  if (!record) return res.status(400).json({ message: 'Aucun OTP trouvé' });
+
+  if (Date.now() > record.expiration) {
+    otpStore.delete(userEmail);
+    return res.status(400).json({ message: 'OTP expiré' });
+  }
+
+  if (record.otp !== otp) {
+    return res.status(400).json({ message: 'OTP invalide' });
+  }
+
+  otpStore.delete(userEmail); 
+  return res.json({ message: 'OTP vérifié avec succès !' });
 });
 
 // Routes pour récupérer les commandes
