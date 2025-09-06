@@ -11,7 +11,7 @@ const verifyToken = require('./Middlewares/verifyTokens');
 const Commande = require('./Models/Commande');
 const Admin = require('./Models/Admin');
 
-mongoose.set('bufferCommands', false);
+//mongoose.set('bufferCommands', false);
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -23,7 +23,7 @@ app.use(cors({
 app.use(express.json({ limit: '125mb' }));
 
 //  Fonction d'admin par défaut
-const createDefaultAdmin = async () => {
+/*const createDefaultAdmin = async () => {
   const existingAdmin = await Admin.findOne({ adminName: 'CHAGA@228' });
 
   if (!existingAdmin) {
@@ -39,7 +39,7 @@ const createDefaultAdmin = async () => {
     console.log('Admin par défaut créé');
   }
 };
-
+*/
 // Fonction principale de lancement
 const startServer = async () => {
   try {
