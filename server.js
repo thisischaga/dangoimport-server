@@ -51,9 +51,8 @@ app.get('/', (req, res) => {
 //  Point de départ du serveur
 const startServer = async () => {
   try {
-    await connectDB(); // Connexion MongoDB
-    await createDefaultAdmin(); // Création admin par défaut
-
+    connectDB(); 
+    //await createDefaultAdmin(); 
     // Ajouter un admin
     app.post('/add_admin', async (req, res) => {
       const { adminFirstname, adminSurname, adminName, adminPassword, role } = req.body;
