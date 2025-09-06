@@ -13,6 +13,8 @@ const Admin = require('./Models/Admin');
 //const authRoutes = require ('./routes/authRoutes');
 
 require('dotenv').config();
+mongoose.set('bufferCommands', false);
+
 connectDB();
 
 const app = express ();
@@ -199,6 +201,7 @@ app.post('/api/send-otp', (req, res) => {
 // Route pour vérifier l'OTP
 app.post('/api/verify-otp', (req, res) => {
   const { userEmail, otp } = req.body;
+  console.log(userEmail, otp);
   const record = otpStore.get(userEmail);
 
   if (!record) return res.status(400).json({ message: 'Aucun OTP trouvé' });
