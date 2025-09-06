@@ -46,7 +46,7 @@ const startServer = async () => {
     await connectDB();
     console.log('✅ Connecté à MongoDB');
 
-    await createDefaultAdmin();
+    //await createDefaultAdmin();
 
     //ROUTE POUR L'AJOUTER UN ADMIN
     app.post('/add_admin', async (req, res) => {
