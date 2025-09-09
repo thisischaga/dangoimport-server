@@ -7,12 +7,8 @@ const userSchema = new mongoose.Schema({
       type: String,
       required: true,
   },
-    userEmail: {
-      type: String,
-      required: true,
-    },
-    categorie: {
-      type: String,
+    userNumber: {
+      type: Number,
       required: true,
     },
     productQuantity: {
@@ -23,7 +19,7 @@ const userSchema = new mongoose.Schema({
       type: String,
       require:true,
     },
-    productDescription: {
+    userPref: {
       type: String,
       require:true,
     },
@@ -41,4 +37,4 @@ const userSchema = new mongoose.Schema({
     }
 });
   
-module.exports = mongoose.model('Commande', userSchema);
+module.exports = mongoose.model('Achat', userSchema);

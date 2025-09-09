@@ -10,9 +10,11 @@ const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
 const Commande = require('./Models/Commande');
 const Admin = require('./Models/Admin');
+const Achat = require('./Models/Achat');
 
 const app = express();
 const port = process.env.PORT || 8000;
+app.use('/images', express.static('public/images'));
 
 // Middlewares
 app.use(cors({
@@ -131,13 +133,41 @@ const startServer = async () => {
         res.status(500).json({ message: "Erreur interne du serveur" });
       }
     });
-
+    const productOne = {
+        id: 1,
+        productImg: 'https://dangoimport-server.onrender.com/images/product1.png',
+        price: 12000,
+        name: 'Gaecrolft',
+        description: 'GAEGRLOF – Design Urbain & Confort Moderne. Affirme ton style avec ces sneakers GAEGRLOF au look audacieux ! Dotées d’une semelle épaisse et ergonomique, elles assurent un confort optimal tout au long de la journée. Leur design bicolore noir et blanc apporte une touche tendance et urbaine, parfaite pour les tenues streetwear. Le laçage épais et la finition soignée en font une paire à la fois stylée et résistante, idéale pour affronter la ville avec assurance.'
+    };
+    const productTwo = {
+        id: 2,
+        productImg: 'https://dangoimport-server.onrender.com/images/product2.png',
+        price: 12000,
+        name: 'Gaecrolft',
+        description: 'GAEGRLOF – Design Urbain & Confort Moderne. Affirme ton style avec ces sneakers GAEGRLOF au look audacieux ! Dotées d’une semelle épaisse et ergonomique, elles assurent un confort optimal tout au long de la journée. Leur design bicolore noir et blanc apporte une touche tendance et urbaine, parfaite pour les tenues streetwear. Le laçage épais et la finition soignée en font une paire à la fois stylée et résistante, idéale pour affronter la ville avec assurance.'
+    };
+    const productThree = {
+        id: 3,
+        productImg: 'https://dangoimport-server.onrender.com/images/product3.png',
+        price: 12000,
+        name: 'GLECRLOF',
+        description: 'Sneakers GLECRLOF Urban Rope . Ces baskets au design audacieux allient confort et originalité. Dotées d’une semelle épaisse pour un meilleur amorti, elles se distinguent par leurs lacets en corde surdimensionnés et un mélange de matières modernes : cuir synthétique blanc et tissu kaki respirant. Leur style streetwear chic s’adresse aux amateurs de mode urbaine à la recherche d’un look unique.'
+    };
+    const products = [
+        productOne,
+        productTwo,
+        productThree
+    ];
+    app.get('/api/products', (req, res) => {
+      res.json(products);
+    });
     // Passer une commande
     app.post('/commander', async (req, res) => {
-      const { userName, userEmail, categorie, productQuantity, picture, selectedCountry, status } = req.body;
+      const { userName, userEmail, categorie, productQuantity, picture, productDescription, selectedCountry, status } = req.body;
       const date = new Date();
 
-      if (!userEmail || !userName || !categorie || !productQuantity || !picture || !selectedCountry || !status) {
+      if (!userEmail || !userName || !categorie || !productQuantity || !picture || !productDescription || !selectedCountry || !status) {
         return res.status(400).json({ message: "Champs manquants." });
       }
 
@@ -148,15 +178,50 @@ const startServer = async () => {
           categorie,
           productQuantity,
           picture,
+          productDescription,
           selectedCountry,
           status,
           date,
         });
 
         await newCommande.save();
-        res.status(201).json({ message: "Commande envoyée !" });
+        res.status(201).json({ message: "Nous avons reçu votre commande, nous vous contacterons !" });
       } catch (error) {
         console.error("Erreur /commander :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+    // Acheter
+    app.post('/acheter', async (req, res) => {
+      const { userName,
+            userNumber,
+            productQuantity,
+            picture,
+            userPref,
+            selectedCountry,
+            status, } = req.body;
+      const date = new Date();
+
+      if (!userNumber || !userName || !productQuantity || !picture || !userPref || !selectedCountry || !status) {
+        return res.status(400).json({ message: "Champs manquants." });
+      }
+
+      try {
+        const newAchat = new Achat({
+            userName,
+            userNumber,
+            productQuantity,
+            picture: image,
+            userPref,
+            selectedCountry,
+            status,
+            date,
+        });
+
+        await newAchat.save();
+        res.status(201).json({ message: "Nous avons reçu votre commande, nous vous contacterons !" });
+      } catch (error) {
+        console.error("Erreur /achater :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -184,6 +249,14 @@ const startServer = async () => {
       const expiration = Date.now() + 5 * 60 * 1000;
 
       otpStore.set(userEmail, { otp, expiration });
+      /*client.messages
+        .create({
+          body: Votre code OTP est : ${otp},
+          from: '+TON_NUM_TWILIO',
+          to: phone
+        })
+        .then(() => res.send({ success: true }))
+        .catch(err => res.status(500).send({ error: err.message }));*/
 
       const mailOptions = {
         from: `Dango Import <${process.env.EMAIL}>`,
@@ -214,7 +287,10 @@ const startServer = async () => {
       if (record.otp !== otp) {
         return res.status(400).json({ message: 'OTP invalide' });
       }
-
+      /*if (otpStore[phone] === otp) {
+        delete otpStore[phone];
+        return res.status(200).json({ message: 'OTP vérifié avec succès' });
+      }*/
       otpStore.delete(userEmail);
       return res.status(200).json({ message: 'OTP vérifié avec succès' });
     });
