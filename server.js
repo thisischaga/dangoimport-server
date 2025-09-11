@@ -4,6 +4,7 @@ const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const africastalking = require('africastalking');
 require('dotenv').config();
 
 const connectDB = require('./Congfig/db');
