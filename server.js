@@ -210,11 +210,12 @@ const startServer = async () => {
             productQuantity,
             picture,
             userPref,
+            userEmail,
             selectedCountry,
             status, } = req.body;
       const date = new Date();
 
-      if (!userNumber || !userName || !productQuantity || !picture || !userPref || !selectedCountry || !status) {
+      if (!userNumber || !userName || !userEmail || !productQuantity || !picture || !userPref || !selectedCountry || !status) {
         return res.status(400).json({ message: "Champs manquants." });
       }
 
@@ -226,6 +227,7 @@ const startServer = async () => {
             userPref,
             selectedCountry,
             picture,
+            userEmail,
             status,
             date,
         });
@@ -333,7 +335,7 @@ const startServer = async () => {
       return res.status(200).json({ message: 'OTP vérifié avec succès' });
     });
 
-    // OTP BY SMS
+
     
     // Récupérer toutes les commandes
     app.get('/commandes', verifyToken, async (req, res) => {
