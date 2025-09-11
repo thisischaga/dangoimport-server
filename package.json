@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "africastalking": "^0.7.6",
     "bcryptjs": "^3.0.2",
     "bull": "^4.16.5",
     "cloudinary": "^2.5.1",

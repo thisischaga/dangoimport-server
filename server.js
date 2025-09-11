@@ -16,18 +16,25 @@ const app = express();
 const port = process.env.PORT || 8000;
 app.use('/images', express.static('public/images'));
 
-// Middlewares 
+
 app.use(cors({
   origin: ['http://localhost:3000', 'https://www.dangoimport.com'],
   credentials: true,
 }));
-//app.use(cors());
+
 app.use(express.json({ limit: '125mb' }));
 
-// Route de test
-app.get('/', (req, res) => {
-  res.send('Serveur Dango Import fonctionne !');
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+const otpStoreBySMS = new Map();
+
+
+const AT = africastalking({
+  username: process.env.AFRICASTALKING_USERNAME,
+  apiKey: process.env.AFRICASTALKING_API_KEY,
 });
+const sms = AT.SMS;
 
 // Création d'un admin par défaut si inexistant
 /*const createDefaultAdmin = async () => {
@@ -166,7 +173,6 @@ const startServer = async () => {
         console.log(products);
         res.json(products);
 
-        console.log(datas);
     });
     // Passer une commande
     app.post('/commander', async (req, res) => {
@@ -231,13 +237,51 @@ const startServer = async () => {
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
+    // SMS OTP 
+    app.post('/send-smsotp', async (req, res) => {
+      const { userNumber } = req.body;
+
+      if (!userNumber) return res.status(400).json({ message: 'Numéro de téléphone requis' });
+
+      const otp = generateOTP();
+      const expiration = Date.now() + 5 * 60 * 1000;
+
+      otpStore.set(userNumber, { otp, expiration });
+
+      try {
+        await sms.send({
+          to: userNumber,
+          message: `Votre code OTP est : ${otp}`,
+          from: 'Dang Import',
+        });
+
+        res.status(200).json({ message: 'OTP envoyé avec succès' });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Erreur lors de l’envoi du SMS' });
+      }
+    });
+
+    // --- ROUTE : Vérification OTP ---
+    app.post('/verify-smsotp', (req, res) => {
+      const { userNumber, otp } = req.body;
+      const record = otpStoreBySMS.get(phone);
+
+      if (!record) return res.status(400).json({ message: 'OTP non trouvé' });
+
+      if (Date.now() > record.expiration) {
+        otpStoreBySMS.delete(phone);
+        return res.status(400).json({ message: 'OTP expiré' });
+      }
+
+      if (record.otp !== otp) return res.status(400).json({ message: 'OTP invalide' });
+
+      otpStoreBySMS.delete(phone);
+      res.status(200).json({ message: 'OTP vérifié avec succès' });
+    });
 
     // OTP
     const otpStore = new Map();
-
-    function generateOTP() {
-      return Math.floor(100000 + Math.random() * 900000).toString();
-    }
 
     const transporter = nodemailer.createTransport({
       host: 'smtp.hostinger.com',
@@ -260,7 +304,7 @@ const startServer = async () => {
         from: `Dango Import <${process.env.EMAIL}>`,
         to: userEmail,
         subject: 'Confirmez votre adresse email',
-        text: `Votre code OTP est : ${otp}`,
+        text: `Votre code OTP est : ${otp} ce code est valide pendant 5 minutes.`,
       };
 
       transporter.sendMail(mailOptions, (error, info) => {
@@ -289,6 +333,8 @@ const startServer = async () => {
       return res.status(200).json({ message: 'OTP vérifié avec succès' });
     });
 
+    // OTP BY SMS
+    
     // Récupérer toutes les commandes
     app.get('/commandes', verifyToken, async (req, res) => {
       try {
