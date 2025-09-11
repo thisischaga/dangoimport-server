@@ -16,11 +16,12 @@ const app = express();
 const port = process.env.PORT || 8000;
 app.use('/images', express.static('public/images'));
 
-// Middlewares
-app.use(cors({
-  origin: 'https://www.dangoimport.com',
+// Middlewares https://www.dangoimport.com
+/*app.use(cors({
+  origin: 'localhost:3000',
   credentials: true,
-}));
+}));*/
+app.use(cors());
 app.use(express.json({ limit: '125mb' }));
 
 // Route de test
@@ -289,6 +290,7 @@ const startServer = async () => {
       }
       /*if (otpStore[phone] === otp) {
         delete otpStore[phone];
+        
         return res.status(200).json({ message: 'OTP vérifié avec succès' });
       }*/
       otpStore.delete(userEmail);
