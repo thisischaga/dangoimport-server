@@ -16,12 +16,12 @@ const app = express();
 const port = process.env.PORT || 8000;
 app.use('/images', express.static('public/images'));
 
-// Middlewares https://www.dangoimport.com
-/*app.use(cors({
-  origin: 'localhost:3000',
+// Middlewares 
+app.use(cors({
+  origin: 'https://www.dangoimport.com',
   credentials: true,
-}));*/
-app.use(cors());
+}));
+//app.use(cors());
 app.use(express.json({ limit: '125mb' }));
 
 // Route de test
