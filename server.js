@@ -171,7 +171,6 @@ const startServer = async () => {
             productTwo,
             productThree
         ];
-        console.log(products);
         res.json(products);
 
     });
@@ -241,7 +240,7 @@ const startServer = async () => {
     // SMS OTP 
     app.post('/send-smsotp', async (req, res) => {
       const { userNumber } = req.body;
-
+      console.log(userNumber);
       if (!userNumber) return res.status(400).json({ message: 'Numéro de téléphone requis' });
 
       const otp = generateOTP();
