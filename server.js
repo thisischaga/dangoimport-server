@@ -168,8 +168,8 @@ const startServer = async () => {
         };
         const products = [
             //productOne,
-            //productTwo,
-            productThree
+            productTwo,
+            //productThree
         ];
         res.json(products);
 
