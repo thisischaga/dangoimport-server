@@ -352,7 +352,21 @@ const startServer = async () => {
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
+    // Récupérer toutes les achats
+    app.get('/achats', verifyToken, async (req, res) => {
+      try {
+        const admin = await Admin.findById(req.user.userId);
+        if (!admin) {
+          return res.status(401).json({ message: "Admin non trouvé" });
+        }
 
+        const achats = await Achat.find().sort({ createdAt: 1 });
+        res.json(achats);
+      } catch (error) {
+        console.error("Erreur /achats :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
     // Modifier le statut d’une commande
     app.put('/status', async (req, res) => {
       const { orderId, status } = req.body;
