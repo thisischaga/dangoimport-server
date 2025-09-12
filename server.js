@@ -167,8 +167,8 @@ const startServer = async () => {
             description: 'Sneakers GLECRLOF Urban Rope . Ces baskets au design audacieux allient confort et originalité. Dotées d’une semelle épaisse pour un meilleur amorti, elles se distinguent par leurs lacets en corde surdimensionnés et un mélange de matières modernes : cuir synthétique blanc et tissu kaki respirant. Leur style streetwear chic s’adresse aux amateurs de mode urbaine à la recherche d’un look unique.'
         };
         const products = [
-            productOne,
-            productTwo,
+            //productOne,
+            //productTwo,
             productThree
         ];
         res.json(products);
@@ -368,7 +368,7 @@ const startServer = async () => {
       }
     });
     // Modifier le statut d’une commande
-    app.put('/status', async (req, res) => {
+    app.put('/devis/status', async (req, res) => {
       const { orderId, status } = req.body;
       try {
         let newStatus = 'En attente';
@@ -382,6 +382,21 @@ const startServer = async () => {
         res.status(500).json({ message: "Erreur mise à jour statut" });
       }
     });
+    app.put('/achat/status', async (req, res) => {
+      const { orderId, status } = req.body;
+      try {
+        let newStatus = 'En attente';
+        if (status === 'En attente') newStatus = 'Validée';
+        else if (status === 'Validée') newStatus = 'Achevée';
+
+        await Achat.findByIdAndUpdate(orderId, { status: newStatus });
+        res.status(200).json({ message: `Statut mis à jour: ${newStatus}` });
+      } catch (error) {
+        console.error("Erreur /status :", error);
+        res.status(500).json({ message: "Erreur mise à jour statut" });
+      }
+    });
+
 
     // Lancer le serveur
     app.listen(port, () => {
