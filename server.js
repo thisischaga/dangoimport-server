@@ -369,31 +369,53 @@ const startServer = async () => {
     });
     // Modifier le statut d’une commande
     app.put('/devis/status', async (req, res) => {
-      const { orderId, status } = req.body;
       try {
-        let newStatus = 'En attente';
-        if (status === 'En attente') newStatus = 'Validée';
-        else if (status === 'Validée') newStatus = 'Achevée';
+        const { orderId, status } = req.body;
 
-        await Commande.findByIdAndUpdate(orderId, { status: newStatus });
-        res.status(200).json({ message: `Statut mis à jour: ${newStatus}` });
-      } catch (error) {
-        console.error("Erreur /status :", error);
-        res.status(500).json({ message: "Erreur mise à jour statut" });
+        let nextStatus = status;
+        if (status === "En attente") nextStatus = "Validée";
+        else if (status === "Validée") nextStatus = "Achevée";
+        else if (status === "Achevée") nextStatus = "En attente"; 
+
+        const updatedCommande = await Commande.findByIdAndUpdate(
+          orderId,
+          { status: nextStatus },
+          { new: true }
+        );
+
+        if (!updatedCommande) {
+          return res.status(404).json({ message: "Commande introuvable" });
+        }
+
+        res.json(updatedCommande);
+      } catch (err) {
+        console.error("Erreur maj commande:", err);
+        res.status(500).json({ message: "Erreur serveur" });
       }
     });
     app.put('/achat/status', async (req, res) => {
-      const { orderId, status } = req.body;
       try {
-        let newStatus = 'En attente';
-        if (status === 'En attente') newStatus = 'Validée';
-        else if (status === 'Validée') newStatus = 'Achevée';
+        const { orderId, status } = req.body;
 
-        await Achat.findByIdAndUpdate(orderId, { status: newStatus });
-        res.status(200).json({ message: `Statut mis à jour: ${newStatus}` });
-      } catch (error) {
-        console.error("Erreur /status :", error);
-        res.status(500).json({ message: "Erreur mise à jour statut" });
+        let nextStatus = status;
+        if (status === "En attente") nextStatus = "Validée";
+        else if (status === "Validée") nextStatus = "Achevée";
+        else if (status === "Achevée") nextStatus = "En attente"; 
+
+        const updatedAchat = await Achat.findByIdAndUpdate(
+          orderId,
+          { status: nextStatus },
+          { new: true }
+        );
+
+        if (!updatedAchat) {
+          return res.status(404).json({ message: "Achat introuvable" });
+        }
+
+        res.json(updatedAchat);
+      } catch (err) {
+        console.error("Erreur maj achat:", err);
+        res.status(500).json({ message: "Erreur serveur" });
       }
     });
 
