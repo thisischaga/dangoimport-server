@@ -147,27 +147,27 @@ const startServer = async () => {
     app.get('/api/products', (req, res) => {
       const productOne = {
             id: 1,
-            productImg: 'https://dangoimport-server.onrender.com/images/product1.png',
-            price: 12000,
-            name: 'Gaecrolft',
-            description: 'GAEGRLOF – Design Urbain & Confort Moderne. Affirme ton style avec ces sneakers GAEGRLOF au look audacieux ! Dotées d’une semelle épaisse et ergonomique, elles assurent un confort optimal tout au long de la journée. Leur design bicolore noir et blanc apporte une touche tendance et urbaine, parfaite pour les tenues streetwear. Le laçage épais et la finition soignée en font une paire à la fois stylée et résistante, idéale pour affronter la ville avec assurance.'
+            productImg: 'https://dangoimport-server.onrender.com/images/montre1.png',
+            price: '13 000',
+            name: 'G-Shock',
+            description: "Les montres G-Shock sont des montres robustes et stylées, conçues pour résister aux chocs, à l’eau et aux conditions extrêmes tout en offrant un design moderne et sportif. Elles sont disponibles en toutes couleurs et aux prix forfaitaires de 13000f"
         };
         const productTwo = {
             id: 2,
             productImg: 'https://dangoimport-server.onrender.com/images/product2.png',
-            price: 12000,
+            price: '12 000',
             name: 'Gaecrolft',
             description: 'GAEGRLOF – Design Urbain & Confort Moderne. Affirme ton style avec ces sneakers GAEGRLOF au look audacieux ! Dotées d’une semelle épaisse et ergonomique, elles assurent un confort optimal tout au long de la journée. Leur design bicolore noir et blanc apporte une touche tendance et urbaine, parfaite pour les tenues streetwear. Le laçage épais et la finition soignée en font une paire à la fois stylée et résistante, idéale pour affronter la ville avec assurance.'
         };
         const productThree = {
             id: 3,
-            productImg: 'https://dangoimport-server.onrender.com/images/product3.png',
-            price: 12000,
-            name: 'GLECRLOF',
-            description: 'Sneakers GLECRLOF Urban Rope . Ces baskets au design audacieux allient confort et originalité. Dotées d’une semelle épaisse pour un meilleur amorti, elles se distinguent par leurs lacets en corde surdimensionnés et un mélange de matières modernes : cuir synthétique blanc et tissu kaki respirant. Leur style streetwear chic s’adresse aux amateurs de mode urbaine à la recherche d’un look unique.'
+            productImg: 'https://dangoimport-server.onrender.com/images/montre2.png',
+            price: '17 000',
+            name: 'Poedagar',
+            description: "La montre Poedagar est un accessoire élégant et robuste conçu pour ceux qui recherchent un style luxueux à prix abordable. Avec son boîtier en acier inoxydable et son verre minéral résistant aux rayures, elle s’adapte aussi bien aux environnements professionnels qu’aux sorties décontractées. Son mouvement à quartz (ou automatique selon le modèle) assure une précision fiable au quotidien. Dotée d’un bracelet en cuir ou en métal, elle offre un confort optimal et un look soigné. Son affichage analogique, parfois accompagné d’un indicateur de date ou de jour, la rend pratique et esthétique. Enfin, grâce à son étanchéité 3ATM, elle résiste aux éclaboussures, mais il est préférable d’éviter l’immersion."
         };
         const products = [
-            //productOne,
+            productOne,
             productTwo,
             //productThree
         ];
