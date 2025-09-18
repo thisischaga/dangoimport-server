@@ -166,6 +166,20 @@ const startServer = async () => {
             name: 'Poedagar',
             description: "La montre Poedagar est un accessoire élégant et robuste conçu pour ceux qui recherchent un style luxueux à prix abordable. Avec son boîtier en acier inoxydable et son verre minéral résistant aux rayures, elle s’adapte aussi bien aux environnements professionnels qu’aux sorties décontractées. Son mouvement à quartz (ou automatique selon le modèle) assure une précision fiable au quotidien. Dotée d’un bracelet en cuir ou en métal, elle offre un confort optimal et un look soigné. Son affichage analogique, parfois accompagné d’un indicateur de date ou de jour, la rend pratique et esthétique. Enfin, grâce à son étanchéité 3ATM, elle résiste aux éclaboussures, mais il est préférable d’éviter l’immersion."
         };
+        const productFour = {
+            id: 4,
+            productImg: 'https://dangoimport-server.onrender.com/images/sac1.png',
+            price: '3 000',
+            name: 'Sac à nattes',
+            description: "Sac pour toute genre d'usage durable, pratique, jolie, tout pour votre confort . Vous permet d'être élégant lors de vos petites sorties ou lors d'un voyage. Vous disposez d'un large choix de couleurs et de motifs en plus des différents formats petit sac pour transporter vos affaires : 500f 700f 1000f 2000f sac en valise 3000f 5000f sac en forme de panier parfait pour ranger votre linge, vos affaires 3000f 4000f 5000f. N'hésitez pas à préciser vos préferences dans la description du formulaire d'achat"
+        };
+        const productFive = {
+            id: 5,
+            productImg: 'https://dangoimport-server.onrender.com/images/blueberry.png',
+            price: "1-20 : 500 fcfa l'unité,  20- 50 : 300 fcfa l'unité, 50- 100 : 200 fcfa l'unité",
+            name: 'PUQUIANNA',
+            description: "Masque de visage Naturel hydratant, rend la peau douce, élimine les acnés, les imperfections, les peau mortes, antirides etc... disponible"
+        };
         const products = [
             productOne,
             productTwo,
