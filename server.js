@@ -183,7 +183,9 @@ const startServer = async () => {
         const products = [
             productOne,
             productTwo,
-            productThree
+            productThree,
+            productFour,
+            productFive
         ];
         res.json(products);
 
