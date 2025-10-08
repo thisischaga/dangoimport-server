@@ -28,14 +28,7 @@ app.use(express.json({ limit: '125mb' }));
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
-const otpStoreBySMS = new Map();
 
-
-const AT = africastalking({
-  username: process.env.AFRICASTALKING_USERNAME,
-  apiKey: process.env.AFRICASTALKING_API_KEY,
-});
-const sms = AT.SMS;
 
 // Création d'un admin par défaut si inexistant
 /*const createDefaultAdmin = async () => {
@@ -254,48 +247,6 @@ const startServer = async () => {
         console.error("Erreur /achater :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
-    });
-    // SMS OTP 
-    app.post('/send-smsotp', async (req, res) => {
-      const { userNumber } = req.body;
-      console.log(userNumber);
-      if (!userNumber) return res.status(400).json({ message: 'Numéro de téléphone requis' });
-
-      const otp = generateOTP();
-      const expiration = Date.now() + 5 * 60 * 1000;
-
-      otpStore.set(userNumber, { otp, expiration });
-
-      try {
-        await sms.send({
-          to: userNumber,
-          message: `Votre code OTP est : ${otp}`,
-          from: 'Dang Import',
-        });
-
-        res.status(200).json({ message: 'OTP envoyé avec succès' });
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Erreur lors de l’envoi du SMS' });
-      }
-    });
-
-    // --- ROUTE : Vérification OTP ---
-    app.post('/verify-smsotp', (req, res) => {
-      const { userNumber, otp } = req.body;
-      const record = otpStoreBySMS.get(phone);
-
-      if (!record) return res.status(400).json({ message: 'OTP non trouvé' });
-
-      if (Date.now() > record.expiration) {
-        otpStoreBySMS.delete(phone);
-        return res.status(400).json({ message: 'OTP expiré' });
-      }
-
-      if (record.otp !== otp) return res.status(400).json({ message: 'OTP invalide' });
-
-      otpStoreBySMS.delete(phone);
-      res.status(200).json({ message: 'OTP vérifié avec succès' });
     });
 
     // OTP
