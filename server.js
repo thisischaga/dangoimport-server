@@ -1,11 +1,14 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+//const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const africastalking = require('africastalking');
+//const africastalking = require('africastalking');
 require('dotenv').config();
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
@@ -252,7 +255,7 @@ const startServer = async () => {
     // OTP
     const otpStore = new Map();
 
-    const transporter = nodemailer.createTransport({
+    /*const transporter = nodemailer.createTransport({
       host: 'smtp.hostinger.com',
       port: 465,
       secure: true,
@@ -261,7 +264,6 @@ const startServer = async () => {
         pass: process.env.EMAIL_PASS,
       }
     });
-
     app.post('/api/send-otp', (req, res) => {
       const { userEmail } = req.body;
       const otp = generateOTP();
@@ -284,6 +286,30 @@ const startServer = async () => {
           return res.status(200).json({ message: 'OTP envoyé avec succès' });
         }
       });
+    });*/
+
+    
+    app.post('/api/send-otp', async (req, res) => {
+      const { userEmail } = req.body;
+      const otp = generateOTP();
+      const expiration = Date.now() + 5 * 60 * 1000;
+    
+      otpStore.set(userEmail, { otp, expiration });
+    
+      try {
+        const data = await resend.emails.send({
+          from: `Dango Import <${process.env.EMAIL}>`,
+          to: userEmail,
+          subject: 'Confirmez votre adresse email',
+          text: `Votre code OTP est : ${otp}. Ce code est valide pendant 5 minutes.`,
+        });
+    
+        console.log('✅ Email OTP envoyé via Resend :', data);
+        return res.status(200).json({ message: 'OTP envoyé avec succès' });
+      } catch (error) {
+        console.error('❌ Erreur envoi OTP via Resend :', error);
+        return res.status(500).json({ message: 'Erreur envoi OTP' });
+      }
     });
 
     app.post('/api/verify-otp', (req, res) => {
