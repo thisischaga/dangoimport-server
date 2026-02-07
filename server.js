@@ -23,6 +23,7 @@ const corsOptions = {
     const allowedOrigins = [
       'http://localhost:3000',
       'https://www.dangoimport.com',
+      'https://dangoimport.com',
       'http://localhost:3001', // pour le développement
     ];
     
