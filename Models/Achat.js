@@ -35,6 +35,38 @@ const userSchema = new mongoose.Schema({
       type: String,
       required: true,
     },
+    lat: {
+      type: Number,
+      required: false,
+    },
+    lng: {
+      type: Number,
+      required: false,
+    },
+    deliveryFee: {
+      type: Number,
+      required: false,
+    },
+    paymentMethod: {
+      type: String,
+      required: false,
+    },
+    address: {
+      type: String,
+      required: false,
+    },
+    city: {
+      type: String,
+      required: false,
+    },
+    totalPrice: {
+      type: Number,
+      required: false,
+    },
+    productPrice: {
+      type: Number,
+      required: false,
+    },
     date: {
       type: String,
       required: true,
