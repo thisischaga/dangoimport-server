@@ -31,7 +31,7 @@ const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 app.use(compression());
 
 // ═══════════════════════════════════════════════
@@ -85,8 +85,8 @@ const {
   PAYDUNYA_MODE = 'test',
   PAYDUNYA_STORE_NAME = 'Dango Import',
   PAYDUNYA_STORE_TAGLINE = 'Import sécurisé depuis la Chine vers l\'Afrique',
-  PAYDUNYA_STORE_WEBSITE = 'https://dangoimport.example',
-  PAYDUNYA_STORE_LOGO = 'https://dangoimport.example/logo.png',
+  PAYDUNYA_STORE_WEBSITE = 'https://dangoimport.com',
+  PAYDUNYA_STORE_LOGO = 'https://dangoimport.com/logo.png',
   PAYDUNYA_CALLBACK_URL = 'http://localhost:8000/api/paydunya/ipn',
   PAYDUNYA_RETURN_URL = 'http://localhost:3000/',
   PAYDUNYA_CANCEL_URL = 'http://localhost:3000/cart',
