@@ -26,6 +26,7 @@ const Admin = require('./Models/Admin');
 const Achat = require('./Models/Achat');
 const Product = require('./Models/Product');
 const Devis = require('./Models/Devis');
+const Newsletter = require('./Models/Newsletter');
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -136,6 +137,7 @@ const corsOptions = {
       'http://localhost:5173',
       'https://www.dangoimport.com',
       'https://dangoimport.com',
+      'https://dangoimport-admin.vercel.app',
     ];
 
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -754,6 +756,34 @@ const startServer = async () => {
       } catch (error) {
         console.error("Erreur POST /api/products :", error);
         res.status(500).json({ message: "Erreur serveur lors de la publication", error: error.message });
+      }
+    });
+
+    // Route pour la newsletter
+    app.post('/api/newsletter/subscribe', async (req, res) => {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email requis." });
+
+      try {
+        const existing = await Newsletter.findOne({ email });
+        if (existing) return res.status(400).json({ message: "Cet email est déjà inscrit !" });
+
+        const newSub = new Newsletter({ email });
+        await newSub.save();
+
+        // Optionnel: Envoyer une notification admin
+        await sendNotification({
+          recipient: 'admin',
+          type: 'newsletter',
+          title: '📧 Nouveau abonné Newsletter',
+          message: `${email} vient de s'inscrire.`,
+          link: '#'
+        });
+
+        res.status(201).json({ message: "Inscription réussie ! Merci." });
+      } catch (error) {
+        console.error("Erreur Newsletter :", error);
+        res.status(500).json({ message: "Erreur serveur lors de l'inscription." });
       }
     });
 
