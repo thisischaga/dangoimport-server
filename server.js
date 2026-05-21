@@ -20,6 +20,15 @@ const http = require('http');
 const { initSocket } = require('./utils/socket');
 const Notification = require('./Models/Notification');
 
+
+// Helper to format phone numbers for FedaPay (Benin +229)
+function formatPhoneNumber(num) {
+  // Remove any non‑digit characters and leading zeros
+  const cleaned = num.replace(/\D/g, '').replace(/^0+/, '');
+  // Ensure the Benin country code is present
+  return cleaned.startsWith('229') ? cleaned : `229${cleaned}`;
+}
+
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
 const Commande = require('./Models/Commande');
@@ -28,6 +37,8 @@ const Achat = require('./Models/Achat');
 const Product = require('./Models/Product');
 const Devis = require('./Models/Devis');
 const Newsletter = require('./Models/Newsletter');
+
+
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -307,12 +318,8 @@ const startServer = async () => {
       }
     });
 
-    // Créer une facture PayDunya pour le devis
+    // Créer un paiement FedaPay pour le devis
     app.post('/api/devis/create-invoice', devisUpload.single('photo'), async (req, res) => {
-      if (!paydunyaSetup) {
-        return res.status(500).json({ error: 'Configuration PayDunya invalide sur le serveur.' });
-      }
-
       try {
         const { name, phone, productLink, quantity, description, studyFee } = req.body;
         if (!name || !phone || !productLink || !quantity) {
@@ -322,23 +329,6 @@ const startServer = async () => {
         const amount = Number(studyFee) || 5000;
         const photoUrl = req.file ? `${req.protocol}://${req.get('host')}/uploads/devis/${req.file.filename}` : undefined;
         const photoFilename = req.file ? req.file.filename : undefined;
-
-        const paydunyaStore = new paydunya.Store({
-          name: PAYDUNYA_STORE_NAME,
-          tagline: PAYDUNYA_STORE_TAGLINE,
-          websiteURL: PAYDUNYA_STORE_WEBSITE,
-          logoURL: PAYDUNYA_STORE_LOGO,
-          callbackURL: PAYDUNYA_CALLBACK_URL,
-          returnURL: `${PAYDUNYA_RETURN_URL}?type=devis`,
-          cancelURL: PAYDUNYA_CANCEL_URL,
-        });
-
-        const invoice = new paydunya.CheckoutInvoice(paydunyaSetup, paydunyaStore);
-        invoice.description = `Frais d'étude de devis - ${name}`;
-        invoice.totalAmount = amount;
-        invoice.addItem('Frais étude devis', 1, amount, amount, 'Paiement du montant fixe de 5000 FCFA pour étude de devis');
-
-        await invoice.create();
 
         const newDevis = new Devis({
           name: name.trim(),
@@ -350,34 +340,53 @@ const startServer = async () => {
           photoUrl,
           photoFilename,
           status: 'pending_payment',
-          paymentToken: invoice.token,
-          invoiceUrl: invoice.url,
-          invoiceStatus: invoice.status,
         });
         await newDevis.save();
+
+        const nameParts = name.trim().split(' ');
+        const firstname = nameParts[0] || 'Client';
+        const lastname = nameParts.slice(1).join(' ') || 'Dango';
+        const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://www.dangoimport.com/';
+
+        const transaction = await Transaction.create({
+          description: `Frais d'étude de devis - ${name}`,
+          amount,
+          currency: { iso: 'XOF' },
+          callback_url: returnUrl,
+          custom_metadata: { orderId: newDevis._id.toString(), type: 'devis' },
+          customer: {
+            firstname,
+            lastname,
+            email: 'client@dangoimport.com',
+            phone_number: {
+              number: formatPhoneNumber(phone),
+              country: 'BJ'
+            }
+          }
+        });
+
+        const token = await transaction.generateToken();
 
         // Notification Admin
         await notifyAdmins({
           subject: '💳 Nouveau Devis en attente de paiement',
           html: `
-            <h2>Paiement de devis initié</h2>
+            <h2>Paiement de devis initié (FedaPay)</h2>
             <p><strong>Client :</strong> ${name}</p>
             <p><strong>Montant :</strong> ${amount} FCFA</p>
             <p><strong>Produit :</strong> <a href="${productLink}">${productLink}</a></p>
-            <p><strong>Lien de facture :</strong> <a href="${invoice.url}">PayDunya Invoice</a></p>
             <hr/>
             <p><a href="http://localhost:5173/devis">Voir dans le panel admin</a></p>
           `
         });
 
         return res.status(201).json({
-          message: 'Devis enregistré. Redirection vers PayDunya.',
-          url: invoice.url,
-          token: invoice.token,
+          message: 'Devis enregistré. Redirection vers FedaPay.',
+          url: token.url,
           devisId: newDevis._id,
         });
       } catch (error) {
-        console.error('Erreur POST /api/devis/create-invoice :', error);
+        console.error('Erreur POST /api/devis/create-invoice (FedaPay) :', error);
         const responseText = error?.responseText || error?.data || error?.message || null;
         return res.status(500).json({
           message: 'Erreur lors de la création du paiement du devis.',
@@ -645,7 +654,7 @@ const startServer = async () => {
             lastname,
             email: userEmail,
             phone_number: {
-              number: userNumber,
+              number: formatPhoneNumber(userNumber),
               country: 'BJ'
             }
           }
@@ -671,6 +680,8 @@ const startServer = async () => {
              
              if (type === 'cart') {
                 await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+             } else if (type === 'devis') {
+                await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
              } else {
                 await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
              }
