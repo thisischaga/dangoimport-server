@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const crypto = require('crypto');
 const paydunya = require('paydunya');
+const { FedaPay, Transaction } = require('fedapay');
 require('dotenv').config();
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -74,6 +75,14 @@ const adminLoginLimiter = rateLimit({
 });
 
 const port = process.env.PORT || 8000;
+
+// ═══════════════════════════════════════════════
+// 💳 CONFIGURATION FEDAPAY
+// ═══════════════════════════════════════════════
+if (process.env.FEDAPAY_SECRET_KEY) {
+  FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
+  FedaPay.setEnvironment('live');
+}
 
 // ═══════════════════════════════════════════════
 // 💳 CONFIGURATION PAYDUNYA
@@ -588,6 +597,92 @@ const startServer = async () => {
       } catch (error) {
         console.error("Erreur /commander :", error);
         res.status(500).json({ message: "Erreur serveur", error: error.message });
+      }
+    });
+
+    // ═══════════════════════════════════════════════
+    // 💳 FEDAPAY ENDPOINTS
+    // ═══════════════════════════════════════════════
+    app.post('/api/fedapay/checkout', async (req, res) => {
+      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type } = req.body;
+      const date = new Date();
+
+      if (!userNumber || !userName || !userEmail || !totalPrice) {
+        return res.status(400).json({ message: "Champs manquants pour FedaPay." });
+      }
+
+      try {
+        let newOrder;
+        
+        if (type === 'cart') {
+           newOrder = new Commande({
+              userName, userEmail, categorie: 'Panier', productQuantity, picture,
+              productDescription: description, selectedCountry, status: 'En attente', lat, lng,
+              deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+           });
+           await newOrder.save();
+        } else {
+           newOrder = new Achat({
+              userName, userNumber, productQuantity, userPref: userPref || 'Achat direct', selectedCountry, picture, userEmail,
+              status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+           });
+           await newOrder.save();
+        }
+
+        const nameParts = userName.trim().split(' ');
+        const firstname = nameParts[0] || 'Client';
+        const lastname = nameParts.slice(1).join(' ') || 'Dango';
+        const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://www.dangoimport.com/';
+
+        const transaction = await Transaction.create({
+          description: description || 'Commande Dango Import',
+          amount: totalPrice,
+          currency: { iso: 'XOF' },
+          callback_url: returnUrl, 
+          custom_metadata: { orderId: newOrder._id.toString(), type: type || 'achat' },
+          customer: {
+            firstname,
+            lastname,
+            email: userEmail,
+            phone_number: {
+              number: userNumber,
+              country: 'BJ'
+            }
+          }
+        });
+
+        const token = await transaction.generateToken();
+
+        res.status(201).json({ url: token.url, orderId: newOrder._id });
+      } catch (error) {
+        console.error("Erreur FedaPay Checkout :", error);
+        res.status(500).json({ message: "Erreur lors de l'initialisation FedaPay", error: error.message });
+      }
+    });
+
+    app.post('/api/fedapay/webhook', express.json(), async (req, res) => {
+      try {
+        const event = req.body;
+        
+        if (event && event.name === 'transaction.approved') {
+          const transaction = event.entity;
+          if (transaction && transaction.custom_metadata) {
+             const { orderId, type } = transaction.custom_metadata;
+             
+             if (type === 'cart') {
+                await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+             } else {
+                await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+             }
+             
+             // Optionnel: notifyAdmins()
+             console.log(`Commande ${orderId} marquée comme payée via FedaPay.`);
+          }
+        }
+        res.status(200).send('Webhook OK');
+      } catch (err) {
+        console.error("Erreur Webhook FedaPay:", err);
+        res.status(500).send('Erreur Webhook');
       }
     });
 
