@@ -316,7 +316,7 @@ const startServer = async () => {
           return res.status(400).json({ message: 'Veuillez remplir tous les champs obligatoires.' });
         }
 
-        const bypassFedaPay = true; // Offre temporaire : Sourcing gratuit car API FedaPay en maintenance
+        const bypassFedaPay = false; // Activation du paiement FedaPay pour les devis
 
         if (bypassFedaPay) {
           const photoUrl = req.file ? `${req.protocol}://${req.get('host')}/uploads/devis/${req.file.filename}` : undefined;
