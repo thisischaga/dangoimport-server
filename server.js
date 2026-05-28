@@ -20,15 +20,6 @@ const http = require('http');
 const { initSocket } = require('./utils/socket');
 const Notification = require('./Models/Notification');
 
-
-// Helper to format phone numbers for FedaPay (Benin +229)
-function formatPhoneNumber(num) {
-  // Remove any non‑digit characters and leading zeros
-  const cleaned = num.replace(/\D/g, '').replace(/^0+/, '');
-  // Ensure the Benin country code is present
-  return cleaned.startsWith('229') ? cleaned : `229${cleaned}`;
-}
-
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
 const Commande = require('./Models/Commande');
@@ -37,8 +28,6 @@ const Achat = require('./Models/Achat');
 const Product = require('./Models/Product');
 const Devis = require('./Models/Devis');
 const Newsletter = require('./Models/Newsletter');
-
-
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -228,8 +217,8 @@ const startServer = async () => {
 
     // Route de santé pour tester la connexion
     app.get('/health', (req, res) => {
-      res.status(200).json({ 
-        status: 'OK', 
+      res.status(200).json({
+        status: 'OK',
         timestamp: new Date().toISOString(),
         platform: 'iOS/macOS compatible'
       });
@@ -319,11 +308,62 @@ const startServer = async () => {
     });
 
     // Créer un paiement FedaPay pour le devis
+    // Créer un paiement FedaPay pour le devis
     app.post('/api/devis/create-invoice', devisUpload.single('photo'), async (req, res) => {
       try {
         const { name, phone, productLink, quantity, description, studyFee } = req.body;
         if (!name || !phone || !productLink || !quantity) {
           return res.status(400).json({ message: 'Veuillez remplir tous les champs obligatoires.' });
+        }
+
+        const bypassFedaPay = true; // Offre temporaire : Sourcing gratuit car API FedaPay en maintenance
+
+        if (bypassFedaPay) {
+          const photoUrl = req.file ? `${req.protocol}://${req.get('host')}/uploads/devis/${req.file.filename}` : undefined;
+          const photoFilename = req.file ? req.file.filename : undefined;
+
+          const newDevis = new Devis({
+            name: name.trim(),
+            phone: phone.trim(),
+            productLink: productLink.trim(),
+            quantity: Number(quantity),
+            description: description ? description.trim() : '',
+            studyFee: 0,
+            photoUrl,
+            photoFilename,
+            status: 'paid', // Directement marqué comme payé/validé pour l'étude
+          });
+          await newDevis.save();
+
+          // Notification Admin
+          await notifyAdmins({
+            subject: '📝 Nouvelle demande de Devis (Étude Gratuite)',
+            html: `
+              <h2>Nouvelle demande de devis reçue (Frais Offerts)</h2>
+              <p><strong>Client :</strong> ${name}</p>
+              <p><strong>Téléphone :</strong> ${phone}</p>
+              <p><strong>Produit :</strong> <a href="${productLink}">${productLink}</a></p>
+              <p><strong>Quantité :</strong> ${quantity}</p>
+              <p><strong>Description :</strong> ${description || 'N/A'}</p>
+              <hr/>
+              <p><a href="http://localhost:5173/devis">Voir dans le panel admin</a></p>
+            `
+          });
+
+          // Notification Temps Réel Admin
+          await sendNotification({
+            recipient: 'admin',
+            type: 'devis',
+            title: '📝 Nouveau Devis (Gratuit)',
+            message: `Demande de ${name} pour ${quantity} article(s).`,
+            link: '/devis'
+          });
+
+          return res.status(201).json({
+            success: true,
+            message: 'Votre demande de devis gratuit a été enregistrée avec succès. Nos agents vous contacteront bientôt.',
+            devisId: newDevis._id,
+          });
         }
 
         const amount = Number(studyFee) || 5000;
@@ -359,7 +399,7 @@ const startServer = async () => {
             lastname,
             email: 'client@dangoimport.com',
             phone_number: {
-              number: formatPhoneNumber(phone),
+              number: phone,
               country: 'BJ'
             }
           }
@@ -468,7 +508,7 @@ const startServer = async () => {
           return res.status(403).json({ message: "Action réservée au Dev Admin" });
         }
         const { adminFirstname, adminSurname, adminName, adminPassword, role } = req.body;
-        
+
         const existing = await Admin.findOne({ adminName });
         if (existing) return res.status(400).json({ message: "Cet identifiant existe déjà" });
 
@@ -513,7 +553,7 @@ const startServer = async () => {
         if (!currentUser || currentUser.role !== 'dev-admin') {
           return res.status(403).json({ message: "Action réservée au Dev Admin" });
         }
-        
+
         // Empêcher de se supprimer soi-même si on est le dernier dev-admin? 
         // Pour l'instant on autorise tout tant que c'est un dev-admin
         await Admin.findByIdAndDelete(req.params.id);
@@ -590,7 +630,7 @@ const startServer = async () => {
           `
         });
 
-        res.status(201).json({ 
+        res.status(201).json({
           message: "Nous avons reçu votre commande, nous vous contacterons !",
           commandeId: newCommande._id
         });
@@ -620,22 +660,26 @@ const startServer = async () => {
         return res.status(400).json({ message: "Champs manquants pour FedaPay." });
       }
 
+      if (!process.env.FEDAPAY_SECRET_KEY) {
+        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
+      }
+
       try {
         let newOrder;
-        
+
         if (type === 'cart') {
-           newOrder = new Commande({
-              userName, userEmail, categorie: 'Panier', productQuantity, picture,
-              productDescription: description, selectedCountry, status: 'En attente', lat, lng,
-              deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
-           });
-           await newOrder.save();
+          newOrder = new Commande({
+            userName, userEmail, categorie: 'Panier', productQuantity, picture,
+            productDescription: description, selectedCountry, status: 'En attente', lat, lng,
+            deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+          });
+          await newOrder.save();
         } else {
-           newOrder = new Achat({
-              userName, userNumber, productQuantity, userPref: userPref || 'Achat direct', selectedCountry, picture, userEmail,
-              status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
-           });
-           await newOrder.save();
+          newOrder = new Achat({
+            userName, userNumber, productQuantity, userPref: userPref || 'Achat direct', selectedCountry, picture, userEmail,
+            status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+          });
+          await newOrder.save();
         }
 
         const nameParts = userName.trim().split(' ');
@@ -643,18 +687,27 @@ const startServer = async () => {
         const lastname = nameParts.slice(1).join(' ') || 'Dango';
         const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://www.dangoimport.com/';
 
+        // Normalisation du numero : react-phone-input-2 envoie le code pays inclus
+        // ex: 22901234567 -> FedaPay attend 01234567 (sans prefixe 229)
+        let phoneNumber = String(userNumber).replace(/\D/g, '');
+        const prefixes = ['229', '228', '225', '221', '226', '227', '223', '224', '220', '222', '230'];
+        for (const pfx of prefixes) {
+          if (phoneNumber.startsWith(pfx)) { phoneNumber = phoneNumber.slice(pfx.length); break; }
+        }
+        if (phoneNumber.length < 8) phoneNumber = '97000000';
+
         const transaction = await Transaction.create({
           description: description || 'Commande Dango Import',
-          amount: totalPrice,
+          amount: Math.round(Number(totalPrice)),
           currency: { iso: 'XOF' },
-          callback_url: returnUrl, 
+          callback_url: returnUrl,
           custom_metadata: { orderId: newOrder._id.toString(), type: type || 'achat' },
           customer: {
             firstname,
             lastname,
-            email: userEmail,
+            email: userEmail || 'client@dangoimport.com',
             phone_number: {
-              number: formatPhoneNumber(userNumber),
+              number: phoneNumber,
               country: 'BJ'
             }
           }
@@ -664,30 +717,36 @@ const startServer = async () => {
 
         res.status(201).json({ url: token.url, orderId: newOrder._id });
       } catch (error) {
-        console.error("Erreur FedaPay Checkout :", error);
-        res.status(500).json({ message: "Erreur lors de l'initialisation FedaPay", error: error.message });
+        console.error('=== Erreur FedaPay Checkout ===');
+        console.error('Message:', error.message);
+        console.error('Errors:', JSON.stringify(error.errors || error.body || {}, null, 2));
+        res.status(500).json({
+          message: "Erreur lors de l'initialisation FedaPay",
+          error: error.message,
+          details: error.errors || error.body || null
+        });
       }
     });
 
     app.post('/api/fedapay/webhook', express.json(), async (req, res) => {
       try {
         const event = req.body;
-        
+
         if (event && event.name === 'transaction.approved') {
           const transaction = event.entity;
           if (transaction && transaction.custom_metadata) {
-             const { orderId, type } = transaction.custom_metadata;
-             
-             if (type === 'cart') {
-                await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-             } else if (type === 'devis') {
-                await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-             } else {
-                await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
-             }
-             
-             // Optionnel: notifyAdmins()
-             console.log(`Commande ${orderId} marquée comme payée via FedaPay.`);
+            const { orderId, type } = transaction.custom_metadata;
+
+            if (type === 'cart') {
+              await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+            } else if (type === 'devis') {
+              await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+            } else {
+              await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+            }
+
+            // Optionnel: notifyAdmins()
+            console.log(`Commande ${orderId} marquée comme payée via FedaPay.`);
           }
         }
         res.status(200).send('Webhook OK');
@@ -744,7 +803,7 @@ const startServer = async () => {
           `
         });
 
-        res.status(201).json({ 
+        res.status(201).json({
           message: "Nous avons reçu votre commande, nous vous contacterons !",
           achatId: newAchat._id
         });
@@ -764,7 +823,7 @@ const startServer = async () => {
     });
 
 
-        // --- MARKETPLACE ROUTES ---
+    // --- MARKETPLACE ROUTES ---
 
     // Récupérer tous les produits de la base de données
     app.get('/api/products', async (req, res) => {
@@ -782,8 +841,8 @@ const startServer = async () => {
       try {
         const vendorName = req.params.vendorName.trim();
         // Recherche exacte avec l'option 'i' pour l'insensibilité à la casse
-        const products = await Product.find({ 
-          vendorName: { $regex: new RegExp(`^${vendorName}$`, 'i') } 
+        const products = await Product.find({
+          vendorName: { $regex: new RegExp(`^${vendorName}$`, 'i') }
         }).sort({ date: -1 });
         res.status(200).json(products);
       } catch (error) {
@@ -797,7 +856,7 @@ const startServer = async () => {
       try {
         const { recipient } = req.query; // 'admin' ou userId
         if (!recipient) return res.status(400).json({ message: "Recipient requis" });
-        
+
         const notifications = await Notification.find({ recipient })
           .sort({ createdAt: -1 })
           .limit(20);
@@ -822,7 +881,7 @@ const startServer = async () => {
       try {
         const query = req.query.q;
         if (!query) return res.status(200).json([]);
-        
+
         const products = await Product.find({
           $or: [
             { name: { $regex: query, $options: 'i' } },
@@ -831,7 +890,7 @@ const startServer = async () => {
             { vendorName: { $regex: query, $options: 'i' } }
           ]
         }).sort({ date: -1 });
-        
+
         res.status(200).json(products);
       } catch (error) {
         console.error("Erreur SEARCH /api/products/search :", error);
@@ -1211,7 +1270,7 @@ const startServer = async () => {
         console.error('PAYDUNYA_PRIVATE_KEY:', PAYDUNYA_PRIVATE_KEY ? '✓' : '✗');
         console.error('PAYDUNYA_PUBLIC_KEY:', PAYDUNYA_PUBLIC_KEY ? '✓' : '✗');
         console.error('PAYDUNYA_TOKEN:', PAYDUNYA_TOKEN ? '✓' : '✗');
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: 'Configuration PayDunya invalide sur le serveur. Vérifiez les clés PAYDUNYA_* dans dangoimport-server/.env.',
           debug: {
             PAYDUNYA_MASTER_KEY: PAYDUNYA_MASTER_KEY ? (isPlaceholderKey(PAYDUNYA_MASTER_KEY) ? 'placeholder' : 'configured') : 'missing',
@@ -1279,7 +1338,7 @@ const startServer = async () => {
       } catch (error) {
         console.error('❌ PayDunya create invoice error:', error);
         const responseText = error?.responseText || error?.data || error?.message || null;
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: error.message || 'Erreur lors de la création de la facture PayDunya.',
           responseText,
           debug: error
@@ -1369,9 +1428,9 @@ const startServer = async () => {
     // Gestion globale des erreurs
     app.use((err, req, res, next) => {
       console.error('Erreur globale:', err);
-      res.status(500).json({ 
-        message: 'Erreur serveur', 
-        error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+      res.status(500).json({
+        message: 'Erreur serveur',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
       });
     });
 
