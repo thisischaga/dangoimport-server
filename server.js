@@ -730,6 +730,20 @@ const startServer = async () => {
 
     app.post('/api/fedapay/webhook', express.json(), async (req, res) => {
       try {
+        const signature = req.headers['x-fedapay-signature'];
+        const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
+        
+        // Vérification de la signature si la clé est configurée
+        if (secret && signature) {
+          const hash = crypto.createHmac('sha256', secret)
+                             .update(JSON.stringify(req.body))
+                             .digest('hex');
+          if (hash !== signature) {
+            console.error("Signature FedaPay invalide !");
+            return res.status(403).send('Signature invalide');
+          }
+        }
+
         const event = req.body;
 
         if (event && event.name === 'transaction.approved') {
@@ -745,11 +759,10 @@ const startServer = async () => {
               await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
             }
 
-            // Optionnel: notifyAdmins()
-            console.log(`Commande ${orderId} marquée comme payée via FedaPay.`);
+            console.log(`✅ Commande ${orderId} (${type}) marquée comme payée via Webhook FedaPay.`);
           }
         }
-        res.status(200).send('Webhook OK');
+        res.status(200).send('Webhook traité avec succès');
       } catch (err) {
         console.error("Erreur Webhook FedaPay:", err);
         res.status(500).send('Erreur Webhook');
