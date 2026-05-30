@@ -28,6 +28,8 @@ const Achat = require('./Models/Achat');
 const Product = require('./Models/Product');
 const Devis = require('./Models/Devis');
 const Newsletter = require('./Models/Newsletter');
+const VendorRequest = require('./Models/VendorRequest');
+const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -653,7 +655,7 @@ const startServer = async () => {
     // 💳 FEDAPAY ENDPOINTS
     // ═══════════════════════════════════════════════
     app.post('/api/fedapay/checkout', async (req, res) => {
-      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type } = req.body;
+      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
       const date = new Date();
 
       if (!userNumber || !userName || !userEmail || !totalPrice) {
@@ -671,13 +673,13 @@ const startServer = async () => {
           newOrder = new Commande({
             userName, userEmail, categorie: 'Panier', productQuantity, picture,
             productDescription: description, selectedCountry, status: 'En attente', lat, lng,
-            deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+            deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date, vendorName
           });
           await newOrder.save();
         } else {
           newOrder = new Achat({
             userName, userNumber, productQuantity, userPref: userPref || 'Achat direct', selectedCountry, picture, userEmail,
-            status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date
+            status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date, vendorName
           });
           await newOrder.save();
         }
@@ -770,7 +772,7 @@ const startServer = async () => {
     });
 
     app.post('/acheter', async (req, res) => {
-      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, status, lat, lng, deliveryFee, paymentMethod, address, city, totalPrice, productPrice } = req.body;
+      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, status, lat, lng, deliveryFee, paymentMethod, address, city, totalPrice, productPrice, vendorName } = req.body;
       const date = new Date();
 
       if (!userNumber || !userName || !userEmail || !productQuantity || !picture || !userPref || !selectedCountry || !status) {
@@ -796,6 +798,7 @@ const startServer = async () => {
           totalPrice,
           productPrice,
           date,
+          vendorName,
         });
 
         await newAchat.save();
@@ -835,6 +838,91 @@ const startServer = async () => {
       }
     });
 
+    // --- DASHBOARD CLIENT & VENDEUR ROUTES ---
+    app.get('/api/user-activities/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        // fetch Achat and Commande for userEmail
+        const achats = await Achat.find({ userEmail: email }).sort({ date: -1 });
+        const commandes = await Commande.find({ userEmail: email }).sort({ date: -1 });
+        res.status(200).json({ achats, commandes });
+      } catch (error) {
+        console.error("Erreur GET /api/user-activities :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    app.get('/api/vendor-dashboard/:vendorName', async (req, res) => {
+      try {
+        const vendorName = req.params.vendorName.trim();
+        const vendorRegex = new RegExp(`^${vendorName}$`, 'i');
+        const achats = await Achat.find({ vendorName: vendorRegex }).sort({ date: -1 });
+        const commandes = await Commande.find({ vendorName: vendorRegex }).sort({ date: -1 });
+        const products = await Product.find({ vendorName: vendorRegex });
+        res.status(200).json({ achats, commandes, products });
+      } catch (error) {
+        console.error("Erreur GET /api/vendor-dashboard :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // --- VENDOR REQUEST ROUTES ---
+    app.post('/api/vendor-requests', async (req, res) => {
+      try {
+        const { name, businessName, phone, email, city, description, rccmImage } = req.body;
+        if (!name || !businessName || !email || !rccmImage) {
+          return res.status(400).json({ message: "Champs obligatoires manquants." });
+        }
+        const newReq = new VendorRequest({ name, businessName, phone, email, city, description, rccmImage });
+        await newReq.save();
+        res.status(201).json({ message: "Demande enregistrée avec succès." });
+      } catch (error) {
+        console.error("Erreur POST /api/vendor-requests :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    app.get('/api/vendor-requests', async (req, res) => {
+      try {
+        const requests = await VendorRequest.find().sort({ date: -1 });
+        res.status(200).json(requests);
+      } catch (error) {
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    app.put('/api/vendor-requests/:id/validate', async (req, res) => {
+      try {
+        const request = await VendorRequest.findById(req.params.id);
+        if (!request) return res.status(404).json({ message: "Demande introuvable" });
+
+        request.status = 'approved';
+        await request.save();
+
+        // Mettre à jour l'utilisateur correspondant
+        const user = await User.findOne({ userEmail: request.email });
+        if (user) {
+          user.isVendor = true;
+          user.vendorName = request.businessName;
+          await user.save();
+        }
+
+        res.status(200).json({ message: "Vendeur approuvé avec succès !", request, userUpdated: !!user });
+      } catch (error) {
+        console.error("Erreur PUT /validate :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    app.get('/api/users/me/:email', async (req, res) => {
+      try {
+        const user = await User.findOne({ userEmail: req.params.email });
+        if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
+        res.status(200).json(user);
+      } catch (error) {
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
 
     // --- MARKETPLACE ROUTES ---
 
@@ -911,6 +999,51 @@ const startServer = async () => {
       }
     });
 
+    // Route pour la newsletter (MailerLite Integration)
+    app.post('/api/newsletter/subscribe', async (req, res) => {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email requis." });
+
+      try {
+        const existing = await Newsletter.findOne({ email });
+        if (existing) return res.status(400).json({ message: "Cet email est déjà inscrit !" });
+
+        const newSub = new Newsletter({ email });
+        await newSub.save();
+
+        // ─── MAILERLITE INTEGRATION ───
+        if (process.env.MAILERLITE_API_KEY) {
+          try {
+            await axios.post('https://api.mailerlite.com/api/v2/subscribers', {
+              email: email
+            }, {
+              headers: {
+                'X-MailerLite-ApiKey': process.env.MAILERLITE_API_KEY,
+                'Content-Type': 'application/json'
+              }
+            });
+            console.log("✅ Inscription MailerLite réussie pour :", email);
+          } catch (mlError) {
+            console.error("❌ Erreur MailerLite :", mlError.response ? mlError.response.data : mlError.message);
+          }
+        }
+
+        // Optionnel: Envoyer une notification admin
+        await sendNotification({
+          recipient: 'admin',
+          type: 'newsletter',
+          title: '📧 Nouveau abonné Newsletter',
+          message: `${email} vient de s'inscrire.`,
+          link: '#'
+        });
+
+        res.status(201).json({ message: "Inscription réussie ! Merci." });
+      } catch (error) {
+        console.error("Erreur POST /api/newsletter/subscribe :", error);
+        res.status(500).json({ message: "Erreur serveur lors de l'inscription à la newsletter." });
+      }
+    });
+
     // Ajouter / Publier un nouveau produit
     app.post('/api/products', async (req, res) => {
       const { name, price, category, description, image, vendorName } = req.body;
@@ -937,33 +1070,7 @@ const startServer = async () => {
       }
     });
 
-    // Route pour la newsletter
-    app.post('/api/newsletter/subscribe', async (req, res) => {
-      const { email } = req.body;
-      if (!email) return res.status(400).json({ message: "Email requis." });
 
-      try {
-        const existing = await Newsletter.findOne({ email });
-        if (existing) return res.status(400).json({ message: "Cet email est déjà inscrit !" });
-
-        const newSub = new Newsletter({ email });
-        await newSub.save();
-
-        // Optionnel: Envoyer une notification admin
-        await sendNotification({
-          recipient: 'admin',
-          type: 'newsletter',
-          title: '📧 Nouveau abonné Newsletter',
-          message: `${email} vient de s'inscrire.`,
-          link: '#'
-        });
-
-        res.status(201).json({ message: "Inscription réussie ! Merci." });
-      } catch (error) {
-        console.error("Erreur Newsletter :", error);
-        res.status(500).json({ message: "Erreur serveur lors de l'inscription." });
-      }
-    });
 
     // Auth Routes
     app.use('/api/auth', authRoutes);

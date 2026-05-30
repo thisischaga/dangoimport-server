@@ -25,6 +25,14 @@ const userSchema = new mongoose.Schema({
     date: {
         type: Date,
         default: Date.now,
+    },
+    isVendor: {
+        type: Boolean,
+        default: false,
+    },
+    vendorName: {
+        type: String,
+        default: '',
     }
 });
 

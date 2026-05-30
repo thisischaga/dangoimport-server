@@ -70,6 +70,10 @@ const userSchema = new mongoose.Schema({
     date: {
       type: String,
       required: true,
+    },
+    vendorName: {
+      type: String,
+      required: false,
     }
 });
   
