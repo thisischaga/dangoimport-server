@@ -29,6 +29,7 @@ const Product = require('./Models/Product');
 const Devis = require('./Models/Devis');
 const Newsletter = require('./Models/Newsletter');
 const VendorRequest = require('./Models/VendorRequest');
+const WithdrawalRequest = require('./Models/WithdrawalRequest');
 const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
@@ -937,6 +938,119 @@ const startServer = async () => {
         if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
         res.status(200).json(user);
       } catch (error) {
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // --- WITHDRAWAL ROUTES ---
+
+    // Créer une demande de retrait
+    app.post('/api/withdrawal-requests', async (req, res) => {
+      try {
+        const { vendorEmail, amount, accountHolder, accountNumber, bankName, iban } = req.body;
+
+        if (!vendorEmail || !amount || !accountHolder || !accountNumber || !bankName) {
+          return res.status(400).json({ message: "Champs obligatoires manquants." });
+        }
+
+        const user = await User.findOne({ userEmail: vendorEmail });
+        if (!user) return res.status(404).json({ message: "Vendeur non trouvé" });
+
+        if (amount <= 0) {
+          return res.status(400).json({ message: "Le montant doit être supérieur à 0" });
+        }
+
+        if (user.balance < amount) {
+          return res.status(400).json({ message: "Solde insuffisant" });
+        }
+
+        const withdrawalRequest = new WithdrawalRequest({
+          userId: user._id,
+          vendorEmail,
+          amount,
+          bankDetails: {
+            accountHolder,
+            accountNumber,
+            bankName,
+            iban: iban || ''
+          }
+        });
+
+        await withdrawalRequest.save();
+
+        res.status(201).json({ 
+          message: "Demande de retrait créée avec succès.", 
+          withdrawalRequest 
+        });
+      } catch (error) {
+        console.error("Erreur POST /withdrawal-requests :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // Récupérer les demandes de retrait d'un vendeur
+    app.get('/api/withdrawal-requests/:email', async (req, res) => {
+      try {
+        const requests = await WithdrawalRequest.find({ vendorEmail: req.params.email }).sort({ date: -1 });
+        res.status(200).json(requests);
+      } catch (error) {
+        console.error("Erreur GET /withdrawal-requests :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // Récupérer toutes les demandes de retrait (admin)
+    app.get('/api/withdrawal-requests/admin/all', async (req, res) => {
+      try {
+        const requests = await WithdrawalRequest.find().sort({ date: -1 });
+        res.status(200).json(requests);
+      } catch (error) {
+        console.error("Erreur GET /admin/all :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // Approuver une demande de retrait
+    app.put('/api/withdrawal-requests/:id/approve', async (req, res) => {
+      try {
+        const { transactionReference } = req.body;
+        const request = await WithdrawalRequest.findById(req.params.id);
+        if (!request) return res.status(404).json({ message: "Demande introuvable" });
+
+        request.status = 'approved';
+        request.transactionReference = transactionReference || '';
+        request.processedAt = Date.now();
+        await request.save();
+
+        // Déduire le montant du solde du vendeur
+        const user = await User.findOne({ userEmail: request.vendorEmail });
+        if (user) {
+          user.balance -= request.amount;
+          await user.save();
+        }
+
+        res.status(200).json({ message: "Retrait approuvé avec succès !", request });
+      } catch (error) {
+        console.error("Erreur PUT /approve :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // Rejeter une demande de retrait
+    app.put('/api/withdrawal-requests/:id/reject', async (req, res) => {
+      try {
+        const { reason } = req.body;
+        const request = await WithdrawalRequest.findById(req.params.id);
+        if (!request) return res.status(404).json({ message: "Demande introuvable" });
+
+        request.status = 'rejected';
+        request.rejectionReason = reason || '';
+        request.processedAt = Date.now();
+        await request.save();
+
+        res.status(200).json({ message: "Retrait rejeté avec succès !", request });
+      } catch (error) {
+        console.error("Erreur PUT /reject :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });

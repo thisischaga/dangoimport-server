@@ -33,6 +33,28 @@ const userSchema = new mongoose.Schema({
     vendorName: {
         type: String,
         default: '',
+    },
+    balance: {
+        type: Number,
+        default: 0,
+    },
+    bankDetails: {
+        accountHolder: {
+            type: String,
+            default: '',
+        },
+        accountNumber: {
+            type: String,
+            default: '',
+        },
+        bankName: {
+            type: String,
+            default: '',
+        },
+        iban: {
+            type: String,
+            default: '',
+        }
     }
 });
 
