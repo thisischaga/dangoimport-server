@@ -40,7 +40,11 @@ const login = async (req, res) => {
             user: {
                 userFirstname: user.userFirstname,
                 userSurname: user.userSurname,
-                userEmail: user.userEmail
+                userEmail: user.userEmail,
+                isVendor: user.isVendor || false,
+                vendorName: user.vendorName || '',
+                balance: user.balance || 0,
+                bankDetails: user.bankDetails || {}
             }
         });
         console.log('Un utilisateur vient de se connecter ', userEmail);
@@ -136,7 +140,11 @@ const signup = async (req, res) => {
             user: {
                 userFirstname: newUser.userFirstname,
                 userSurname: newUser.userSurname,
-                userEmail: newUser.userEmail
+                userEmail: newUser.userEmail,
+                isVendor: newUser.isVendor || false,
+                vendorName: newUser.vendorName || '',
+                balance: newUser.balance || 0,
+                bankDetails: newUser.bankDetails || {}
             }
         });
 
