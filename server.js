@@ -950,6 +950,18 @@ const startServer = async () => {
           isVerified: user.isVerified,
           date: user.date
         });
+        console.log(res.status(200).json({
+          _id: user._id,
+          userFirstname: user.userFirstname,
+          userSurname: user.userSurname,
+          userEmail: user.userEmail,
+          isVendor: user.isVendor,
+          vendorName: user.vendorName,
+          balance: user.balance,
+          bankDetails: user.bankDetails,
+          isVerified: user.isVerified,
+          date: user.date
+        }));
       } catch (error) {
         res.status(500).json({ message: "Erreur serveur" });
       }
