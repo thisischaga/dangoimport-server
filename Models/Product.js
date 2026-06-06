@@ -26,6 +26,21 @@ const productSchema = new mongoose.Schema({
         required: true,
         default: 'Vendeur Indépendant'
     },
+    isCustomizable: {
+        type: Boolean,
+        default: false
+    },
+    parameters: [
+        {
+            name: String, // ex: "Taille", "Couleur"
+            options: [
+                {
+                    value: String, // ex: "S", "M", "L"
+                    priceAdjustment: { type: Number, default: 0 } // Surcoût optionnel
+                }
+            ]
+        }
+    ],
     rating: {
         type: Number,
         default: 0
