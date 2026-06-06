@@ -914,6 +914,23 @@ const startServer = async () => {
       }
     });
 
+    app.put('/api/vendor-requests/:id/reject', async (req, res) => {
+      try {
+        const { reason } = req.body;
+        const request = await VendorRequest.findById(req.params.id);
+        if (!request) return res.status(404).json({ message: "Demande introuvable" });
+
+        request.status = 'rejected';
+        request.rejectionReason = reason || '';
+        await request.save();
+
+        res.status(200).json({ message: "Demande rejetée avec succès !", request });
+      } catch (error) {
+        console.error("Erreur PUT /reject :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
     app.get('/api/users/me/:email', async (req, res) => {
       try {
         const user = await User.findOne({ userEmail: req.params.email });

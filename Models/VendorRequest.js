@@ -34,6 +34,10 @@ const vendorRequestSchema = new mongoose.Schema({
         enum: ['pending', 'approved', 'rejected'],
         default: 'pending'
     },
+    rejectionReason: {
+        type: String,
+        default: ''
+    },
     date: {
         type: Date,
         default: Date.now,
