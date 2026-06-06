@@ -1190,7 +1190,7 @@ const startServer = async () => {
 
     // Ajouter / Publier un nouveau produit
     app.post('/api/products', async (req, res) => {
-      const { name, price, category, description, image, vendorName } = req.body;
+      const { name, price, category, description, image, vendorName, isCustomizable, parameters } = req.body;
 
       if (!name || !price || !category || !image) {
         return res.status(400).json({ message: "Champs requis manquants (nom, prix, catégorie, image)." });
@@ -1203,7 +1203,9 @@ const startServer = async () => {
           category,
           description: description || '',
           image,
-          vendorName: vendorName || 'Vendeur Indépendant'
+          vendorName: vendorName || 'Vendeur Indépendant',
+          isCustomizable: isCustomizable || false,
+          parameters: parameters || []
         });
 
         await newProduct.save();
@@ -1224,10 +1226,10 @@ const startServer = async () => {
       try {
         const admin = await Admin.findById(req.user.userId);
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
-        const { name, price, category, description, image, vendorName } = req.body;
+        const { name, price, category, description, image, vendorName, isCustomizable, parameters } = req.body;
         const updated = await Product.findByIdAndUpdate(
           req.params.id,
-          { name, price, category, description, image, vendorName },
+          { name, price, category, description, image, vendorName, isCustomizable, parameters },
           { new: true }
         );
         if (!updated) return res.status(404).json({ message: "Produit introuvable" });
