@@ -936,7 +936,20 @@ const startServer = async () => {
       try {
         const user = await User.findOne({ userEmail: req.params.email });
         if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
-        res.status(200).json(user);
+        
+        // Retourner SEULEMENT les champs nécessaires
+        res.status(200).json({
+          _id: user._id,
+          userFirstname: user.userFirstname,
+          userSurname: user.userSurname,
+          userEmail: user.userEmail,
+          isVendor: user.isVendor,
+          vendorName: user.vendorName,
+          balance: user.balance,
+          bankDetails: user.bankDetails,
+          isVerified: user.isVerified,
+          date: user.date
+        });
       } catch (error) {
         res.status(500).json({ message: "Erreur serveur" });
       }
