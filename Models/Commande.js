@@ -144,33 +144,3 @@ orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ orderNumber: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);
-      type: String,
-      required: false,
-    },
-    address: {
-      type: String,
-      required: false,
-    },
-    city: {
-      type: String,
-      required: false,
-    },
-    totalPrice: {
-      type: Number,
-      required: false,
-    },
-    productPrice: {
-      type: Number,
-      required: false,
-    },
-    date: {
-      type: String,
-      required: true,
-    },
-    vendorName: {
-      type: String,
-      required: false,
-    }
-});
-  
-module.exports = mongoose.model('Commande', userSchema);
