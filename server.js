@@ -1221,6 +1221,26 @@ const startServer = async () => {
     // Auth Routes
     app.use('/api/auth', authRoutes);
 
+    // Product Routes
+    const productRoutes = require('./routes/productRoutes');
+    app.use('/api/products', productRoutes);
+
+    // Order Routes
+    const orderRoutes = require('./routes/orderRoutes');
+    app.use('/api/orders', orderRoutes);
+
+    // Cart Routes
+    const cartRoutes = require('./routes/cartRoutes');
+    app.use('/api/cart', cartRoutes);
+
+    // Wishlist Routes
+    const wishlistRoutes = require('./routes/wishlistRoutes');
+    app.use('/api/wishlist', wishlistRoutes);
+
+    // Admin Routes
+    const adminRoutes = require('./routes/adminRoutes');
+    app.use('/api/admin', adminRoutes);
+
     // Modifier un produit (admin only)
     app.put('/api/products/:id', verifyToken, async (req, res) => {
       try {

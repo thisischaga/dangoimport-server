@@ -1,53 +1,149 @@
-const { required } = require('joi');
 const mongoose = require('mongoose');
 
+const orderSchema = new mongoose.Schema({
+    // Numéro de commande
+    orderNumber: {
+        type: String,
+        unique: true,
+        required: true,
+        index: true
+    },
 
-const userSchema = new mongoose.Schema({
-    userName: {
-      type: String,
-      required: true,
-  },
-    userEmail: {
-      type: String,
-      required: true,
+    // Client
+    customerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+        index: true
     },
-    categorie: {
-      type: String,
-      required: true,
+    customerName: {
+        type: String,
+        required: true
     },
-    productQuantity: {
-      type: Number,
-      require:true,
+    customerEmail: {
+        type: String,
+        required: true
     },
-    picture: {
-      type: String,
-      require:true,
+    customerPhone: {
+        type: String,
+        required: true
     },
-    productDescription: {
-      type: String,
-      require:true,
+
+    // Adresse de livraison
+    shippingAddress: {
+        country: String,
+        city: String,
+        neighborhood: String,
+        fullAddress: String,
+        postalCode: String,
+        instructions: String
     },
-    selectedCountry: {
-      type: String,
-      required: true,
+
+    // Articles commandés
+    items: [
+        {
+            productId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Product',
+                required: true
+            },
+            productName: String,
+            productImage: String,
+            price: Number,
+            quantity: {
+                type: Number,
+                required: true,
+                min: 1
+            },
+            selectedOptions: {
+                color: String,
+                size: String,
+                material: String
+            },
+            subtotal: Number
+        }
+    ],
+
+    // Tarification
+    subtotal: {
+        type: Number,
+        required: true
     },
+    shippingCost: {
+        type: Number,
+        default: 0
+    },
+    tax: {
+        type: Number,
+        default: 0
+    },
+    discount: {
+        type: Number,
+        default: 0
+    },
+    total: {
+        type: Number,
+        required: true
+    },
+
+    // Livraison
+    shippingMethod: {
+        type: String,
+        enum: ['standard', 'express', 'pickup'],
+        default: 'standard'
+    },
+    estimatedDelivery: Date,
+
+    // Statut
     status: {
-      type: String,
-      required: true,
+        type: String,
+        enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'],
+        default: 'pending',
+        index: true
     },
-    lat: {
-      type: Number,
-      required: false,
-    },
-    lng: {
-      type: Number,
-      required: false,
-    },
-    deliveryFee: {
-      type: Number,
-      required: false,
-    },
+
+    // Paiement
     paymentMethod: {
+        type: String,
+        enum: ['mobile_money', 'credit_card', 'crypto', 'paypal', 'bank_transfer'],
+        required: true
+    },
+    paymentStatus: {
+        type: String,
+        enum: ['pending', 'completed', 'failed', 'refunded'],
+        default: 'pending'
+    },
+    paymentDate: Date,
+
+    // Informations de suivi
+    trackingNumber: String,
+    carrier: String,
+
+    // Notes
+    notes: String,
+    adminNotes: String,
+
+    // Dates
+    createdAt: {
+        type: Date,
+        default: Date.now,
+        index: true
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    },
+    confirmedAt: Date,
+    shippedAt: Date,
+    deliveredAt: Date
+});
+
+// Index pour recherches rapides
+orderSchema.index({ customerId: 1, createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
+
+module.exports = mongoose.model('Order', orderSchema);
       type: String,
       required: false,
     },
