@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -20,8 +22,10 @@ const http = require('http');
 const { initSocket } = require('./utils/socket');
 const Notification = require('./Models/Notification');
 
+const { buildProductPayload } = require('./utils/productPayload');
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
+const { verifyAdmin } = require('./Middlewares/verifyTokens');
 const Commande = require('./Models/Commande');
 const Admin = require('./Models/Admin');
 const Achat = require('./Models/Achat');
@@ -34,6 +38,8 @@ const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
+const slugify = require('slugify');
+
 
 const app = express();
 app.set('trust proxy', 1);
@@ -84,7 +90,8 @@ const port = process.env.PORT || 8000;
 // ═══════════════════════════════════════════════
 if (process.env.FEDAPAY_SECRET_KEY) {
   FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
-  FedaPay.setEnvironment('live');
+  const fedapayEnv = process.env.FEDAPAY_ENVIRONMENT === 'live' ? 'live' : 'sandbox';
+  FedaPay.setEnvironment(fedapayEnv);
 }
 
 // ═══════════════════════════════════════════════
@@ -670,20 +677,34 @@ const startServer = async () => {
       try {
         let newOrder;
 
-        if (type === 'cart') {
-          newOrder = new Commande({
-            userName, userEmail, categorie: 'Panier', productQuantity, picture,
-            productDescription: description, selectedCountry, status: 'En attente', lat, lng,
-            deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date, vendorName
-          });
-          await newOrder.save();
-        } else {
-          newOrder = new Achat({
-            userName, userNumber, productQuantity, userPref: userPref || 'Achat direct', selectedCountry, picture, userEmail,
-            status: 'En attente', lat, lng, deliveryFee, paymentMethod: 'FedaPay', address, city, totalPrice, productPrice, date, vendorName
-          });
-          await newOrder.save();
-        }
+        const phoneDigits = String(userNumber).replace(/\D/g, '');
+        const phoneAsNumber = parseInt(phoneDigits.slice(-8), 10) || 97000000;
+        const safePicture = picture && String(picture).trim() ? picture : 'https://www.dangoimport.com/logo.png';
+        const orderDate = date instanceof Date ? date.toISOString() : String(date);
+
+        const achatPayload = {
+          userName,
+          userNumber: phoneAsNumber,
+          productQuantity: productQuantity || 1,
+          userPref: userPref || description || (type === 'cart' ? 'Commande panier' : 'Achat direct'),
+          selectedCountry: selectedCountry || 'Benin',
+          picture: safePicture,
+          userEmail,
+          status: 'En attente',
+          lat: lat || 6.37,
+          lng: lng || 2.43,
+          deliveryFee: deliveryFee || 0,
+          paymentMethod: 'FedaPay',
+          address: address || 'Non précisé',
+          city: city || 'Non précisé',
+          totalPrice,
+          productPrice: productPrice || totalPrice,
+          date: orderDate,
+          vendorName: vendorName || 'Dango Import',
+        };
+
+        newOrder = new Achat(achatPayload);
+        await newOrder.save();
 
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
@@ -735,12 +756,12 @@ const startServer = async () => {
       try {
         const signature = req.headers['x-fedapay-signature'];
         const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
-        
+
         // Vérification de la signature si la clé est configurée
         if (secret && signature) {
           const hash = crypto.createHmac('sha256', secret)
-                             .update(JSON.stringify(req.body))
-                             .digest('hex');
+            .update(JSON.stringify(req.body))
+            .digest('hex');
           if (hash !== signature) {
             console.error("Signature FedaPay invalide !");
             return res.status(403).send('Signature invalide');
@@ -936,7 +957,7 @@ const startServer = async () => {
       try {
         const user = await User.findOne({ userEmail: req.params.email });
         if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
-        
+
         // Retourner SEULEMENT les champs nécessaires
         res.status(200).json({
           _id: user._id,
@@ -991,9 +1012,9 @@ const startServer = async () => {
 
         await withdrawalRequest.save();
 
-        res.status(201).json({ 
-          message: "Demande de retrait créée avec succès.", 
-          withdrawalRequest 
+        res.status(201).json({
+          message: "Demande de retrait créée avec succès.",
+          withdrawalRequest
         });
       } catch (error) {
         console.error("Erreur POST /withdrawal-requests :", error);
@@ -1073,7 +1094,7 @@ const startServer = async () => {
     // Récupérer tous les produits de la base de données
     app.get('/api/products', async (req, res) => {
       try {
-        const products = await Product.find().sort({ date: -1 });
+        const products = await Product.find({ isPublished: true }).sort({ createdAt: -1 });
         res.status(200).json(products);
       } catch (error) {
         console.error("Erreur GET /api/products :", error);
@@ -1128,13 +1149,14 @@ const startServer = async () => {
         if (!query) return res.status(200).json([]);
 
         const products = await Product.find({
+          isPublished: true,
           $or: [
             { name: { $regex: query, $options: 'i' } },
             { description: { $regex: query, $options: 'i' } },
             { category: { $regex: query, $options: 'i' } },
             { vendorName: { $regex: query, $options: 'i' } }
           ]
-        }).sort({ date: -1 });
+        }).sort({ createdAt: -1 });
 
         res.status(200).json(products);
       } catch (error) {
@@ -1188,26 +1210,16 @@ const startServer = async () => {
       }
     });
 
-    // Ajouter / Publier un nouveau produit
-    app.post('/api/products', async (req, res) => {
-      const { name, price, category, description, image, vendorName, isCustomizable, parameters } = req.body;
-
-      if (!name || !price || !category || !image) {
+    // Ajouter un produit (admin uniquement — pas depuis le site public)
+    app.post('/api/products', verifyAdmin, async (req, res) => {
+      const hasImage = req.body.image || (Array.isArray(req.body.images) && req.body.images.length > 0);
+      if (!req.body.name || !req.body.price || !req.body.category || !hasImage) {
         return res.status(400).json({ message: "Champs requis manquants (nom, prix, catégorie, image)." });
       }
 
       try {
-        const newProduct = new Product({
-          name,
-          price,
-          category,
-          description: description || '',
-          image,
-          vendorName: vendorName || 'Vendeur Indépendant',
-          isCustomizable: isCustomizable || false,
-          parameters: parameters || []
-        });
-
+        const payload = buildProductPayload(req.body);
+        const newProduct = new Product(payload);
         await newProduct.save();
         res.status(201).json({ message: "Produit publié avec succès !", product: newProduct });
       } catch (error) {
@@ -1246,13 +1258,13 @@ const startServer = async () => {
       try {
         const admin = await Admin.findById(req.user.userId);
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
-        const { name, price, category, description, image, vendorName, isCustomizable, parameters } = req.body;
-        const updated = await Product.findByIdAndUpdate(
-          req.params.id,
-          { name, price, category, description, image, vendorName, isCustomizable, parameters },
-          { new: true }
-        );
-        if (!updated) return res.status(404).json({ message: "Produit introuvable" });
+
+        const existing = await Product.findById(req.params.id);
+        if (!existing) return res.status(404).json({ message: "Produit introuvable" });
+
+        const payload = buildProductPayload(req.body, { existingProduct: existing });
+        const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
+
         res.status(200).json({ message: "Produit mis à jour", product: updated });
       } catch (error) {
         console.error("Erreur PUT /api/products/:id :", error);
@@ -1330,15 +1342,20 @@ const startServer = async () => {
         const admin = await Admin.findById(req.user.userId);
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
         const UserModel = require('./Models/User');
-        const [products, commandes, achats, users] = await Promise.all([
+        const [products, commandes, achats, users, allCommandes, allAchats] = await Promise.all([
           Product.countDocuments(),
           Commande.countDocuments(),
           Achat.countDocuments(),
           UserModel.countDocuments(),
+          Commande.find({ status: { $in: ['Payé', 'Validée', 'Achevée'] } }, 'totalPrice'),
+          Achat.find({ status: { $in: ['Payé', 'Validée', 'Achevée'] } }, 'totalPrice'),
         ]);
         const recentCommandes = await Commande.find().sort({ date: -1 }).limit(5);
         const recentAchats = await Achat.find().sort({ date: -1 }).limit(5);
-        res.status(200).json({ products, commandes, achats, users, recentCommandes, recentAchats });
+
+        const revenue = [...allCommandes, ...allAchats].reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
+
+        res.status(200).json({ products, commandes, achats, users, recentCommandes, recentAchats, revenue });
       } catch (error) {
         console.error("Erreur GET /api/admin/stats :", error);
         res.status(500).json({ message: "Erreur serveur" });

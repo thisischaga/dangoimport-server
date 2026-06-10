@@ -96,6 +96,9 @@ const productSchema = new mongoose.Schema({
     warranty: String,
 
     // Images et médias
+    image: {
+        type: String
+    },
     images: [
         {
             url: String,
