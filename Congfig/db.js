@@ -3,16 +3,19 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+const connectDB = async () => {
+  const mongoURI = process.env.MONGO_URI;
+  if (!mongoURI) {
+    throw new Error('MONGO_URI manquant dans les variables d\'environnement');
+  }
 
-const connectDB = ()=>{
+  await mongoose.connect(mongoURI, {
+    maxPoolSize: 10,
+    serverSelectionTimeoutMS: 8000,
+    socketTimeoutMS: 45000,
+  });
 
-    const mongoURI = process.env.MONGO_URI;
-    mongoose.connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-.then(() => console.log("✅ Connexion à MongoDB réussie !"))
-.catch(err => console.error("❌Erreur de connexion à MongoDB :", err));
-}
+  console.log('✅ Connexion à MongoDB réussie !');
+};
 
 module.exports = connectDB;

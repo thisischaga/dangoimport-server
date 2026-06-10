@@ -183,9 +183,14 @@ app.options('*', cors(corsOptions));
 // Headers supplémentaires pour iOS/macOS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.header('Pragma', 'no-cache');
-  res.header('Expires', '0');
+  // Cache désactivé uniquement pour les routes privées (panier, commandes, auth)
+  const isPrivate = /^\/api\/(cart|orders|auth|admin|users)/.test(req.path)
+    || req.headers.authorization;
+  if (isPrivate) {
+    res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.header('Pragma', 'no-cache');
+    res.header('Expires', '0');
+  }
   next();
 });
 
@@ -225,7 +230,7 @@ const devisUpload = multer({
 // Point de départ du serveur
 const startServer = async () => {
   try {
-    connectDB();
+    await connectDB();
 
     // Route de santé pour tester la connexion
     app.get('/health', (req, res) => {
@@ -881,9 +886,11 @@ const startServer = async () => {
     app.get('/api/user-activities/:email', async (req, res) => {
       try {
         const email = req.params.email;
-        // fetch Achat and Commande for userEmail
-        const achats = await Achat.find({ userEmail: email }).sort({ date: -1 });
-        const commandes = await Commande.find({ userEmail: email }).sort({ date: -1 });
+        const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
+        const [achats, commandes] = await Promise.all([
+          Achat.find({ userEmail: email }).sort({ date: -1 }).limit(limit).lean(),
+          Commande.find({ userEmail: email }).sort({ date: -1 }).limit(limit).lean(),
+        ]);
         res.status(200).json({ achats, commandes });
       } catch (error) {
         console.error("Erreur GET /api/user-activities :", error);
@@ -895,9 +902,16 @@ const startServer = async () => {
       try {
         const vendorName = req.params.vendorName.trim();
         const vendorRegex = new RegExp(`^${vendorName}$`, 'i');
-        const achats = await Achat.find({ vendorName: vendorRegex }).sort({ date: -1 });
-        const commandes = await Commande.find({ vendorName: vendorRegex }).sort({ date: -1 });
-        const products = await Product.find({ vendorName: vendorRegex });
+        const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
+        const [achats, commandes, products] = await Promise.all([
+          Achat.find({ vendorName: vendorRegex }).sort({ date: -1 }).limit(limit).lean(),
+          Commande.find({ vendorName: vendorRegex }).sort({ date: -1 }).limit(limit).lean(),
+          Product.find({ vendorName: vendorRegex, isPublished: true })
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .select('name salePrice price category images image vendorName stock rating')
+            .lean(),
+        ]);
         res.status(200).json({ achats, commandes, products });
       } catch (error) {
         console.error("Erreur GET /api/vendor-dashboard :", error);
@@ -1108,32 +1122,6 @@ const startServer = async () => {
 
     // --- MARKETPLACE ROUTES ---
 
-    // Récupérer tous les produits de la base de données
-    app.get('/api/products', async (req, res) => {
-      try {
-        const products = await Product.find({ isPublished: true }).sort({ createdAt: -1 });
-        res.status(200).json(products);
-      } catch (error) {
-        console.error("Erreur GET /api/products :", error);
-        res.status(500).json({ message: "Erreur serveur lors de la récupération des produits" });
-      }
-    });
-
-    // Route GET pour récupérer les produits d'un vendeur spécifique
-    app.get('/api/products/vendor/:vendorName', async (req, res) => {
-      try {
-        const vendorName = req.params.vendorName.trim();
-        // Recherche exacte avec l'option 'i' pour l'insensibilité à la casse
-        const products = await Product.find({
-          vendorName: { $regex: new RegExp(`^${vendorName}$`, 'i') }
-        }).sort({ date: -1 });
-        res.status(200).json(products);
-      } catch (error) {
-        console.error("Erreur GET /api/products/vendor :", error);
-        res.status(500).json({ message: "Erreur serveur lors de la récupération des produits du vendeur" });
-      }
-    });
-
     // Récupérer les notifications
     app.get('/api/notifications', async (req, res) => {
       try {
@@ -1156,29 +1144,6 @@ const startServer = async () => {
         res.status(200).json({ message: "Marqué comme lu" });
       } catch (error) {
         res.status(500).json({ message: "Erreur serveur" });
-      }
-    });
-
-    // Route SEARCH pour chercher des produits par mot-clé
-    app.get('/api/products/search', async (req, res) => {
-      try {
-        const query = req.query.q;
-        if (!query) return res.status(200).json([]);
-
-        const products = await Product.find({
-          isPublished: true,
-          $or: [
-            { name: { $regex: query, $options: 'i' } },
-            { description: { $regex: query, $options: 'i' } },
-            { category: { $regex: query, $options: 'i' } },
-            { vendorName: { $regex: query, $options: 'i' } }
-          ]
-        }).sort({ createdAt: -1 });
-
-        res.status(200).json(products);
-      } catch (error) {
-        console.error("Erreur SEARCH /api/products/search :", error);
-        res.status(500).json({ message: "Erreur serveur lors de la recherche" });
       }
     });
 
@@ -1238,6 +1203,8 @@ const startServer = async () => {
         const payload = buildProductPayload(req.body);
         const newProduct = new Product(payload);
         await newProduct.save();
+        const cache = require('./utils/cache');
+        cache.delPrefix('products:');
         res.status(201).json({ message: "Produit publié avec succès !", product: newProduct });
       } catch (error) {
         console.error("Erreur POST /api/products :", error);
@@ -1281,6 +1248,8 @@ const startServer = async () => {
 
         const payload = buildProductPayload(req.body, { existingProduct: existing });
         const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
+        const cache = require('./utils/cache');
+        cache.delPrefix('products:');
 
         res.status(200).json({ message: "Produit mis à jour", product: updated });
       } catch (error) {
@@ -1296,6 +1265,8 @@ const startServer = async () => {
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
         const deleted = await Product.findByIdAndDelete(req.params.id);
         if (!deleted) return res.status(404).json({ message: "Produit introuvable" });
+        const cache = require('./utils/cache');
+        cache.delPrefix('products:');
         res.status(200).json({ message: "Produit supprimé avec succès" });
       } catch (error) {
         console.error("Erreur DELETE /api/products/:id :", error);
@@ -1387,7 +1358,8 @@ const startServer = async () => {
           return res.status(401).json({ message: "Admin non trouvé" });
         }
 
-        const commandes = await Commande.find().sort({ createdAt: 1 });
+        const limit = Math.min(200, parseInt(req.query.limit, 10) || 100);
+        const commandes = await Commande.find().sort({ createdAt: -1 }).limit(limit).lean();
         res.status(200).json(commandes);
       } catch (error) {
         console.error("Erreur /commandes :", error);
@@ -1403,7 +1375,8 @@ const startServer = async () => {
           return res.status(401).json({ message: "Admin non trouvé" });
         }
 
-        const achats = await Achat.find().sort({ createdAt: 1 });
+        const limit = Math.min(200, parseInt(req.query.limit, 10) || 100);
+        const achats = await Achat.find().sort({ createdAt: -1 }).limit(limit).lean();
         res.status(200).json(achats);
       } catch (error) {
         console.error("Erreur /achats :", error);

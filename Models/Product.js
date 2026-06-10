@@ -213,5 +213,10 @@ const productSchema = new mongoose.Schema({
 // Optimisation : Indexation pour recherche rapide
 productSchema.index({ name: 'text', description: 'text', category: 'text' });
 productSchema.index({ category: 1 });
+productSchema.index({ isPublished: 1, createdAt: -1 });
+productSchema.index({ isFeatured: 1, isPublished: 1 });
+productSchema.index({ vendorName: 1, isPublished: 1 });
+productSchema.index({ salePrice: 1 });
+productSchema.index({ category: 1, isPublished: 1 });
 
 module.exports = mongoose.model('Product', productSchema);

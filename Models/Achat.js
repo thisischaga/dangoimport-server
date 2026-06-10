@@ -76,5 +76,9 @@ const userSchema = new mongoose.Schema({
       required: false,
     }
 });
-  
+
+userSchema.index({ userEmail: 1, date: -1 });
+userSchema.index({ vendorName: 1, date: -1 });
+userSchema.index({ status: 1 });
+
 module.exports = mongoose.model('Achat', userSchema);
