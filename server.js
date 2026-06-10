@@ -23,6 +23,7 @@ const { initSocket } = require('./utils/socket');
 const Notification = require('./Models/Notification');
 
 const { buildProductPayload } = require('./utils/productPayload');
+const { configureFedapay, getFedapayStatus } = require('./config/fedapay');
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
 const { verifyAdmin } = require('./Middlewares/verifyTokens');
@@ -88,10 +89,11 @@ const port = process.env.PORT || 8000;
 // ═══════════════════════════════════════════════
 // 💳 CONFIGURATION FEDAPAY
 // ═══════════════════════════════════════════════
-if (process.env.FEDAPAY_SECRET_KEY) {
-  FedaPay.setApiKey(process.env.FEDAPAY_SECRET_KEY);
-  const fedapayEnv = process.env.FEDAPAY_ENVIRONMENT === 'live' ? 'live' : 'sandbox';
-  FedaPay.setEnvironment(fedapayEnv);
+const fedapayBoot = configureFedapay();
+if (fedapayBoot.ok) {
+  console.log(`✅ FedaPay configuré (mode: ${fedapayBoot.environment}, clé: ${fedapayBoot.keyType})`);
+} else {
+  console.warn('⚠️ FEDAPAY_SECRET_KEY manquante — paiement FedaPay désactivé.');
 }
 
 // ═══════════════════════════════════════════════
@@ -662,6 +664,10 @@ const startServer = async () => {
     // ═══════════════════════════════════════════════
     // 💳 FEDAPAY ENDPOINTS
     // ═══════════════════════════════════════════════
+    app.get('/api/fedapay/status', (req, res) => {
+      res.json(getFedapayStatus());
+    });
+
     app.post('/api/fedapay/checkout', async (req, res) => {
       const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
       const date = new Date();
@@ -671,6 +677,11 @@ const startServer = async () => {
       }
 
       if (!process.env.FEDAPAY_SECRET_KEY) {
+        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
+      }
+
+      const fedapayConfig = configureFedapay();
+      if (!fedapayConfig.ok) {
         return res.status(503).json({ message: "Paiement FedaPay non configuré." });
       }
 
@@ -709,7 +720,9 @@ const startServer = async () => {
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
         const lastname = nameParts.slice(1).join(' ') || 'Dango';
-        const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://www.dangoimport.com/';
+        const returnUrl = process.env.FEDAPAY_RETURN_URL
+          || process.env.PAYDUNYA_RETURN_URL
+          || 'https://www.dangoimport.com/checkout';
 
         // Normalisation du numero : react-phone-input-2 envoie le code pays inclus
         // ex: 22901234567 -> FedaPay attend 01234567 (sans prefixe 229)
@@ -744,8 +757,12 @@ const startServer = async () => {
         console.error('=== Erreur FedaPay Checkout ===');
         console.error('Message:', error.message);
         console.error('Errors:', JSON.stringify(error.errors || error.body || {}, null, 2));
-        res.status(500).json({
-          message: "Erreur lors de l'initialisation FedaPay",
+
+        const isAuthError = String(error.message || '').includes('401');
+        res.status(isAuthError ? 502 : 500).json({
+          message: isAuthError
+            ? 'Configuration FedaPay incorrecte sur le serveur (clé ou mode live/sandbox).'
+            : "Erreur lors de l'initialisation FedaPay",
           error: error.message,
           details: error.errors || error.body || null
         });
