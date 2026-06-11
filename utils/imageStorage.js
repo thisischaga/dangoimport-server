@@ -107,7 +107,10 @@ async function normalizeProductImages(productData, { existingProduct } = {}) {
   }
 
   if (normalized.length === 0 && !existingProduct) {
-    throw new Error('Image produit requise. Uploadez une image via le panneau admin.');
+    throw new Error(
+      'Image produit requise. Uploadez une image via le panneau admin (URL https Cloudinary ou base64). ' +
+      'Vérifiez aussi CLOUDINARY_* sur le serveur Render.'
+    );
   }
 
   if (normalized.length === 0 && existingProduct) {

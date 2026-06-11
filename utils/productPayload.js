@@ -23,15 +23,22 @@ const normalizeSpecifications = (specs) => {
 };
 
 const isBlobUrl = (url) => typeof url === 'string' && url.startsWith('blob:');
+const isPersistableUrl = (url) =>
+  typeof url === 'string' &&
+  !isBlobUrl(url) &&
+  (url.startsWith('http://') ||
+    url.startsWith('https://') ||
+    url.startsWith('data:image') ||
+    url.trim().length > 0);
 
 const normalizeImages = (body) => {
   const { image, name, images } = body;
   if (Array.isArray(images) && images.length > 0) {
     return images
       .map((img) => (typeof img === 'string' ? { url: img } : img))
-      .filter((img) => img?.url && !isBlobUrl(img.url));
+      .filter((img) => img?.url && isPersistableUrl(img.url));
   }
-  if (image && !isBlobUrl(image)) {
+  if (image && isPersistableUrl(image)) {
     return [{ url: image, alt: name || 'Produit', isPrimary: true }];
   }
   return [];

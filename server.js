@@ -1195,9 +1195,19 @@ const startServer = async () => {
 
     // Ajouter un produit (admin uniquement — pas depuis le site public)
     app.post('/api/products', verifyAdmin, async (req, res) => {
-      const hasImage = req.body.image || (Array.isArray(req.body.images) && req.body.images.length > 0);
-      if (!req.body.name || !req.body.price || !req.body.category || !hasImage) {
-        return res.status(400).json({ message: "Champs requis manquants (nom, prix, catégorie, image)." });
+      const isBlob = (url) => typeof url === 'string' && url.startsWith('blob:');
+      const hasValidImage =
+        (req.body.image && !isBlob(req.body.image)) ||
+        (Array.isArray(req.body.images) &&
+          req.body.images.some((img) => {
+            const url = typeof img === 'string' ? img : img?.url;
+            return url && !isBlob(url);
+          }));
+
+      if (!req.body.name || !req.body.price || !req.body.category || !hasValidImage) {
+        return res.status(400).json({
+          message: "Champs requis manquants (nom, prix, catégorie, image). L'image doit être uploadée (URL https ou base64), pas une URL blob locale.",
+        });
       }
 
       try {
@@ -1210,7 +1220,10 @@ const startServer = async () => {
         res.status(201).json({ message: "Produit publié avec succès !", product: newProduct });
       } catch (error) {
         console.error("Erreur POST /api/products :", error);
-        res.status(500).json({ message: "Erreur serveur lors de la publication", error: error.message });
+        res.status(500).json({
+          message: error.message || "Erreur serveur lors de la publication",
+          error: error.message,
+        });
       }
     });
 

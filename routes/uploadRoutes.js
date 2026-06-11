@@ -16,7 +16,14 @@ const upload = multer({
   },
 });
 
-router.post('/product-image', verifyAdmin, upload.single('image'), async (req, res) => {
+router.post('/product-image', verifyAdmin, (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ message: err.message || 'Fichier image invalide.' });
+    }
+    next();
+  });
+}, async (req, res) => {
   if (!isCloudinaryConfigured) {
     return res.status(503).json({ message: 'Cloudinary non configuré sur le serveur.' });
   }
