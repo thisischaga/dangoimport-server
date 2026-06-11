@@ -7,7 +7,7 @@ const router = express.Router();
 
 // Middleware pour vérifier l'accès admin
 const adminOnly = (req, res, next) => {
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' && req.user.role !== 'dev-admin') {
         return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
     next();
@@ -107,7 +107,7 @@ router.delete('/products/:id', verifyToken, adminOnly, async (req, res) => {
 // GET - Tous les produits (Admin)
 router.get('/products', verifyToken, adminOnly, async (req, res) => {
     try {
-        const { page = 1, limit = 20, search, category } = req.query;
+        const { page = 1, limit = 500, search, category } = req.query;
         const skip = (page - 1) * limit;
 
         let filter = {};

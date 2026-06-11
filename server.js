@@ -23,6 +23,7 @@ const { initSocket } = require('./utils/socket');
 const Notification = require('./Models/Notification');
 
 const { buildProductPayload } = require('./utils/productPayload');
+const { normalizeProductImages } = require('./utils/imageStorage');
 const { configureFedapay, getFedapayStatus } = require('./config/fedapay');
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
@@ -1200,7 +1201,8 @@ const startServer = async () => {
       }
 
       try {
-        const payload = buildProductPayload(req.body);
+        let payload = buildProductPayload(req.body);
+        payload = await normalizeProductImages(payload);
         const newProduct = new Product(payload);
         await newProduct.save();
         const cache = require('./utils/cache');
@@ -1237,6 +1239,10 @@ const startServer = async () => {
     const adminRoutes = require('./routes/adminRoutes');
     app.use('/api/admin', adminRoutes);
 
+    // Upload images (Cloudinary)
+    const uploadRoutes = require('./routes/uploadRoutes');
+    app.use('/api/upload', uploadRoutes);
+
     // Modifier un produit (admin only)
     app.put('/api/products/:id', verifyToken, async (req, res) => {
       try {
@@ -1246,7 +1252,8 @@ const startServer = async () => {
         const existing = await Product.findById(req.params.id);
         if (!existing) return res.status(404).json({ message: "Produit introuvable" });
 
-        const payload = buildProductPayload(req.body, { existingProduct: existing });
+        let payload = buildProductPayload(req.body, { existingProduct: existing });
+        payload = await normalizeProductImages(payload);
         const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
         const cache = require('./utils/cache');
         cache.delPrefix('products:');
