@@ -51,8 +51,8 @@ function buildProductPayload(body, { existingProduct } = {}) {
 
   const payload = {
     name,
-    sku: body.sku?.trim() || undefined,
-    barcode: body.barcode?.trim() || undefined,
+    sku: body.sku?.trim() || existingProduct?.sku || undefined,
+    barcode: body.barcode?.trim() || existingProduct?.barcode || undefined,
     brand: body.brand?.trim() || '',
     category: body.category?.trim(),
     subCategory: body.subCategory?.trim() || undefined,

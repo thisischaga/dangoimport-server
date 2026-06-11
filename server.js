@@ -24,6 +24,12 @@ const Notification = require('./Models/Notification');
 
 const { buildProductPayload } = require('./utils/productPayload');
 const { normalizeProductImages } = require('./utils/imageStorage');
+const {
+  resolveSkuForCreate,
+  resolveSkuForUpdate,
+  isDuplicateKeyError,
+  duplicateFieldMessage,
+} = require('./utils/productIdentifiers');
 const { configureFedapay, getFedapayStatus } = require('./config/fedapay');
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
@@ -330,10 +336,14 @@ const startServer = async () => {
     app.post('/api/devis/create-invoice', devisUpload.single('photo'), async (req, res) => {
       try {
         const { name, phone, productLink, quantity, description, studyFee } = req.body;
-        if (!name || !phone || !productLink || !quantity) {
-          return res.status(400).json({ message: 'Veuillez remplir tous les champs obligatoires.' });
+        if (!name || !phone || !quantity) {
+          return res.status(400).json({ message: 'Nom, téléphone et quantité sont obligatoires.' });
+        }
+        if (!productLink?.trim() && !req.file) {
+          return res.status(400).json({ message: 'Indiquez un lien produit ou joignez une photo.' });
         }
 
+        const linkValue = productLink?.trim() || 'Photo fournie par le client';
         const bypassFedaPay = false; // Activation du paiement FedaPay pour les devis
 
         if (bypassFedaPay) {
@@ -343,7 +353,7 @@ const startServer = async () => {
           const newDevis = new Devis({
             name: name.trim(),
             phone: phone.trim(),
-            productLink: productLink.trim(),
+            productLink: linkValue,
             quantity: Number(quantity),
             description: description ? description.trim() : '',
             studyFee: 0,
@@ -391,7 +401,7 @@ const startServer = async () => {
         const newDevis = new Devis({
           name: name.trim(),
           phone: phone.trim(),
-          productLink: productLink.trim(),
+          productLink: linkValue,
           quantity: Number(quantity),
           description: description ? description.trim() : '',
           studyFee: amount,
@@ -1212,6 +1222,7 @@ const startServer = async () => {
 
       try {
         let payload = buildProductPayload(req.body);
+        payload.sku = await resolveSkuForCreate(payload.sku);
         payload = await normalizeProductImages(payload, { existingProduct: null });
         const newProduct = new Product(payload);
         await newProduct.save();
@@ -1220,6 +1231,11 @@ const startServer = async () => {
         res.status(201).json({ message: "Produit publié avec succès !", product: newProduct });
       } catch (error) {
         console.error("Erreur POST /api/products :", error);
+        if (error.statusCode === 409 || isDuplicateKeyError(error)) {
+          return res.status(409).json({
+            message: error.message || duplicateFieldMessage(error.keyPattern),
+          });
+        }
         res.status(500).json({
           message: error.message || "Erreur serveur lors de la publication",
           error: error.message,
@@ -1266,6 +1282,7 @@ const startServer = async () => {
         if (!existing) return res.status(404).json({ message: "Produit introuvable" });
 
         let payload = buildProductPayload(req.body, { existingProduct: existing });
+        payload.sku = await resolveSkuForUpdate(payload.sku, existing._id, existing.sku);
         payload = await normalizeProductImages(payload, { existingProduct: existing });
         const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
         const cache = require('./utils/cache');
@@ -1274,7 +1291,12 @@ const startServer = async () => {
         res.status(200).json({ message: "Produit mis à jour", product: updated });
       } catch (error) {
         console.error("Erreur PUT /api/products/:id :", error);
-        res.status(500).json({ message: "Erreur serveur" });
+        if (error.statusCode === 409 || isDuplicateKeyError(error)) {
+          return res.status(409).json({
+            message: error.message || duplicateFieldMessage(error.keyPattern),
+          });
+        }
+        res.status(500).json({ message: error.message || "Erreur serveur" });
       }
     });
 
