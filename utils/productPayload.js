@@ -22,16 +22,24 @@ const normalizeSpecifications = (specs) => {
     .filter((s) => s.key && s.value);
 };
 
+const isBlobUrl = (url) => typeof url === 'string' && url.startsWith('blob:');
+
 const normalizeImages = (body) => {
   const { image, name, images } = body;
-  if (Array.isArray(images) && images.length > 0) return images;
-  if (image) return [{ url: image, alt: name || 'Produit', isPrimary: true }];
+  if (Array.isArray(images) && images.length > 0) {
+    return images
+      .map((img) => (typeof img === 'string' ? { url: img } : img))
+      .filter((img) => img?.url && !isBlobUrl(img.url));
+  }
+  if (image && !isBlobUrl(image)) {
+    return [{ url: image, alt: name || 'Produit', isPrimary: true }];
+  }
   return [];
 };
 
 function buildProductPayload(body, { existingProduct } = {}) {
   const name = body.name?.trim();
-  const image = body.image || existingProduct?.image;
+  const image = (!isBlobUrl(body.image) && body.image) || existingProduct?.image;
   const images = normalizeImages({ ...body, name: name || existingProduct?.name });
 
   const payload = {

@@ -1202,7 +1202,7 @@ const startServer = async () => {
 
       try {
         let payload = buildProductPayload(req.body);
-        payload = await normalizeProductImages(payload);
+        payload = await normalizeProductImages(payload, { existingProduct: null });
         const newProduct = new Product(payload);
         await newProduct.save();
         const cache = require('./utils/cache');
@@ -1253,7 +1253,7 @@ const startServer = async () => {
         if (!existing) return res.status(404).json({ message: "Produit introuvable" });
 
         let payload = buildProductPayload(req.body, { existingProduct: existing });
-        payload = await normalizeProductImages(payload);
+        payload = await normalizeProductImages(payload, { existingProduct: existing });
         const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
         const cache = require('./utils/cache');
         cache.delPrefix('products:');
