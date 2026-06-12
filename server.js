@@ -785,6 +785,137 @@ const startServer = async () => {
       }
     });
 
+    app.post('/api/fedapay/direct-pay', async (req, res) => {
+      const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
+      const date = new Date();
+
+      if (!userNumber || !userName || !userEmail || !totalPrice || !network) {
+        return res.status(400).json({ message: "Champs manquants pour FedaPay Direct (network requis)." });
+      }
+
+      if (!process.env.FEDAPAY_SECRET_KEY) {
+        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
+      }
+
+      const fedapayConfig = configureFedapay();
+      if (!fedapayConfig.ok) {
+        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
+      }
+
+      try {
+        let newOrder;
+
+        const phoneDigits = String(userNumber).replace(/\D/g, '');
+        const phoneAsNumber = parseInt(phoneDigits.slice(-8), 10) || 97000000;
+        const safePicture = picture && String(picture).trim() ? picture : 'https://www.dangoimport.com/logo.png';
+        const orderDate = date instanceof Date ? date.toISOString() : String(date);
+
+        const achatPayload = {
+          userName,
+          userNumber: phoneAsNumber,
+          productQuantity: productQuantity || 1,
+          userPref: userPref || description || (type === 'cart' ? 'Commande panier' : 'Achat direct'),
+          selectedCountry: selectedCountry || 'Benin',
+          picture: safePicture,
+          userEmail,
+          status: 'En attente',
+          lat: lat || 6.37,
+          lng: lng || 2.43,
+          deliveryFee: deliveryFee || 0,
+          paymentMethod: 'FedaPay (USSD)',
+          address: address || 'Non précisé',
+          city: city || 'Non précisé',
+          totalPrice,
+          productPrice: productPrice || totalPrice,
+          date: orderDate,
+          vendorName: vendorName || 'Dango Import',
+        };
+
+        newOrder = new Achat(achatPayload);
+        await newOrder.save();
+
+        const nameParts = userName.trim().split(' ');
+        const firstname = nameParts[0] || 'Client';
+        const lastname = nameParts.slice(1).join(' ') || 'Dango';
+        const returnUrl = process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/';
+
+        // Nettoyage du numéro
+        let phoneNumber = String(userNumber).replace(/\D/g, '');
+        const prefixes = ['229', '228', '225', '221', '226', '227', '223', '224', '220', '222', '230'];
+        for (const pfx of prefixes) {
+          if (phoneNumber.startsWith(pfx)) { phoneNumber = phoneNumber.slice(pfx.length); break; }
+        }
+        if (phoneNumber.length < 8) phoneNumber = '97000000';
+
+        const transaction = await Transaction.create({
+          description: description || 'Commande Dango Import',
+          amount: Math.round(Number(totalPrice)),
+          currency: { iso: 'XOF' },
+          callback_url: returnUrl,
+          custom_metadata: { orderId: newOrder._id.toString(), type: type || 'achat' },
+          customer: {
+            firstname,
+            lastname,
+            email: userEmail || 'client@dangoimport.com',
+            phone_number: {
+              number: phoneNumber,
+              country: countryCode || 'BJ'
+            }
+          }
+        });
+
+        const token = await transaction.generateToken();
+        const sendResult = await transaction.sendNowWithToken(network, token.token);
+
+        res.status(201).json({ 
+          message: "Demande de paiement envoyée.",
+          transactionId: transaction.id, 
+          orderId: newOrder._id 
+        });
+      } catch (error) {
+        console.error('=== Erreur FedaPay Direct ===');
+        console.error('Message:', error.message);
+        console.error('Errors:', JSON.stringify(error.errors || error.body || {}, null, 2));
+
+        const isAuthError = String(error.message || '').includes('401');
+        res.status(isAuthError ? 502 : 500).json({
+          message: "Erreur lors de l'initialisation du paiement direct FedaPay",
+          error: error.message,
+          details: error.errors || error.body || null
+        });
+      }
+    });
+
+    app.get('/api/fedapay/transaction/:id', async (req, res) => {
+      try {
+        const fedapayConfig = configureFedapay();
+        if (!fedapayConfig.ok) {
+          return res.status(503).json({ message: "Paiement FedaPay non configuré." });
+        }
+        const transaction = await Transaction.retrieve(req.params.id);
+        
+        // Mettre à jour la base de données si c'est approuvé
+        if (transaction && transaction.status === 'approved') {
+           const meta = transaction.custom_metadata || {};
+           const orderId = meta.orderId;
+           if (orderId) {
+             if (meta.type === 'cart') {
+               await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+             } else if (meta.type === 'devis') {
+               await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+             } else {
+               await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+             }
+           }
+        }
+        
+        res.json({ status: transaction.status, id: transaction.id });
+      } catch (error) {
+        console.error('Erreur status FedaPay:', error.message);
+        res.status(500).json({ message: 'Erreur lors de la récupération du statut', error: error.message });
+      }
+    });
+
     app.post('/api/fedapay/webhook', express.json(), async (req, res) => {
       try {
         const signature = req.headers['x-fedapay-signature'];
