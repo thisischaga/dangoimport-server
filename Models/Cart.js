@@ -26,9 +26,8 @@ const cartSchema = new mongoose.Schema({
                 default: 1
             },
             selectedOptions: {
-                color: String,
-                size: String,
-                material: String
+                type: mongoose.Schema.Types.Mixed,
+                default: {}
             },
             addedAt: {
                 type: Date,

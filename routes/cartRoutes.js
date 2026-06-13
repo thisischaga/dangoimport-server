@@ -47,7 +47,22 @@ router.post('/add', verifyToken, async (req, res) => {
                 JSON.stringify(item.selectedOptions) === JSON.stringify(selectedOptions || {})
         );
 
-        const price = product.salePrice || product.price;
+        const basePrice = product.salePrice || product.price;
+
+        // Calculer les surcoûts des paramètres personnalisés
+        let priceAdj = 0;
+        if (selectedOptions && product.parameters && product.parameters.length > 0) {
+            product.parameters.forEach(param => {
+                const selectedValue = selectedOptions[param.name];
+                if (selectedValue) {
+                    const opt = param.options?.find(o => o.value === selectedValue);
+                    if (opt && opt.priceAdjustment) {
+                        priceAdj += opt.priceAdjustment;
+                    }
+                }
+            });
+        }
+        const price = basePrice + priceAdj;
 
         if (existingItem) {
             existingItem.quantity += quantity;
