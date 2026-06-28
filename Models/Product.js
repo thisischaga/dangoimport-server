@@ -197,6 +197,17 @@ const productSchema = new mongoose.Schema({
                 type: mongoose.Schema.Types.Mixed,
                 default: {}
             },
+            parameters: [
+                {
+                    name: String,
+                    options: [
+                        {
+                            value: String,
+                            priceAdjustment: { type: Number, default: 0 }
+                        }
+                    ]
+                }
+            ],
             isDefault: { type: Boolean, default: false },
         }
     ],

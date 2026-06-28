@@ -89,7 +89,14 @@ function buildProductPayload(body, { existingProduct } = {}) {
     seoKeywords: toStringList(body.seoKeywords),
     isCustomizable: Boolean(body.isCustomizable),
     parameters: Array.isArray(body.parameters) ? body.parameters : [],
-    variants: Array.isArray(body.variants) ? body.variants : [],
+    variants: (Array.isArray(body.variants) ? body.variants : []).map(v => ({
+      name: v.name,
+      sku: v.sku,
+      price: toNumber(v.price),
+      stock: toNumber(v.stock, 0),
+      image: v.image,
+      parameters: Array.isArray(v.parameters) ? v.parameters : [],
+    })),
     vendorName: body.vendorName?.trim() || 'Vendeur Indépendant',
     updatedAt: new Date(),
   };
