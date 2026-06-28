@@ -22,13 +22,35 @@ function getExistingImages(existingProduct) {
   return [];
 }
 
+const fs = require('fs');
+const path = require('path');
+const { isCloudinaryConfigured } = require('../config/cloudinary');
+
 async function persistImageUrl(url) {
   if (!url || typeof url !== 'string') return null;
   const trimmed = url.trim();
   if (!trimmed || isBlobUrl(trimmed)) return null;
   if (isRemoteUrl(trimmed)) return trimmed;
   if (trimmed.startsWith('data:image')) {
-    return uploadDataUrl(trimmed);
+    if (isCloudinaryConfigured) {
+      return uploadDataUrl(trimmed);
+    } else {
+      const matches = trimmed.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        throw new Error('Invalid base64 string');
+      }
+      const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+      const buffer = Buffer.from(matches[2], 'base64');
+      const filename = `product_${Date.now()}_${Math.round(Math.random() * 1e9)}.${ext}`;
+      const uploadDir = path.join(__dirname, '../public/uploads/products');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      
+      const API_BASE = process.env.API_BASE_URL || 'http://localhost:8000';
+      return `${API_BASE}/uploads/products/${filename}`;
+    }
   }
   return trimmed;
 }

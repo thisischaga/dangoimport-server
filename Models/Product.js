@@ -185,6 +185,22 @@ const productSchema = new mongoose.Schema({
         }
     ],
 
+    // Variantes indépendantes (nouveau système)
+    variants: [
+        {
+            name: { type: String, required: true },
+            sku: String,
+            price: { type: Number, required: true },
+            stock: { type: Number, default: 0 },
+            image: String,
+            attributes: {
+                type: mongoose.Schema.Types.Mixed,
+                default: {}
+            },
+            isDefault: { type: Boolean, default: false },
+        }
+    ],
+
     // Informations de vendeur
     vendorName: {
         type: String,
