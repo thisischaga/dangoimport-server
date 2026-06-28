@@ -89,6 +89,7 @@ function buildProductPayload(body, { existingProduct } = {}) {
     seoKeywords: toStringList(body.seoKeywords),
     isCustomizable: Boolean(body.isCustomizable),
     parameters: Array.isArray(body.parameters) ? body.parameters : [],
+    variants: Array.isArray(body.variants) ? body.variants : [],
     vendorName: body.vendorName?.trim() || 'Vendeur Indépendant',
     updatedAt: new Date(),
   };

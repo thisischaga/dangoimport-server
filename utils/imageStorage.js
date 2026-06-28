@@ -152,10 +152,22 @@ async function normalizeProductImages(productData, { existingProduct } = {}) {
 
   const primary = normalized.find((img) => img.isPrimary) || normalized[0];
 
+  const variants = Array.isArray(data.variants) ? data.variants : [];
+  const normalizedVariants = [];
+  for (const v of variants) {
+    let vImage = v.image;
+    if (vImage) {
+      const pUrl = await persistImageUrl(vImage);
+      if (pUrl) vImage = pUrl;
+    }
+    normalizedVariants.push({ ...v, image: vImage || '' });
+  }
+
   return {
     ...data,
     images: normalized,
     image: primary?.url || '',
+    variants: normalizedVariants,
   };
 }
 
