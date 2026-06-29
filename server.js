@@ -1355,6 +1355,7 @@ const startServer = async () => {
         let payload = buildProductPayload(req.body);
         payload.sku = await resolveSkuForCreate(payload.sku);
         payload = await normalizeProductImages(payload, { existingProduct: null });
+        payload.vendorId = req.admin ? req.admin._id : (req.user.userId || req.user.id);
         const newProduct = new Product(payload);
         await newProduct.save();
         const cache = require('./utils/cache');

@@ -16,60 +16,23 @@ const adminOnly = (req, res, next) => {
 // POST - Créer un produit
 router.post('/products', verifyToken, adminOnly, async (req, res) => {
     try {
-        const {
-            name, slug, sku, barcode, brand, category, subCategory, price, salePrice, costPrice,
-            stock, minStock, weight, length, width, height, color, size, material,
-            shortDescription, description, specifications, features, shippingInfo, warranty,
-            images, videos, documents, condition, isFeatured, isBestSeller, isNewArrival,
-            seoTitle, seoDescription, seoKeywords, isCustomizable, parameters
-        } = req.body;
-
+        const productData = { ...req.body };
+        
         // Générer slug si non fourni
-        const productSlug = slug || name.toLowerCase().replace(/\s+/g, '-');
+        if (!productData.slug && productData.name) {
+            productData.slug = productData.name.toLowerCase().replace(/\s+/g, '-');
+        }
 
-        const product = new Product({
-            name,
-            slug: productSlug,
-            sku,
-            barcode,
-            brand,
-            category,
-            subCategory,
-            price,
-            salePrice: salePrice || price,
-            costPrice,
-            stock,
-            minStock,
-            weight,
-            length,
-            width,
-            height,
-            color,
-            size,
-            material,
-            shortDescription,
-            description,
-            specifications,
-            features,
-            shippingInfo,
-            warranty,
-            images,
-            videos,
-            documents,
-            condition,
-            isFeatured,
-            isBestSeller,
-            isNewArrival,
-            seoTitle,
-            seoDescription,
-            seoKeywords,
-            isCustomizable,
-            parameters
-        });
+        if (!productData.vendorId) {
+            productData.vendorId = req.user.userId || req.user.id;
+        }
 
+        const product = new Product(productData);
         await product.save();
+
         res.json({ success: true, message: 'Produit créé', data: product });
     } catch (error) {
+        console.error("Erreur POST /api/admin/products:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -114,7 +77,12 @@ router.get('/products', verifyToken, adminOnly, async (req, res) => {
         if (search) filter.$text = { $search: search };
         if (category) filter.category = category;
 
+        if (req.user.role === 'dev-admin') {
+            filter.vendorId = req.user.userId;
+        }
+
         const products = await Product.find(filter)
+            .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit));
 
