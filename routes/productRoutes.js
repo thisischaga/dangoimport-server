@@ -80,6 +80,7 @@ router.get('/', async (req, res) => {
     setPublicCache(res);
     res.json(payload);
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -104,6 +105,7 @@ router.get('/featured', async (req, res) => {
     setPublicCache(res, 600);
     res.json(payload);
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -133,6 +135,7 @@ router.get('/vendor/:vendorName', async (req, res) => {
     setPublicCache(res);
     res.json(payload);
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -157,6 +160,7 @@ router.get('/similar/:id', async (req, res) => {
     setPublicCache(res);
     res.json({ success: true, data: similar });
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -182,6 +186,7 @@ router.get('/:id', async (req, res) => {
     setPublicCache(res, 120);
     res.json(payload);
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -213,6 +218,7 @@ router.get('/:id/reviews', async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -256,6 +262,7 @@ router.post('/:id/reviews', verifyToken, async (req, res) => {
     cache.delPrefix('products:');
     res.json({ success: true, message: 'Avis ajouté', data: review });
   } catch (error) {
+    console.error("[productRoutes.js] Erreur capturée :", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });

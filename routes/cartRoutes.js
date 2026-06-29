@@ -17,6 +17,7 @@ router.get('/', verifyToken, async (req, res) => {
 
         res.json({ success: true, data: cart });
     } catch (error) {
+      console.error("[cartRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -86,6 +87,7 @@ router.post('/add', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Article ajouté au panier', data: cart });
     } catch (error) {
+      console.error("[cartRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -121,6 +123,7 @@ router.put('/update/:itemId', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Quantité mise à jour', data: cart });
     } catch (error) {
+      console.error("[cartRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -144,6 +147,7 @@ router.delete('/remove/:itemId', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Article supprimé', data: cart });
     } catch (error) {
+      console.error("[cartRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -159,6 +163,7 @@ router.delete('/clear', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Panier vidé', data: cart });
     } catch (error) {
+      console.error("[cartRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

@@ -95,6 +95,7 @@ router.post('/', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Commande créée', data: order });
     } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -122,6 +123,7 @@ router.get('/my-orders', verifyToken, async (req, res) => {
             }
         });
     } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -142,6 +144,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 
         res.json({ success: true, data: order });
     } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -183,6 +186,7 @@ router.get('/admin/all', verifyToken, async (req, res) => {
             }
         });
     } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -215,6 +219,7 @@ router.patch('/:id/status', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Commande mise à jour', data: order });
     } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

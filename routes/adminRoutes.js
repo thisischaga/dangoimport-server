@@ -48,6 +48,7 @@ router.put('/products/:id', verifyToken, adminOnly, async (req, res) => {
 
         res.json({ success: true, message: 'Produit mis à jour', data: product });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -63,6 +64,7 @@ router.delete('/products/:id', verifyToken, adminOnly, async (req, res) => {
 
         res.json({ success: true, message: 'Produit supprimé' });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -98,6 +100,7 @@ router.get('/products', verifyToken, adminOnly, async (req, res) => {
             }
         });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -127,6 +130,7 @@ router.post('/promotions', verifyToken, adminOnly, async (req, res) => {
         await promotion.save();
         res.json({ success: true, message: 'Promotion créée', data: promotion });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -137,6 +141,7 @@ router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
         const promotions = await Promotion.find();
         res.json({ success: true, data: promotions });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -152,6 +157,7 @@ router.put('/promotions/:id', verifyToken, adminOnly, async (req, res) => {
 
         res.json({ success: true, message: 'Promotion mise à jour', data: promotion });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -162,6 +168,7 @@ router.delete('/promotions/:id', verifyToken, adminOnly, async (req, res) => {
         await Promotion.findByIdAndDelete(req.params.id);
         res.json({ success: true, message: 'Promotion supprimée' });
     } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

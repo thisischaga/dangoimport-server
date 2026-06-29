@@ -18,6 +18,7 @@ router.get('/', verifyToken, async (req, res) => {
 
         res.json({ success: true, data: wishlist });
     } catch (error) {
+      console.error("[wishlistRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -51,6 +52,7 @@ router.post('/add/:productId', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Produit ajouté à la liste', data: wishlist });
     } catch (error) {
+      console.error("[wishlistRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -70,6 +72,7 @@ router.delete('/remove/:productId', verifyToken, async (req, res) => {
 
         res.json({ success: true, message: 'Produit supprimé', data: wishlist });
     } catch (error) {
+      console.error("[wishlistRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

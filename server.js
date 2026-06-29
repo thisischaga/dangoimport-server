@@ -524,6 +524,7 @@ const startServer = async () => {
         const admins = await Admin.find().select('-adminPassword');
         res.status(200).json(admins);
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -551,6 +552,7 @@ const startServer = async () => {
         await newAdmin.save();
         res.status(201).json({ message: "Admin créé avec succès" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -570,6 +572,7 @@ const startServer = async () => {
         );
         res.status(200).json({ message: "Admin mis à jour", admin: updated });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -587,6 +590,7 @@ const startServer = async () => {
         await Admin.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Admin supprimé" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -607,6 +611,7 @@ const startServer = async () => {
           surname: admin.adminSurname
         });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1082,6 +1087,7 @@ const startServer = async () => {
         const requests = await VendorRequest.find().sort({ date: -1 });
         res.status(200).json(requests);
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1145,6 +1151,7 @@ const startServer = async () => {
           date: user.date
         });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1275,6 +1282,7 @@ const startServer = async () => {
           .limit(20);
         res.status(200).json(notifications);
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1285,6 +1293,7 @@ const startServer = async () => {
         await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
         res.status(200).json({ message: "Marqué comme lu" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1456,6 +1465,7 @@ const startServer = async () => {
         await Commande.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Commande supprimée" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1468,6 +1478,7 @@ const startServer = async () => {
         await Achat.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Achat supprimé" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
@@ -1494,6 +1505,7 @@ const startServer = async () => {
         await User.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Utilisateur supprimé" });
       } catch (error) {
+        console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });
       }
     });
