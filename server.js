@@ -1392,31 +1392,6 @@ const startServer = async () => {
     // Product Routes
     const productRoutes = require('./routes/productRoutes');
     app.use('/api/products', productRoutes);
-
-    // Order Routes
-    const orderRoutes = require('./routes/orderRoutes');
-    app.use('/api/orders', orderRoutes);
-
-    // Cart Routes
-    const cartRoutes = require('./routes/cartRoutes');
-    app.use('/api/cart', cartRoutes);
-
-    // Wishlist Routes
-    const wishlistRoutes = require('./routes/wishlistRoutes');
-    app.use('/api/wishlist', wishlistRoutes);
-
-    // Admin Routes
-    const adminRoutes = require('./routes/adminRoutes');
-    app.use('/api/admin', adminRoutes);
-
-    // Upload images (Cloudinary)
-    const uploadRoutes = require('./routes/uploadRoutes');
-    app.use('/api/upload', uploadRoutes);
-
-    // Modifier un produit (admin only)
-    app.put('/api/products/:id', verifyToken, async (req, res) => {
-      try {
-        const admin = await Admin.findById(req.user.userId);
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
 
         const existing = await Product.findById(req.params.id);
