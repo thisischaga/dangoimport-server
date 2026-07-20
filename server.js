@@ -1392,8 +1392,10 @@ const startServer = async () => {
     // Product Routes
     const productRoutes = require('./routes/productRoutes');
     app.use('/api/products', productRoutes);
-        if (!admin) return res.status(401).json({ message: "Non autorisé" });
 
+    // Mettre à jour un produit (admin only)
+    app.put('/api/products/:id', verifyAdmin, async (req, res) => {
+      try {
         const existing = await Product.findById(req.params.id);
         if (!existing) return res.status(404).json({ message: "Produit introuvable" });
 
@@ -1417,10 +1419,8 @@ const startServer = async () => {
     });
 
     // Supprimer un produit (admin only)
-    app.delete('/api/products/:id', verifyToken, async (req, res) => {
+    app.delete('/api/products/:id', verifyAdmin, async (req, res) => {
       try {
-        const admin = await Admin.findById(req.user.userId);
-        if (!admin) return res.status(401).json({ message: "Non autorisé" });
         const deleted = await Product.findByIdAndDelete(req.params.id);
         if (!deleted) return res.status(404).json({ message: "Produit introuvable" });
         const cache = require('./utils/cache');

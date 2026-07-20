@@ -14,6 +14,25 @@ const LIST_FIELDS = [
 
 const CACHE_TTL = 5 * 60 * 1000;
 
+// GET - Tous les produits pour l'admin (y compris non publiés)
+router.get('/admin/all', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin' && req.user?.role !== 'dev-admin') {
+      return res.status(403).json({ success: false, message: 'Accès refusé' });
+    }
+
+    const products = await Product.find()
+      .sort({ createdAt: -1 })
+      .select(LIST_FIELDS)
+      .lean();
+
+    res.json({ success: true, data: products });
+  } catch (error) {
+    console.error('[productRoutes.js] Erreur capturée :', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
