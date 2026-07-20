@@ -8,7 +8,7 @@ const router = express.Router();
 
 const LIST_FIELDS = [
   'name', 'salePrice', 'price', 'category', 'subcategory', 'images', 'image',
-  'rating', 'totalReviews', 'isFeatured', 'isNewArrival', 'vendorName', 'stock',
+  'rating', 'totalReviews', 'isFeatured', 'isNewArrival', 'isPromo', 'vendorName', 'stock',
   'createdAt', 'isPublished', 'brand', 'shortDescription', 'totalSales', 'date',
 ].join(' ');
 

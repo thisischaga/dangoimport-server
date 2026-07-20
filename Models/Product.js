@@ -130,6 +130,10 @@ const productSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    isPromo: {
+        type: Boolean,
+        default: false
+    },
     isPublished: {
         type: Boolean,
         default: true,
