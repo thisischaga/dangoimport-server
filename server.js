@@ -44,6 +44,7 @@ const VendorRequest = require('./Models/VendorRequest');
 const WithdrawalRequest = require('./Models/WithdrawalRequest');
 const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
+const orderRoutes = require('./routes/orderRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const slugify = require('slugify');
@@ -687,6 +688,98 @@ const startServer = async () => {
     // ═══════════════════════════════════════════════
     app.get('/api/fedapay/status', (req, res) => {
       res.json(getFedapayStatus());
+    });
+
+    app.post('/api/payment/create', async (req, res) => {
+      const { amount, currency = 'XOF', description, callback_url, customer, deliveryCountry = 'Togo' } = req.body;
+
+      if (!amount || !customer?.email || !customer?.phone) {
+        return res.status(400).json({ message: 'Montant, email et téléphone requis pour le paiement.' });
+      }
+
+      if (!process.env.FEDAPAY_SECRET_KEY) {
+        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
+      }
+
+      const fedapayConfig = configureFedapay();
+      if (!fedapayConfig.ok) {
+        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
+      }
+
+      try {
+        const phoneDigits = String(customer.phone).replace(/\D/g, '');
+        const normalizedPhone = phoneDigits.startsWith('229') || phoneDigits.startsWith('228') || phoneDigits.startsWith('225') || phoneDigits.startsWith('221') || phoneDigits.startsWith('226') || phoneDigits.startsWith('227') || phoneDigits.startsWith('223') || phoneDigits.startsWith('224') || phoneDigits.startsWith('220') || phoneDigits.startsWith('222') || phoneDigits.startsWith('230')
+          ? phoneDigits.replace(/^(229|228|225|221|226|227|223|224|220|222|230)/, '')
+          : phoneDigits;
+
+        const countryCode = deliveryCountry === 'Togo' ? 'TG' : 'BJ';
+        const transaction = await Transaction.create({
+          description: description || 'Paiement Dango Import',
+          amount: Math.round(Number(amount)),
+          currency: { iso: String(currency).toUpperCase() },
+          callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/checkout',
+          customer: {
+            firstname: customer.firstname || 'Client',
+            lastname: customer.lastname || 'Dango',
+            email: customer.email,
+            phone_number: {
+              number: normalizedPhone || '97000000',
+              country: countryCode,
+            }
+          }
+        });
+
+        const token = await transaction.generateToken();
+        return res.status(201).json({
+          message: 'Paiement initialisé.',
+          payment_url: token.url,
+          transactionId: transaction.id,
+        });
+      } catch (error) {
+        console.error('=== Erreur /api/payment/create ===');
+        console.error(error.message);
+        return res.status(500).json({
+          message: 'Erreur lors de l’initialisation du paiement FedaPay.',
+          error: error.message,
+        });
+      }
+    });
+
+    app.post('/api/payment/webhook', express.json(), async (req, res) => {
+      try {
+        const signature = req.headers['x-fedapay-signature'];
+        const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
+
+        if (secret && signature) {
+          const hash = crypto.createHmac('sha256', secret)
+            .update(JSON.stringify(req.body))
+            .digest('hex');
+          if (hash !== signature) {
+            console.error('Signature FedaPay invalide !');
+            return res.status(403).send('Signature invalide');
+          }
+        }
+
+        const event = req.body;
+        if (event?.name === 'transaction.approved') {
+          const transaction = event.entity;
+          const meta = transaction?.custom_metadata || {};
+          const { orderId, type } = meta;
+
+          if (type === 'cart') {
+            await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+          } else if (type === 'devis') {
+            await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+          } else {
+            await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+          }
+        }
+
+        return res.status(200).send('Webhook traité avec succès');
+      } catch (err) {
+        console.error('Erreur Webhook paiement :', err);
+        return res.status(500).send('Erreur webhook paiement');
+      }
     });
 
     app.post('/api/fedapay/checkout', async (req, res) => {
@@ -1388,6 +1481,9 @@ const startServer = async () => {
 
     // Auth Routes
     app.use('/api/auth', authRoutes);
+
+    // Order Routes
+    app.use('/api/orders', orderRoutes);
 
     // Product Routes
     const productRoutes = require('./routes/productRoutes');
