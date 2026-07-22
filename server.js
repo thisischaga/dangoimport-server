@@ -52,7 +52,14 @@ const slugify = require('slugify');
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    // Ne pas compresser les uploads multipart (évite ERR_HTTP2_PROTOCOL_ERROR)
+    if (req.headers['content-type']?.includes('multipart/form-data')) return false;
+    if (req.path?.startsWith('/api/upload')) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 // ═══════════════════════════════════════════════
 // 🛡️  SÉCURITÉ
@@ -691,7 +698,15 @@ const startServer = async () => {
     });
 
     app.post('/api/payment/create', async (req, res) => {
-      const { amount, currency = 'XOF', description, callback_url, customer, deliveryCountry = 'Togo' } = req.body;
+      const {
+        amount,
+        currency = 'XOF',
+        description,
+        callback_url,
+        customer,
+        deliveryCountry = 'Togo',
+        custom_metadata,
+      } = req.body;
 
       if (!amount || !customer?.email || !customer?.phone) {
         return res.status(400).json({ message: 'Montant, email et téléphone requis pour le paiement.' });
@@ -713,7 +728,7 @@ const startServer = async () => {
           : phoneDigits;
 
         const countryCode = deliveryCountry === 'Togo' ? 'TG' : 'BJ';
-        const transaction = await Transaction.create({
+        const transactionPayload = {
           description: description || 'Paiement Dango Import',
           amount: Math.round(Number(amount)),
           currency: { iso: String(currency).toUpperCase() },
@@ -727,12 +742,19 @@ const startServer = async () => {
               country: countryCode,
             }
           }
-        });
+        };
+
+        if (custom_metadata && typeof custom_metadata === 'object') {
+          transactionPayload.custom_metadata = custom_metadata;
+        }
+
+        const transaction = await Transaction.create(transactionPayload);
 
         const token = await transaction.generateToken();
         return res.status(201).json({
           message: 'Paiement initialisé.',
           payment_url: token.url,
+          paymentUrl: token.url,
           transactionId: transaction.id,
         });
       } catch (error) {
@@ -770,6 +792,12 @@ const startServer = async () => {
             await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
           } else if (type === 'devis') {
             await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+          } else if (type === 'sourcing') {
+            const SourcingRequest = require('./Models/SourcingRequest');
+            await SourcingRequest.findByIdAndUpdate(orderId, {
+              status: 'paid',
+              paymentTransactionId: String(transaction.id || ''),
+            });
           } else {
             await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
           }
@@ -1041,6 +1069,12 @@ const startServer = async () => {
               await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
             } else if (type === 'devis') {
               await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+            } else if (type === 'sourcing') {
+              const SourcingRequest = require('./Models/SourcingRequest');
+              await SourcingRequest.findByIdAndUpdate(orderId, {
+                status: 'paid',
+                paymentTransactionId: String(transaction.id || ''),
+              });
             } else {
               await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
             }
@@ -1484,6 +1518,14 @@ const startServer = async () => {
 
     // Order Routes
     app.use('/api/orders', orderRoutes);
+
+    // Upload (public sourcing + admin product-image)
+    const uploadRoutes = require('./routes/uploadRoutes');
+    app.use('/api/upload', uploadRoutes);
+
+    // Sourcing requests
+    const sourcingRoutes = require('./routes/sourcingRoutes');
+    app.use('/api/sourcing', sourcingRoutes);
 
     // Product Routes
     const productRoutes = require('./routes/productRoutes');

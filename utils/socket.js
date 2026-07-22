@@ -6,9 +6,21 @@ let io;
 const initSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: "*", // En prod, mettre les vrais domaines
-      methods: ["GET", "POST"]
-    }
+      origin: [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:5173',
+        'https://www.dangoimport.com',
+        'https://dangoimport.com',
+        'https://dangoimport-admin.vercel.app',
+      ],
+      methods: ['GET', 'POST'],
+      credentials: true,
+    },
+    transports: ['polling', 'websocket'],
+    allowEIO3: true,
+    pingTimeout: 20000,
+    pingInterval: 25000,
   });
 
   io.on('connection', (socket) => {
