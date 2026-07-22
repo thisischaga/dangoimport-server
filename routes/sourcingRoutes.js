@@ -55,6 +55,7 @@ router.post('/request', async (req, res) => {
       budget,
       exampleLink,
       imageUrl,
+      imageBase64,
       studyFee,
       markPaid,
       paymentTransactionId,
@@ -64,6 +65,29 @@ router.post('/request', async (req, res) => {
       return res.status(400).json({
         message: 'Champs requis manquants (nom, email, téléphone, pays, description, quantité, budget).',
       });
+    }
+
+    if (!exampleLink || !String(exampleLink).trim()) {
+      return res.status(400).json({ message: 'Le lien exemple du produit est obligatoire.' });
+    }
+
+    if (!imageUrl && !imageBase64) {
+      return res.status(400).json({ message: 'La photo du produit est obligatoire.' });
+    }
+
+    const { persistImageUrl } = require('../utils/imageStorage');
+    let finalImageUrl = imageUrl ? String(imageUrl).trim() : '';
+    if (imageBase64) {
+      try {
+        finalImageUrl = await persistImageUrl(String(imageBase64));
+      } catch (imgErr) {
+        console.error('Erreur persist image sourcing:', imgErr.message);
+        return res.status(400).json({ message: "Impossible d'enregistrer la photo du produit." });
+      }
+    }
+
+    if (!finalImageUrl) {
+      return res.status(400).json({ message: 'La photo du produit est obligatoire.' });
     }
 
     const normalizedCountry = String(country).trim() === 'Benin' ? 'Bénin' : String(country).trim();
@@ -76,8 +100,8 @@ router.post('/request', async (req, res) => {
       productDescription: String(productDescription).trim(),
       quantity: String(quantity).trim(),
       budget: Number(budget),
-      exampleLink: exampleLink ? String(exampleLink).trim() : undefined,
-      imageUrl: imageUrl ? String(imageUrl).trim() : undefined,
+      exampleLink: String(exampleLink).trim(),
+      imageUrl: finalImageUrl,
       studyFee: Number(studyFee) || 5000,
       status: markPaid ? 'paid' : 'pending_payment',
       paymentTransactionId: paymentTransactionId || undefined,

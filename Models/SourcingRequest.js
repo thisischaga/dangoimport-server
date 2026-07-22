@@ -9,8 +9,8 @@ const sourcingRequestSchema = new mongoose.Schema(
     productDescription: { type: String, required: true, trim: true },
     quantity: { type: String, required: true, trim: true },
     budget: { type: Number, required: true, min: 0 },
-    exampleLink: { type: String, trim: true },
-    imageUrl: { type: String, trim: true },
+    exampleLink: { type: String, required: true, trim: true },
+    imageUrl: { type: String, required: true, trim: true },
     studyFee: { type: Number, default: 5000 },
     status: {
       type: String,

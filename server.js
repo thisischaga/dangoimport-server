@@ -767,6 +767,15 @@ const startServer = async () => {
       }
     });
 
+    // Sourcing — enregistré tôt (même zone que payment) pour éviter 404 si le mount tardif échoue
+    {
+      const sourcingRoutesEarly = require('./routes/sourcingRoutes');
+      app.use('/api/sourcing', sourcingRoutesEarly);
+
+      const uploadRoutesEarly = require('./routes/uploadRoutes');
+      app.use('/api/upload', uploadRoutesEarly);
+    }
+
     app.post('/api/payment/webhook', express.json(), async (req, res) => {
       try {
         const signature = req.headers['x-fedapay-signature'];
@@ -1518,14 +1527,6 @@ const startServer = async () => {
 
     // Order Routes
     app.use('/api/orders', orderRoutes);
-
-    // Upload (public sourcing + admin product-image)
-    const uploadRoutes = require('./routes/uploadRoutes');
-    app.use('/api/upload', uploadRoutes);
-
-    // Sourcing requests
-    const sourcingRoutes = require('./routes/sourcingRoutes');
-    app.use('/api/sourcing', sourcingRoutes);
 
     // Product Routes
     const productRoutes = require('./routes/productRoutes');
