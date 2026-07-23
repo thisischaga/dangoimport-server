@@ -1525,6 +1525,10 @@ const startServer = async () => {
     // Auth Routes
     app.use('/api/auth', authRoutes);
 
+    // Vendor Routes
+    const vendorRoutes = require('./routes/vendorRoutes');
+    app.use('/api/vendor', vendorRoutes);
+
     // Order Routes
     app.use('/api/orders', orderRoutes);
 
