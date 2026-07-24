@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+const quartierSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  price: { type: Number, required: true, min: 0 }
+});
+
+const deliveryZoneSchema = new mongoose.Schema({
+  country: { type: String, required: true, enum: ['Togo', 'Benin', 'Bénin'] },
+  region: { type: String, required: true, trim: true },
+  quartiers: [quartierSchema]
+});
+
 const vendorProductSchema = new mongoose.Schema({
   storeId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -35,12 +46,7 @@ const vendorProductSchema = new mongoose.Schema({
     enum: ['active', 'draft'],
     default: 'active'
   },
-  deliveryZones: [
-    {
-      zone: { type: String, required: true, trim: true },
-      price: { type: Number, required: true, min: 0 }
-    }
-  ],
+  deliveryZones: [deliveryZoneSchema],
   characteristics: [
     {
       name: { type: String, required: true, trim: true },

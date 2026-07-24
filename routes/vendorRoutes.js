@@ -264,13 +264,15 @@ router.post('/products', verifyToken, getStore, async (req, res) => {
       return res.status(400).json({ message: 'Le nom, le prix, le stock et l\'image sont requis.' });
     }
 
-    // Validate at least 1 delivery zone
-    const zones = Array.isArray(deliveryZones) ? deliveryZones.filter(z => z.zone && z.zone.trim()) : [];
+    // Validate at least 1 delivery zone block containing country, region, and at least 1 quartier
+    const zones = Array.isArray(deliveryZones)
+      ? deliveryZones.filter(z => z.country && z.region && Array.isArray(z.quartiers) && z.quartiers.length > 0)
+      : [];
     if (zones.length === 0) {
       return res.status(400).json({ message: 'Au moins une zone de livraison est requise.' });
     }
 
-    // Normalize characteristics: parse comma-separated values strings into arrays
+    // Normalize characteristics
     const chars = Array.isArray(characteristics)
       ? characteristics
           .filter(c => c.name && c.name.trim())
@@ -290,7 +292,14 @@ router.post('/products', verifyToken, getStore, async (req, res) => {
       stock: Number(stock),
       image,
       status: status || 'active',
-      deliveryZones: zones.map(z => ({ zone: z.zone.trim(), price: Number(z.price) || 0 })),
+      deliveryZones: zones.map(z => ({
+        country: z.country,
+        region: z.region,
+        quartiers: z.quartiers.map(q => ({
+          name: q.name.trim(),
+          price: Number(q.price) || 0
+        }))
+      })),
       characteristics: chars,
     });
 
