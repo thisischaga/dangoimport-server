@@ -8,7 +8,7 @@ const VendorProduct = require('../Models/VendorProduct');
 const VendorOrder = require('../Models/VendorOrder');
 const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const router = express.Router();
 
@@ -54,27 +54,8 @@ const getStore = async (req, res, next) => {
   }
 };
 
-// Mail transporter configuration for Nodemailer
-const getTransporter = () => {
-  if (process.env.EMAIL_HOST) {
-    return nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: Number(process.env.EMAIL_PORT) || 587,
-      secure: process.env.EMAIL_SECURE === 'true',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-  }
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-};
+// Resend client configuration
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // POST /api/vendor/send-otp
 router.post('/send-otp', async (req, res) => {
@@ -105,11 +86,11 @@ router.post('/send-otp', async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // 4. Send email via Nodemailer
-    const mailTransporter = getTransporter();
-    const mailOptions = {
-      from: `"Dango Seller" <${process.env.EMAIL_USER}>`,
-      to: email,
+    // 4. Send email via Resend
+    const fromEmail = process.env.EMAIL ? `Dango Seller <${process.env.EMAIL}>` : 'Dango Seller <onboarding@resend.dev>';
+    await resend.emails.send({
+      from: fromEmail,
+      to: [email],
       subject: 'Code de vérification Dango Seller',
       text: `Votre code de vérification est : ${otpCode}. Il expire dans 10 minutes.`,
       html: `<div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
@@ -121,9 +102,8 @@ router.post('/send-otp', async (req, res) => {
                </div>
                <p style="font-size: 13px; color: #64748b;">Ce code expire dans 10 minutes.</p>
              </div>`
-    };
+    });
 
-    await mailTransporter.sendMail(mailOptions);
     return res.status(200).json({ success: true, message: 'OTP envoyé avec succès.' });
   } catch (error) {
     console.error('[send-otp] error:', error);
