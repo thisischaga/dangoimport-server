@@ -35,6 +35,18 @@ const vendorProductSchema = new mongoose.Schema({
     enum: ['active', 'draft'],
     default: 'active'
   },
+  deliveryZones: [
+    {
+      zone: { type: String, required: true, trim: true },
+      price: { type: Number, required: true, min: 0 }
+    }
+  ],
+  characteristics: [
+    {
+      name: { type: String, required: true, trim: true },
+      values: [{ type: String, trim: true }]
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

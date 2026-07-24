@@ -258,10 +258,29 @@ router.get('/products', verifyToken, getStore, async (req, res) => {
 // POST /api/vendor/products (Create product)
 router.post('/products', verifyToken, getStore, async (req, res) => {
   try {
-    const { name, description, price, stock, image, status } = req.body;
-    if (!name || price === undefined || stock === undefined) {
-      return res.status(400).json({ message: 'Le nom, le prix et le stock sont requis.' });
+    const { name, description, price, stock, image, status, deliveryZones, characteristics } = req.body;
+
+    if (!name || price === undefined || stock === undefined || !image) {
+      return res.status(400).json({ message: 'Le nom, le prix, le stock et l\'image sont requis.' });
     }
+
+    // Validate at least 1 delivery zone
+    const zones = Array.isArray(deliveryZones) ? deliveryZones.filter(z => z.zone && z.zone.trim()) : [];
+    if (zones.length === 0) {
+      return res.status(400).json({ message: 'Au moins une zone de livraison est requise.' });
+    }
+
+    // Normalize characteristics: parse comma-separated values strings into arrays
+    const chars = Array.isArray(characteristics)
+      ? characteristics
+          .filter(c => c.name && c.name.trim())
+          .map(c => ({
+            name: c.name.trim(),
+            values: Array.isArray(c.values)
+              ? c.values.map(v => String(v).trim()).filter(Boolean)
+              : String(c.values || '').split(',').map(v => v.trim()).filter(Boolean),
+          }))
+      : [];
 
     const newProduct = new VendorProduct({
       storeId: req.storeId,
@@ -269,8 +288,10 @@ router.post('/products', verifyToken, getStore, async (req, res) => {
       description: description || '',
       price: Number(price),
       stock: Number(stock),
-      image: image || '',
+      image,
       status: status || 'active',
+      deliveryZones: zones.map(z => ({ zone: z.zone.trim(), price: Number(z.price) || 0 })),
+      characteristics: chars,
     });
 
     await newProduct.save();
@@ -280,6 +301,7 @@ router.post('/products', verifyToken, getStore, async (req, res) => {
     return res.status(500).json({ message: 'Erreur serveur lors de la création du produit.' });
   }
 });
+
 
 // PUT /api/vendor/products/:id (Update product)
 router.put('/products/:id', verifyToken, getStore, async (req, res) => {
