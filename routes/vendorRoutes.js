@@ -6,7 +6,9 @@ const User = require('../Models/User');
 const Store = require('../Models/Store');
 const VendorProduct = require('../Models/VendorProduct');
 const VendorOrder = require('../Models/VendorOrder');
+const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
+const nodemailer = require('nodemailer');
 
 const router = express.Router();
 
@@ -51,6 +53,160 @@ const getStore = async (req, res, next) => {
     return res.status(500).json({ message: "Erreur serveur lors de la récupération de la boutique." });
   }
 };
+
+// Mail transporter configuration for Nodemailer
+const getTransporter = () => {
+  if (process.env.EMAIL_HOST) {
+    return nodemailer.createTransport({
+      host: process.env.EMAIL_HOST,
+      port: Number(process.env.EMAIL_PORT) || 587,
+      secure: process.env.EMAIL_SECURE === 'true',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+  }
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+};
+
+// POST /api/vendor/send-otp
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { name, email, password, storeName, whatsapp, description } = req.body;
+
+    if (!name || !email || !password || !storeName) {
+      return res.status(400).json({ message: 'Veuillez remplir tous les champs requis.' });
+    }
+
+    // 1. Verify if email already exists in User
+    const existingUser = await User.findOne({ userEmail: String(email).toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
+    }
+
+    // 2. Generate 6-digit random OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // 3. Save to Otp collection (using findOneAndUpdate to avoid duplicate email key violations)
+    await Otp.findOneAndUpdate(
+      { email: String(email).toLowerCase() },
+      {
+        otp: otpCode,
+        data: { name, email, password, storeName, whatsapp, description },
+        createdAt: new Date()
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    // 4. Send email via Nodemailer
+    const mailTransporter = getTransporter();
+    const mailOptions = {
+      from: `"Dango Seller" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Code de vérification Dango Seller',
+      text: `Votre code de vérification est : ${otpCode}. Il expire dans 10 minutes.`,
+      html: `<div style="font-family: sans-serif; padding: 20px; color: #0f172a;">
+               <h2 style="color: #f68b1e;">Vérification Dango Seller</h2>
+               <p>Bonjour,</p>
+               <p>Merci de créer votre boutique sur Dango Seller. Veuillez utiliser le code de vérification ci-dessous pour confirmer votre adresse email :</p>
+               <div style="font-size: 24px; font-weight: bold; letter-spacing: 4px; padding: 12px 20px; background: #f1f5f9; display: inline-block; border-radius: 6px; color: #0f172a; margin: 15px 0;">
+                 ${otpCode}
+               </div>
+               <p style="font-size: 13px; color: #64748b;">Ce code expire dans 10 minutes.</p>
+             </div>`
+    };
+
+    await mailTransporter.sendMail(mailOptions);
+    return res.status(200).json({ success: true, message: 'OTP envoyé avec succès.' });
+  } catch (error) {
+    console.error('[send-otp] error:', error);
+    return res.status(500).json({ message: 'Erreur lors de la génération ou de l\'envoi du code de vérification.' });
+  }
+});
+
+// POST /api/vendor/verify-otp
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email et code OTP requis.' });
+    }
+
+    // 1. Search in Otp collection
+    const otpDoc = await Otp.findOne({ email: String(email).toLowerCase(), otp: String(otp).trim() });
+    if (!otpDoc) {
+      return res.status(400).json({ message: 'Code de vérification invalide ou expiré.' });
+    }
+
+    const { name, password, storeName, whatsapp, description } = otpDoc.data;
+
+    // Check if email already used (in case register succeeded in the meantime)
+    const existingUser = await User.findOne({ userEmail: String(email).toLowerCase() });
+    if (existingUser) {
+      await Otp.deleteOne({ _id: otpDoc._id });
+      return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
+    }
+
+    // 2. Create User and hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const names = String(name).trim().split(/\s+/);
+    const userFirstname = names[0];
+    const userSurname = names.slice(1).join(' ') || names[0];
+
+    const newUser = new User({
+      userFirstname,
+      userSurname,
+      userEmail: String(email).toLowerCase(),
+      userPassword: hashedPassword,
+      userPhone: whatsapp || '',
+      role: 'vendor',
+      isVendor: true,
+      vendorName: storeName,
+      isVerified: true
+    });
+
+    await newUser.save();
+
+    // 3. Create Store
+    const storeSlug = slugify(storeName, { lower: true, strict: true }) + '-' + Math.random().toString(36).substring(2, 6);
+    const newStore = new Store({
+      userId: newUser._id,
+      slug: storeSlug,
+      name: storeName,
+      description: description || '',
+      whatsapp: whatsapp || '',
+    });
+
+    await newStore.save();
+
+    // 4. Delete Otp document
+    await Otp.deleteOne({ _id: otpDoc._id });
+
+    // 5. Generate JWT and respond
+    const token = signVendorToken(newUser);
+    return res.status(200).json({
+      success: true,
+      message: 'Compte vendeur et boutique créés avec succès.',
+      token,
+      user: {
+        ...buildVendorPayload(newUser),
+        store: newStore
+      }
+    });
+
+  } catch (error) {
+    console.error('[verify-otp] error:', error);
+    return res.status(500).json({ message: 'Erreur lors de la vérification du code et de la création du compte.' });
+  }
+});
 
 // POST /api/vendor/register
 router.post('/register', async (req, res) => {
