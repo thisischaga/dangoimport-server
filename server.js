@@ -178,6 +178,7 @@ const corsOptions = {
       'https://dangoimport.com',
       'https://dangoimport-admin.vercel.app',
       'https://vendeur.dangoimport.com',
+      'https://dangoimport-seller.vercel.app',
     ];
 
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
