@@ -287,6 +287,37 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// GET /api/vendor/store (Get current store settings)
+router.get('/store', verifyToken, getStore, async (req, res) => {
+  try {
+    return res.status(200).json({ success: true, data: req.store });
+  } catch (error) {
+    console.error('[vendorRoutes.js] get store settings:', error);
+    return res.status(500).json({ message: 'Erreur serveur lors de la récupération des paramètres de la boutique.' });
+  }
+});
+
+// PUT /api/vendor/store (Update store settings)
+router.put('/store', verifyToken, getStore, async (req, res) => {
+  try {
+    const { name, description, whatsapp, fedaPayLink } = req.body;
+    if (!name) {
+      return res.status(400).json({ message: 'Le nom de la boutique est requis.' });
+    }
+
+    req.store.name = name.trim();
+    req.store.description = description ? description.trim() : '';
+    req.store.whatsapp = whatsapp ? whatsapp.trim() : '';
+    req.store.fedaPayLink = fedaPayLink ? fedaPayLink.trim() : '';
+
+    await req.store.save();
+    return res.status(200).json({ success: true, data: req.store });
+  } catch (error) {
+    console.error('[vendorRoutes.js] update store settings:', error);
+    return res.status(500).json({ message: 'Erreur serveur lors de la mise à jour des paramètres.' });
+  }
+});
+
 // GET /api/vendor/dashboard/stats
 router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
   try {
@@ -394,7 +425,7 @@ router.get('/products', verifyToken, getStore, async (req, res) => {
 // POST /api/vendor/products (Create product)
 router.post('/products', verifyToken, getStore, async (req, res) => {
   try {
-    const { name, description, price, stock, image, status, deliveryZones, characteristics } = req.body;
+    const { name, description, price, stock, image, status, deliveryZones, characteristics, promoPrice, promoStart, promoEnd, isFeatured, isBoosted } = req.body;
 
     if (!name || price === undefined || stock === undefined || !image) {
       return res.status(400).json({ message: 'Le nom, le prix, le stock et l\'image sont requis.' });
@@ -426,8 +457,14 @@ router.post('/products', verifyToken, getStore, async (req, res) => {
       description: description || '',
       price: Number(price),
       stock: Number(stock),
+      stockQuantity: Number(stock) || 0,
       image,
       status: status || 'active',
+      isFeatured: Boolean(isFeatured),
+      isBoosted: Boolean(isBoosted),
+      promoPrice: promoPrice !== '' && promoPrice !== undefined && promoPrice !== null ? Number(promoPrice) : null,
+      promoStart: promoStart ? new Date(promoStart) : null,
+      promoEnd: promoEnd ? new Date(promoEnd) : null,
       deliveryZones: zones.map(z => ({
         country: z.country,
         region: z.region,

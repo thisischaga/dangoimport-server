@@ -37,14 +37,40 @@ const vendorProductSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
-  image: {
-    type: String,
-    default: ''
+  isFeatured: {
+    type: Boolean,
+    default: false
+  },
+  isBoosted: {
+    type: Boolean,
+    default: false
+  },
+  promoPrice: {
+    type: Number,
+    min: 0,
+    default: null
+  },
+  promoStart: {
+    type: Date,
+    default: null
+  },
+  promoEnd: {
+    type: Date,
+    default: null
+  },
+  stockQuantity: {
+    type: Number,
+    min: 0,
+    default: 0
   },
   status: {
     type: String,
-    enum: ['active', 'draft'],
-    default: 'active'
+    enum: ['draft', 'active', 'out_of_stock'],
+    default: 'draft'
+  },
+  image: {
+    type: String,
+    default: ''
   },
   deliveryZones: [deliveryZoneSchema],
   characteristics: [
