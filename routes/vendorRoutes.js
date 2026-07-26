@@ -4,10 +4,14 @@ const jwt = require('jsonwebtoken');
 const slugify = require('slugify');
 const User = require('../Models/User');
 const Store = require('../Models/Store');
+const Product = require('../Models/Product');
 const VendorProduct = require('../Models/VendorProduct');
 const VendorOrder = require('../Models/VendorOrder');
 const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
+const { buildProductPayload } = require('../utils/productPayload');
+const { normalizeProductImages } = require('../utils/imageStorage');
+const { resolveSkuForCreate } = require('../utils/productIdentifiers');
 const { Resend } = require('resend');
 
 const router = express.Router();
@@ -38,6 +42,36 @@ const signVendorToken = (user) => jwt.sign(
   { expiresIn: '24h' }
 );
 
+// Middleware vendeur
+const verifyVendor = async (req, res, next) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const user = await User.findById(userId);
+    if (!user || user.role !== 'vendor') {
+      return res.status(403).json({ message: 'Accès réservé aux vendeurs.' });
+    }
+    req.vendorUser = user;
+    next();
+  } catch (error) {
+    return res.status(500).json({ message: 'Erreur de vérification vendeur.' });
+  }
+};
+
+async function ensureVendorStore(user) {
+  let store = await Store.findOne({ userId: user._id });
+  if (store) return store;
+
+  const baseName = user.vendorName || `${user.userFirstname || ''} ${user.userSurname || ''}`.trim() || 'Ma boutique';
+  const storeSlug = `${slugify(baseName, { lower: true, strict: true })}-${Math.random().toString(36).substring(2, 6)}`;
+  store = await Store.create({
+    userId: user._id,
+    slug: storeSlug,
+    name: baseName,
+    whatsapp: user.userPhone || '',
+  });
+  return store;
+}
+
 // Middleware to inject vendor's store
 const getStore = async (req, res, next) => {
   try {
@@ -56,6 +90,40 @@ const getStore = async (req, res, next) => {
 
 // Resend client configuration
 const resend = new Resend(process.env.RESEND_API_KEY);
+
+// POST /api/vendor/become-vendor — upgrade instantané (sans validation admin)
+router.post('/become-vendor', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId || req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur introuvable.' });
+    }
+
+    user.role = 'vendor';
+    user.isVendor = true;
+    if (!user.vendorName) {
+      user.vendorName = `${user.userFirstname || ''} ${user.userSurname || ''}`.trim() || 'Ma boutique';
+    }
+    await user.save();
+
+    const store = await ensureVendorStore(user);
+    const token = signVendorToken(user);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Vous êtes maintenant vendeur sur DANGOIMPORT.',
+      token,
+      user: {
+        ...buildVendorPayload(user),
+        storeId: store._id,
+        slug: store.slug,
+      },
+    });
+  } catch (error) {
+    console.error('[become-vendor] error:', error);
+    return res.status(500).json({ message: 'Erreur lors de l’activation du compte vendeur.' });
+  }
+});
 
 // POST /api/vendor/send-otp
 router.post('/send-otp', async (req, res) => {
@@ -319,37 +387,32 @@ router.put('/store', verifyToken, getStore, async (req, res) => {
 });
 
 // GET /api/vendor/dashboard/stats
-router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
+router.get('/dashboard/stats', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const nb_produits = await VendorProduct.countDocuments({ storeId: req.storeId });
+    const vendorId = req.vendorUser._id;
+    const nb_produits = await Product.countDocuments({ vendorId, isPublished: true });
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const statsArray = await VendorOrder.aggregate([
-      { $match: { storeId: req.storeId } },
+      { $match: { createdAt: { $gte: startOfMonth } } },
       {
         $group: {
           _id: null,
-          nb_commandes: { $sum: 1 },
+          ventes_mois: { $sum: 1 },
           ca_total: { $sum: '$total' },
-          ventes_mois: {
-            $sum: {
-              $cond: [{ $gte: ['$createdAt', startOfMonth] }, 1, 0],
-            },
-          },
         },
       },
     ]);
 
-    const stats = statsArray[0] || { nb_commandes: 0, ca_total: 0, ventes_mois: 0 };
+    const stats = statsArray[0] || { ventes_mois: 0, ca_total: 0 };
 
     return res.status(200).json({
       success: true,
       data: {
-        ventes_mois: stats.ventes_mois,
-        nb_commandes: stats.nb_commandes,
         nb_produits,
+        ventes_mois: stats.ventes_mois,
         ca_total: stats.ca_total,
       },
     });
@@ -411,10 +474,10 @@ router.get('/dashboard/graph', verifyToken, getStore, async (req, res) => {
   }
 });
 
-// GET /api/vendor/products (List products filtered by storeId)
-router.get('/products', verifyToken, getStore, async (req, res) => {
+// GET /api/vendor/products — produits marketplace du vendeur
+router.get('/products', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const products = await VendorProduct.find({ storeId: req.storeId }).sort({ createdAt: -1 });
+    const products = await Product.find({ vendorId: req.vendorUser._id }).sort({ createdAt: -1 });
     return res.status(200).json({ success: true, data: products });
   } catch (error) {
     console.error('[vendorRoutes.js] get products:', error);
@@ -422,100 +485,104 @@ router.get('/products', verifyToken, getStore, async (req, res) => {
   }
 });
 
-// POST /api/vendor/products (Create product)
-router.post('/products', verifyToken, getStore, async (req, res) => {
+// POST /api/vendor/products — publier un produit sur la marketplace
+router.post('/products', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const { name, description, price, stock, image, status, deliveryZones, characteristics, promoPrice, promoStart, promoEnd, isFeatured, isBoosted } = req.body;
+    const { name, description, price, stock, category, images, image, imageBase64, country } = req.body;
 
-    if (!name || price === undefined || stock === undefined || !image) {
-      return res.status(400).json({ message: 'Le nom, le prix, le stock et l\'image sont requis.' });
+    if (!name || !description || price === undefined || stock === undefined || !category) {
+      return res.status(400).json({ message: 'Nom, description, prix, stock et catégorie sont requis.' });
     }
 
-    // Validate at least 1 delivery zone block containing country, region, and at least 1 quartier
-    const zones = Array.isArray(deliveryZones)
-      ? deliveryZones.filter(z => z.country && z.region && Array.isArray(z.quartiers) && z.quartiers.length > 0)
-      : [];
-    if (zones.length === 0) {
-      return res.status(400).json({ message: 'Au moins une zone de livraison est requise.' });
+    const imageList = [];
+    if (Array.isArray(images)) {
+      images.forEach((img, i) => {
+        const url = typeof img === 'string' ? img : img?.url;
+        if (url) imageList.push({ url, alt: name, isPrimary: i === 0 });
+      });
+    }
+    if (imageBase64) {
+      const urls = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
+      urls.forEach((url, i) => {
+        if (url) imageList.push({ url, alt: name, isPrimary: imageList.length === 0 && i === 0 });
+      });
+    }
+    if (image && !imageList.length) {
+      imageList.push({ url: image, alt: name, isPrimary: true });
     }
 
-    // Normalize characteristics
-    const chars = Array.isArray(characteristics)
-      ? characteristics
-          .filter(c => c.name && c.name.trim())
-          .map(c => ({
-            name: c.name.trim(),
-            values: Array.isArray(c.values)
-              ? c.values.map(v => String(v).trim()).filter(Boolean)
-              : String(c.values || '').split(',').map(v => v.trim()).filter(Boolean),
-          }))
-      : [];
+    if (!imageList.length) {
+      return res.status(400).json({ message: 'Au moins une image est requise.' });
+    }
 
-    const newProduct = new VendorProduct({
-      storeId: req.storeId,
+    let payload = buildProductPayload({
       name,
-      description: description || '',
-      price: Number(price),
-      stock: Number(stock),
-      stockQuantity: Number(stock) || 0,
-      image,
-      status: status || 'active',
-      isFeatured: Boolean(isFeatured),
-      isBoosted: Boolean(isBoosted),
-      promoPrice: promoPrice !== '' && promoPrice !== undefined && promoPrice !== null ? Number(promoPrice) : null,
-      promoStart: promoStart ? new Date(promoStart) : null,
-      promoEnd: promoEnd ? new Date(promoEnd) : null,
-      deliveryZones: zones.map(z => ({
-        country: z.country,
-        region: z.region,
-        quartiers: z.quartiers.map(q => ({
-          name: q.name.trim(),
-          price: Number(q.price) || 0
-        }))
-      })),
-      characteristics: chars,
+      description,
+      price,
+      stock,
+      category,
+      image: imageList[0].url,
+      images: imageList,
+      isPublished: true,
+      vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim(),
+      shippingInfo: country ? `Livraison: ${country}` : undefined,
     });
 
+    payload.vendorId = req.vendorUser._id;
+    payload.sku = await resolveSkuForCreate(payload.sku);
+    payload = await normalizeProductImages(payload);
+
+    const newProduct = new Product(payload);
     await newProduct.save();
+
+    const cache = require('../utils/cache');
+    cache.delPrefix('products:');
+
     return res.status(201).json({ success: true, data: newProduct });
   } catch (error) {
     console.error('[vendorRoutes.js] create product:', error);
-    return res.status(500).json({ message: 'Erreur serveur lors de la création du produit.' });
+    return res.status(500).json({ message: error.message || 'Erreur serveur lors de la création du produit.' });
   }
 });
 
-
-// PUT /api/vendor/products/:id (Update product)
-router.put('/products/:id', verifyToken, getStore, async (req, res) => {
+// PUT /api/vendor/products/:id
+router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const updatedProduct = await VendorProduct.findOneAndUpdate(
-      { _id: req.params.id, storeId: req.storeId },
-      req.body,
-      { new: true }
-    );
-
-    if (!updatedProduct) {
+    const existing = await Product.findOne({ _id: req.params.id, vendorId: req.vendorUser._id });
+    if (!existing) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
-    return res.status(200).json({ success: true, data: updatedProduct });
+    let payload = buildProductPayload(req.body, { existingProduct: existing });
+    payload.vendorId = req.vendorUser._id;
+    payload.isPublished = req.body.status === 'active' || req.body.isPublished !== false;
+    payload = await normalizeProductImages(payload, { existingProduct: existing });
+
+    const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
+    const cache = require('../utils/cache');
+    cache.delPrefix('products:');
+
+    return res.status(200).json({ success: true, data: updated });
   } catch (error) {
     console.error('[vendorRoutes.js] update product:', error);
-    return res.status(500).json({ message: 'Erreur serveur lors de la modification du produit.' });
+    return res.status(500).json({ message: error.message || 'Erreur serveur lors de la modification du produit.' });
   }
 });
 
-// DELETE /api/vendor/products/:id (Delete product)
-router.delete('/products/:id', verifyToken, getStore, async (req, res) => {
+// DELETE /api/vendor/products/:id
+router.delete('/products/:id', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const deletedProduct = await VendorProduct.findOneAndDelete({
+    const deleted = await Product.findOneAndDelete({
       _id: req.params.id,
-      storeId: req.storeId,
+      vendorId: req.vendorUser._id,
     });
 
-    if (!deletedProduct) {
+    if (!deleted) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
+
+    const cache = require('../utils/cache');
+    cache.delPrefix('products:');
 
     return res.status(200).json({ success: true, message: 'Produit supprimé avec succès.' });
   } catch (error) {
@@ -524,7 +591,7 @@ router.delete('/products/:id', verifyToken, getStore, async (req, res) => {
   }
 });
 
-// GET /api/vendor/orders (List orders filtered by storeId)
+// GET /api/vendor/orders
 router.get('/orders', verifyToken, getStore, async (req, res) => {
   try {
     const orders = await VendorOrder.find({ storeId: req.storeId }).sort({ createdAt: -1 });
