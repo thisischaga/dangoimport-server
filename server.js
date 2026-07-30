@@ -45,6 +45,7 @@ const WithdrawalRequest = require('./Models/WithdrawalRequest');
 const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const slugify = require('slugify');
@@ -1529,6 +1530,9 @@ const startServer = async () => {
 
     // Auth Routes
     app.use('/api/auth', authRoutes);
+
+    // Admin Routes
+    app.use('/api/admin', adminRoutes);
 
     // Vendor Routes
     const vendorRoutes = require('./routes/vendorRoutes');
