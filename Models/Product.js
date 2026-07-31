@@ -133,9 +133,34 @@ const productSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    // Validation Marketplace (Style Amazon)
+    validationStatus: {
+        type: String,
+        enum: ['draft', 'pending', 'changes_requested', 'approved', 'rejected', 'disabled', 'archived'],
+        default: 'pending',
+        index: true
+    },
+    rejectionReason: {
+        type: String,
+        default: ''
+    },
+    changeRequestComment: {
+        type: String,
+        default: ''
+    },
+    history: [
+        {
+            action: { type: String, required: true },
+            comment: { type: String, default: '' },
+            performedBy: { type: String, default: 'System' },
+            role: { type: String, default: 'vendor' },
+            date: { type: Date, default: Date.now }
+        }
+    ],
+
     isPublished: {
         type: Boolean,
-        default: true,
+        default: false,
         index: true
     },
 

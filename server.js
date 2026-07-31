@@ -1819,6 +1819,10 @@ const startServer = async () => {
     });
 
 
+    // Routes d'Administration Marketplace (Amazon-style Validation)
+    const adminMarketplaceRoutes = require('./routes/adminMarketplaceRoutes');
+    app.use('/api/admin/marketplace', adminMarketplaceRoutes);
+
     // Gestion des erreurs 404
     app.use((req, res) => {
       res.status(404).json({ message: 'Route non trouvée' });

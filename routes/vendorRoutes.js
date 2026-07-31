@@ -523,7 +523,8 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
       category,
       image: imageList[0].url,
       images: imageList,
-      isPublished: true,
+      isPublished: false,
+      validationStatus: 'pending',
       vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim(),
       shippingInfo: country ? `Livraison: ${country}` : undefined,
     });
@@ -531,6 +532,15 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
     payload.vendorId = req.vendorUser._id;
     payload.sku = await resolveSkuForCreate(payload.sku);
     payload = await normalizeProductImages(payload);
+    payload.history = [
+      {
+        action: 'Créé & soumis à validation',
+        comment: 'Produit soumis à l’équipe de modération Dango Import.',
+        performedBy: req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim(),
+        role: 'vendor',
+        date: new Date(),
+      }
+    ];
 
     const newProduct = new Product(payload);
     await newProduct.save();
@@ -545,7 +555,7 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
   }
 });
 
-// PUT /api/vendor/products/:id
+// PUT /api/vendor/products/:id — Ré-édition et resoumission par le vendeur
 router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
   try {
     const existing = await Product.findOne({ _id: req.params.id, vendorId: req.vendorUser._id });
@@ -555,8 +565,30 @@ router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
 
     let payload = buildProductPayload(req.body, { existingProduct: existing });
     payload.vendorId = req.vendorUser._id;
-    payload.isPublished = req.body.status === 'active' || req.body.isPublished !== false;
+    
+    // Si le produit nécessitait des modifications ou était rejeté, sa mise à jour le repasse en validation
+    if (['changes_requested', 'rejected', 'draft'].includes(existing.validationStatus)) {
+      payload.validationStatus = 'pending';
+      payload.isPublished = false;
+    } else {
+      payload.validationStatus = existing.validationStatus;
+      payload.isPublished = existing.isPublished;
+    }
+
     payload = await normalizeProductImages(payload, { existingProduct: existing });
+
+    // Ajout d'une entrée dans l'historique
+    const vendorName = req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim();
+    payload.history = [
+      ...(existing.history || []),
+      {
+        action: 'Modifié & Renvoyé',
+        comment: 'Le vendeur a mis à jour les informations du produit.',
+        performedBy: vendorName,
+        role: 'vendor',
+        date: new Date(),
+      }
+    ];
 
     const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
     const cache = require('../utils/cache');
