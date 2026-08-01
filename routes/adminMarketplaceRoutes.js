@@ -3,7 +3,7 @@ const Product = require('../Models/Product');
 const User = require('../Models/User');
 const AuditLog = require('../Models/AuditLog');
 const Notification = require('../Models/Notification');
-const verifyAdmin = require('../Middlewares/verifyAdmin');
+const { verifyAdmin } = require('../Middlewares/verifyTokens');
 const emailService = require('../utils/emailService');
 
 const router = express.Router();
@@ -11,9 +11,9 @@ const router = express.Router();
 // Helper helper for audit logging
 const logAudit = async (req, action, targetResource, targetId, details = {}) => {
   try {
-    const adminUser = req.adminUser || req.user || {};
+    const adminUser = req.adminUser || req.admin || req.user || {};
     await AuditLog.create({
-      userId: adminUser.userId || adminUser.id,
+      userId: adminUser.userId || adminUser.id || adminUser._id,
       userName: `${adminUser.firstname || ''} ${adminUser.surname || adminUser.adminName || 'Admin'}`.trim(),
       role: adminUser.role || 'admin',
       action,
@@ -99,7 +99,8 @@ router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
     product.changeRequestComment = '';
     product.updatedAt = new Date();
 
-    const adminName = `${req.adminUser.firstname || ''} ${req.adminUser.surname || 'Admin'}`.trim();
+    const adminUser = req.adminUser || req.admin || req.user || {};
+    const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
     product.history.push({
       action: 'Approuvé',
       comment: 'Le produit a été validé et publié sur la marketplace Dango Import.',
@@ -168,7 +169,8 @@ router.put('/products/:id/reject', verifyAdmin, async (req, res) => {
     product.rejectionReason = reason.trim();
     product.updatedAt = new Date();
 
-    const adminName = `${req.adminUser.firstname || ''} ${req.adminUser.surname || 'Admin'}`.trim();
+    const adminUser = req.adminUser || req.admin || req.user || {};
+    const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
     product.history.push({
       action: 'Rejeté',
       comment: reason.trim(),
@@ -236,7 +238,8 @@ router.put('/products/:id/request-changes', verifyAdmin, async (req, res) => {
     product.changeRequestComment = comment.trim();
     product.updatedAt = new Date();
 
-    const adminName = `${req.adminUser.firstname || ''} ${req.adminUser.surname || 'Admin'}`.trim();
+    const adminUser = req.adminUser || req.admin || req.user || {};
+    const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
     product.history.push({
       action: 'Modifications demandées',
       comment: comment.trim(),
@@ -299,7 +302,8 @@ router.put('/products/:id/toggle-disable', verifyAdmin, async (req, res) => {
     product.isPublished = newStatus === 'approved';
     product.updatedAt = new Date();
 
-    const adminName = `${req.adminUser.firstname || ''} ${req.adminUser.surname || 'Admin'}`.trim();
+    const adminUser = req.adminUser || req.admin || req.user || {};
+    const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
     product.history.push({
       action: newStatus === 'disabled' ? 'Désactivé par Admin' : 'Réactivé par Admin',
       comment: newStatus === 'disabled' ? 'Masqué temporairement de la marketplace.' : 'Remis en ligne.',
