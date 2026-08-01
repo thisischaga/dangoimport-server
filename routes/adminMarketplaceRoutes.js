@@ -51,10 +51,21 @@ const notifyVendor = async (req, { vendorId, vendorEmail, title, message, type, 
   }
 };
 
+const getValidationPriority = (status) => {
+  switch (status) {
+    case 'pending': return 0;
+    case 'changes_requested': return 1;
+    case 'rejected': return 2;
+    case 'approved': return 3;
+    case 'disabled': return 4;
+    default: return 5;
+  }
+};
+
 // 1. GET /api/admin/marketplace/products/pending — Produits en attente de validation
 router.get('/products/pending', verifyAdmin, async (req, res) => {
   try {
-    const products = await Product.find({ validationStatus: 'pending' }).sort({ createdAt: -1 });
+    const products = await Product.find({ validationStatus: 'pending' }).sort({ createdAt: -1, updatedAt: -1 });
     return res.status(200).json({ success: true, count: products.length, data: products });
   } catch (err) {
     console.error('[AdminMarketplace] get pending products:', err);
@@ -77,7 +88,7 @@ router.get('/products/all', verifyAdmin, async (req, res) => {
       ];
     }
 
-    const products = await Product.find(query).sort({ updatedAt: -1 });
+    const products = await Product.find(query).sort({ createdAt: -1, updatedAt: -1 });
     return res.status(200).json({ success: true, count: products.length, data: products });
   } catch (err) {
     console.error('[AdminMarketplace] get all products:', err);
