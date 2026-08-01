@@ -52,7 +52,10 @@ router.get('/', async (req, res) => {
       return res.json(cached);
     }
 
-    const filter = { isPublished: true };
+    const filter = {
+      isPublished: true,
+      validationStatus: 'approved',
+    };
 
     if (category) filter.category = category;
     if (minPrice || maxPrice) {
@@ -114,7 +117,7 @@ router.get('/featured', async (req, res) => {
       return res.json(cached);
     }
 
-    const products = await Product.find({ isFeatured: true, isPublished: true })
+    const products = await Product.find({ isFeatured: true, isPublished: true, validationStatus: 'approved' })
       .limit(12)
       .select(LIST_FIELDS)
       .lean();
@@ -143,6 +146,7 @@ router.get('/vendor/:vendorName', async (req, res) => {
     const products = await Product.find({
       vendorName: { $regex: new RegExp(`^${escapeRegex(vendorName)}$`, 'i') },
       isPublished: true,
+      validationStatus: 'approved',
     })
       .sort({ createdAt: -1 })
       .limit(100)
@@ -171,6 +175,7 @@ router.get('/similar/:id', async (req, res) => {
       category: product.category,
       _id: { $ne: req.params.id },
       isPublished: true,
+      validationStatus: 'approved',
     })
       .limit(6)
       .select(LIST_FIELDS)
@@ -190,8 +195,15 @@ router.get('/:id', async (req, res) => {
     const cacheKey = `products:detail:${req.params.id}`;
     const cached = cache.get(cacheKey);
     if (cached) {
-      setPublicCache(res, 120);
-      return res.json(cached);
+      const prod = cached.data;
+      const isApproved = prod && String(prod.validationStatus || '').toLowerCase() === 'approved';
+      const isPublished = prod && prod.isPublished === true;
+      if (isPublished && isApproved) {
+        setPublicCache(res, 120);
+        return res.json(cached);
+      }
+      // cached payload is not public-safe (might be draft/pending) — remove it and continue
+      cache.del(cacheKey);
     }
 
     const product = await Product.findById(req.params.id).lean();
@@ -200,7 +212,16 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit non trouvé' });
     }
 
+    const isApproved = String(product.validationStatus || '').toLowerCase() === 'approved';
+    const isPublished = product.isPublished === true;
+
+    // Do not expose non-published or non-approved products publicly
+    if (!isPublished || !isApproved) {
+      return res.status(404).json({ success: false, message: 'Produit non trouvé' });
+    }
+
     const payload = { success: true, data: product };
+    // cache only public-safe product details
     cache.set(cacheKey, payload, 2 * 60 * 1000);
     setPublicCache(res, 120);
     res.json(payload);
