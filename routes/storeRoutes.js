@@ -22,7 +22,18 @@ router.get('/:slug', async (req, res) => {
       return res.json(cached);
     }
 
-    const store = await Store.findOne({ slug }).lean();
+    let store = await Store.findOne({ slug }).lean();
+    // Fallback: try matching by decoded name or vendorName if slug not found
+    if (!store) {
+      const decoded = decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+      store = await Store.findOne({ slug: decoded }).lean() || await Store.findOne({ name: new RegExp(`^${decoded}$`, 'i') }).lean();
+    }
+    if (!store) {
+      // Try to find a user/vendor by vendorName and resolve their store
+      const vendor = await User.findOne({ vendorName: new RegExp(`^${decodeURIComponent(slug)}$`, 'i') }).lean();
+      if (vendor) store = await Store.findOne({ userId: vendor._id }).lean();
+    }
+
     if (!store) return res.status(404).json({ success: false, message: 'Boutique introuvable' });
 
     const user = await User.findById(store.userId).lean();
