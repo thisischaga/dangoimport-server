@@ -104,6 +104,19 @@ router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
+    // Validate required fields before approving to avoid Mongoose validation errors
+    const missing = [];
+    if (!product.name || !String(product.name).trim()) missing.push('name');
+    if (!product.category || !String(product.category).trim()) missing.push('category');
+    if (product.price === undefined || product.price === null) missing.push('price');
+    if (product.stock === undefined || product.stock === null) missing.push('stock');
+    if (!product.description || !String(product.description).trim()) missing.push('description');
+
+    if (missing.length > 0) {
+      // Do not attempt to save; return a clear error so the admin can request changes
+      return res.status(400).json({ success: false, message: 'Impossible d\'approuver : champs requis manquants.', missingFields: missing });
+    }
+
     product.validationStatus = 'approved';
     product.isPublished = true;
     product.rejectionReason = '';
