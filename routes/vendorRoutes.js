@@ -387,16 +387,17 @@ router.put('/store', verifyToken, getStore, async (req, res) => {
 });
 
 // GET /api/vendor/dashboard/stats
-router.get('/dashboard/stats', verifyToken, verifyVendor, async (req, res) => {
+router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
   try {
     const vendorId = req.vendorUser._id;
+    const storeId = req.storeId;
     const nb_produits = await Product.countDocuments({ vendorId, isPublished: true });
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const statsArray = await VendorOrder.aggregate([
-      { $match: { createdAt: { $gte: startOfMonth } } },
+    const monthlyStats = await VendorOrder.aggregate([
+      { $match: { storeId, createdAt: { $gte: startOfMonth } } },
       {
         $group: {
           _id: null,
@@ -406,7 +407,24 @@ router.get('/dashboard/stats', verifyToken, verifyVendor, async (req, res) => {
       },
     ]);
 
-    const stats = statsArray[0] || { ventes_mois: 0, ca_total: 0 };
+    const ordersByStatus = await VendorOrder.aggregate([
+      { $match: { storeId } },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const statusCounts = ordersByStatus.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
+    const lowStockCount = await Product.countDocuments({ vendorId, stock: { $lte: 5 }, isPublished: true });
+
+    const stats = monthlyStats[0] || { ventes_mois: 0, ca_total: 0 };
 
     return res.status(200).json({
       success: true,
@@ -414,6 +432,11 @@ router.get('/dashboard/stats', verifyToken, verifyVendor, async (req, res) => {
         nb_produits,
         ventes_mois: stats.ventes_mois,
         ca_total: stats.ca_total,
+        pendingOrders: statusCounts.pending || 0,
+        paidOrders: statusCounts.paid || 0,
+        shippedOrders: statusCounts.shipped || 0,
+        deliveredOrders: statusCounts.delivered || 0,
+        lowStockCount,
       },
     });
   } catch (error) {
@@ -631,6 +654,37 @@ router.get('/orders', verifyToken, getStore, async (req, res) => {
   } catch (error) {
     console.error('[vendorRoutes.js] get orders:', error);
     return res.status(500).json({ message: 'Erreur serveur lors de la récupération des commandes.' });
+  }
+});
+
+// PATCH /api/vendor/orders/:id/status
+router.patch('/orders/:id/status', verifyToken, getStore, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const allowedStatuses = ['pending', 'paid', 'shipped', 'delivered'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Statut invalide.' });
+    }
+
+    const order = await VendorOrder.findOne({ _id: req.params.id, storeId: req.storeId });
+    if (!order) {
+      return res.status(404).json({ message: 'Commande introuvable.' });
+    }
+
+    order.status = status;
+    if (status === 'shipped') {
+      order.shippedAt = new Date();
+    }
+    if (status === 'delivered') {
+      order.deliveredAt = new Date();
+    }
+    order.updatedAt = new Date();
+    await order.save();
+
+    return res.status(200).json({ success: true, data: order });
+  } catch (error) {
+    console.error('[vendorRoutes.js] update order status:', error);
+    return res.status(500).json({ message: 'Erreur serveur lors de la mise à jour du statut de la commande.' });
   }
 });
 
