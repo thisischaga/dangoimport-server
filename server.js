@@ -45,6 +45,7 @@ const WithdrawalRequest = require('./Models/WithdrawalRequest');
 const User = require('./Models/User');
 const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const qrRoutes = require('./routes/qrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -1822,6 +1823,9 @@ const startServer = async () => {
     // Routes d'Administration Marketplace (Amazon-style Validation)
     const adminMarketplaceRoutes = require('./routes/adminMarketplaceRoutes');
     app.use('/api/admin/marketplace', adminMarketplaceRoutes);
+
+    // Routes QR code
+    app.use('/api/qr', qrRoutes);
 
     // Gestion des erreurs 404
     app.use((req, res) => {
