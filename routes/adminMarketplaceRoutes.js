@@ -171,6 +171,15 @@ router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('[AdminMarketplace] approve product:', err);
+    // If this is a Mongoose validation error, return a 400 with missing fields for the admin UI
+    if (err && err.name === 'ValidationError') {
+      try {
+        const missing = Object.keys(err.errors || {}).filter((k) => err.errors[k] && err.errors[k].kind === 'required');
+        return res.status(400).json({ success: false, message: 'Impossible d\'approuver : champs requis manquants.', missingFields: missing });
+      } catch (ex) {
+        console.error('[AdminMarketplace] error parsing ValidationError:', ex);
+      }
+    }
     return res.status(500).json({ message: 'Erreur lors de l’approbation du produit.' });
   }
 });
