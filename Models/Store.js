@@ -28,6 +28,30 @@ const storeSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  banner: {
+    type: String,
+    default: ''
+  },
+  country: {
+    type: String,
+    default: ''
+  },
+  city: {
+    type: String,
+    default: ''
+  },
+  address: {
+    type: String,
+    default: ''
+  },
+  deliveryPolicy: {
+    type: String,
+    default: ''
+  },
+  returnPolicy: {
+    type: String,
+    default: ''
+  },
   whatsapp: {
     type: String,
     default: ''
