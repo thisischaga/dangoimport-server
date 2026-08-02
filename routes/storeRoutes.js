@@ -11,6 +11,27 @@ function setPublicCache(res, maxAge = 300) {
   res.set('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=60`);
 }
 
+async function findStoreByParam(param) {
+  const slug = param.trim();
+  // direct slug match
+  let store = await Store.findOne({ slug }).lean();
+  if (store) return store;
+
+  // decoded and name match
+  const decoded = decodeURIComponent(param).replace(/[-_]+/g, ' ').trim();
+  store = await Store.findOne({ slug: decoded }).lean() || await Store.findOne({ name: new RegExp(`^${decoded}$`, 'i') }).lean();
+  if (store) return store;
+
+  // try vendor user
+  const vendor = await User.findOne({ vendorName: new RegExp(`^${decoded}$`, 'i') }).lean();
+  if (vendor) {
+    store = await Store.findOne({ userId: vendor._id }).lean();
+    if (store) return store;
+  }
+
+  return null;
+}
+
 // GET /api/stores/:slug - store info + aggregated stats
 router.get('/:slug', async (req, res) => {
   try {
@@ -22,18 +43,7 @@ router.get('/:slug', async (req, res) => {
       return res.json(cached);
     }
 
-    let store = await Store.findOne({ slug }).lean();
-    // Fallback: try matching by decoded name or vendorName if slug not found
-    if (!store) {
-      const decoded = decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
-      store = await Store.findOne({ slug: decoded }).lean() || await Store.findOne({ name: new RegExp(`^${decoded}$`, 'i') }).lean();
-    }
-    if (!store) {
-      // Try to find a user/vendor by vendorName and resolve their store
-      const vendor = await User.findOne({ vendorName: new RegExp(`^${decodeURIComponent(slug)}$`, 'i') }).lean();
-      if (vendor) store = await Store.findOne({ userId: vendor._id }).lean();
-    }
-
+    const store = await findStoreByParam(slug);
     if (!store) return res.status(404).json({ success: false, message: 'Boutique introuvable' });
 
     const user = await User.findById(store.userId).lean();
@@ -92,7 +102,7 @@ router.get('/:slug/products', async (req, res) => {
     const { page = 1, limit = 24, search, sort, category, minPrice, maxPrice, inStock } = req.query;
     const slug = req.params.slug.trim();
 
-    const store = await Store.findOne({ slug }).lean();
+    const store = await findStoreByParam(slug);
     if (!store) return res.status(404).json({ success: false, message: 'Boutique introuvable' });
 
     const filter = { vendorId: store.userId, isPublished: true, validationStatus: 'approved' };
@@ -135,7 +145,7 @@ router.get('/:slug/reviews', async (req, res) => {
   try {
     const { page = 1, limit = 10 } = req.query;
     const slug = req.params.slug.trim();
-    const store = await Store.findOne({ slug }).lean();
+    const store = await findStoreByParam(slug);
     if (!store) return res.status(404).json({ success: false, message: 'Boutique introuvable' });
 
     // Find products for store
