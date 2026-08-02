@@ -1500,6 +1500,10 @@ const startServer = async () => {
     const productRoutes = require('./routes/productRoutes');
     app.use('/api/products', productRoutes);
 
+    // Store / Shop Routes
+    const storeRoutes = require('./routes/storeRoutes');
+    app.use('/api/stores', storeRoutes);
+
     // Mettre à jour un produit (admin only)
     app.put('/api/products/:id', verifyAdmin, async (req, res) => {
       try {
