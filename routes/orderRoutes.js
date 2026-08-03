@@ -2,6 +2,7 @@ const express = require('express');
 const Order = require('../Models/Commande');
 const Cart = require('../Models/Cart');
 const Product = require('../Models/Product');
+const Promotion = require('../Models/Promotion');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -13,10 +14,79 @@ const generateOrderNumber = () => {
     return `ORD-${random}-${timestamp.slice(-8)}`;
 };
 
+const getShippingCost = (subtotal, shippingMethod) => {
+    if (shippingMethod === 'pickup') return 0;
+    if (shippingMethod === 'express') return Math.round(subtotal * 0.1);
+    return Math.round(subtotal * 0.05);
+};
+
+const calculateDiscount = async (promoCode, subtotal) => {
+    if (!promoCode) return 0;
+
+    const code = String(promoCode).trim().toUpperCase();
+    const promotion = await Promotion.findOne({
+        code,
+        isActive: true,
+        startDate: { $lte: new Date() },
+        endDate: { $gte: new Date() },
+    });
+
+    if (!promotion) return 0;
+    if (promotion.minOrderAmount && subtotal < promotion.minOrderAmount) return 0;
+
+    if (promotion.discountType === 'percentage') {
+        const raw = subtotal * (promotion.discountValue / 100);
+        return promotion.maxDiscount ? Math.min(raw, promotion.maxDiscount) : raw;
+    }
+
+    return Math.min(Number(promotion.discountValue || 0), subtotal);
+};
+
+// POST - Aperçu de commande côté serveur
+router.post('/preview', verifyToken, async (req, res) => {
+    try {
+        const { items, shippingMethod = 'standard', promoCode } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ success: false, message: 'Aucun article dans la commande' });
+        }
+
+        let subtotal = 0;
+        for (const item of items) {
+            const product = await Product.findById(item.productId);
+            if (!product) {
+                return res.status(404).json({ success: false, message: `Produit ${item.productId} non trouvé` });
+            }
+            const unitPrice = Number(product.salePrice || product.price || 0);
+            subtotal += unitPrice * Number(item.quantity || 1);
+        }
+
+        const shippingCost = getShippingCost(subtotal, shippingMethod);
+        const discount = await calculateDiscount(promoCode, subtotal);
+        const tax = Math.round(subtotal * 0.18);
+        const total = Math.max(0, subtotal + shippingCost + tax - discount);
+
+        return res.json({
+            success: true,
+            data: {
+                subtotal,
+                shippingCost,
+                tax,
+                discount,
+                total,
+                shippingMethod,
+                promoCode: promoCode ? String(promoCode).toUpperCase() : '',
+            }
+        });
+    } catch (error) {
+        console.error('[orderRoutes.js] preview:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 // POST - Créer une nouvelle commande
 router.post('/', verifyToken, async (req, res) => {
     try {
-        const { items, shippingAddress, shippingMethod, paymentMethod } = req.body;
+        const { items, shippingAddress, shippingMethod, paymentMethod, promoCode } = req.body;
 
         if (!items || items.length === 0) {
             return res.status(400).json({ success: false, message: 'Aucun article dans la commande' });
@@ -47,22 +117,20 @@ router.post('/', verifyToken, async (req, res) => {
             subtotal += itemTotal;
         }
 
-        // Calculer les frais de livraison
-        let shippingCost = 0;
+        const shippingCost = getShippingCost(subtotal, shippingMethod);
+        const discount = await calculateDiscount(promoCode, subtotal);
         let estimatedDelivery = new Date();
 
         if (shippingMethod === 'express') {
-            shippingCost = subtotal * 0.1; // 10% du sous-total
             estimatedDelivery.setDate(estimatedDelivery.getDate() + 2);
-        } else if (shippingMethod === 'standard') {
-            shippingCost = subtotal * 0.05; // 5% du sous-total
+        } else if (shippingMethod === 'pickup') {
+            estimatedDelivery.setDate(estimatedDelivery.getDate() + 1);
+        } else {
             estimatedDelivery.setDate(estimatedDelivery.getDate() + 5);
         }
 
-        // Calculer les taxes (18%)
-        const tax = subtotal * 0.18;
-
-        const total = subtotal + shippingCost + tax;
+        const tax = Math.round(subtotal * 0.18);
+        const total = Math.max(0, subtotal + shippingCost + tax - discount);
 
         const order = new Order({
             orderNumber: generateOrderNumber(),
@@ -75,6 +143,7 @@ router.post('/', verifyToken, async (req, res) => {
             subtotal,
             shippingCost,
             tax,
+            discount,
             total,
             shippingMethod,
             estimatedDelivery,

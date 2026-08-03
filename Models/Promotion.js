@@ -1,69 +1,109 @@
 const mongoose = require('mongoose');
 
 const promotionSchema = new mongoose.Schema({
-    code: {
-        type: String,
-        unique: true,
-        required: true,
-        uppercase: true,
-        trim: true
+  name: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  code: {
+    type: String,
+    unique: true,
+    required: true,
+    uppercase: true,
+    trim: true,
+  },
+  description: {
+    type: String,
+    default: '',
+  },
+  discountType: {
+    type: String,
+    enum: ['percentage', 'fixed'],
+    required: true,
+  },
+  discountValue: {
+    type: Number,
+    required: true,
+    min: 0,
+  },
+  maxDiscount: {
+    type: Number,
+    default: null,
+  },
+  minOrderAmount: {
+    type: Number,
+    default: 0,
+  },
+  maxUses: {
+    type: Number,
+    default: null,
+  },
+  usedCount: {
+    type: Number,
+    default: 0,
+  },
+  maxUsesPerUser: {
+    type: Number,
+    default: null,
+  },
+  applicableProducts: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
     },
-
-    description: String,
-
-    discountType: {
-        type: String,
-        enum: ['percentage', 'fixed'],
-        required: true
+  ],
+  applicableCategories: [String],
+  applicableSellers: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
     },
-
-    discountValue: {
-        type: Number,
-        required: true,
-        min: 0
+  ],
+  excludedProducts: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
     },
-
-    maxDiscount: Number,
-
-    minOrderAmount: {
-        type: Number,
-        default: 0
+  ],
+  excludedCategories: [String],
+  excludedSellers: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
     },
-
-    applicableCategories: [String],
-
-    applicableProducts: [
-        {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Product'
-        }
-    ],
-
-    usageLimit: Number,
-
-    usageCount: {
-        type: Number,
-        default: 0
+  ],
+  eligibleUsers: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
     },
-
-    startDate: Date,
-
-    endDate: Date,
-
-    isActive: {
-        type: Boolean,
-        default: true
-    },
-
-    createdAt: {
-        type: Date,
-        default: Date.now
-    },
-
-    updatedAt: {
-        type: Date,
-        default: Date.now
-    }
+  ],
+  excludeOnSale: {
+    type: Boolean,
+    default: false,
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'scheduled', 'expired'],
+    default: 'active',
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Admin',
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now,
+  },
 });
+
+promotionSchema.index({ code: 1 });
+promotionSchema.index({ status: 1 });
+promotionSchema.index({ createdBy: 1 });
 
 module.exports = mongoose.model('Promotion', promotionSchema);
