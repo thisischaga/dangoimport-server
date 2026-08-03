@@ -19,20 +19,60 @@ const verifyToken = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.userId || decoded.id;
-    const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone');
-    if (!user) {
-      return res.status(401).json({ message: 'Utilisateur introuvable.' });
+
+    // 1. Si le rôle dans le token indique un Admin
+    if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
+      const admin = await Admin.findById(userId).select('-adminPassword');
+      if (admin) {
+        req.user = {
+          ...decoded,
+          id: admin._id,
+          userId: admin._id,
+          userFirstname: admin.adminFirstname || '',
+          userSurname: admin.adminSurname || '',
+          userEmail: admin.adminName || '',
+          userPhone: admin.adminPhone || '',
+          role: admin.role || decoded.role,
+        };
+        req.admin = admin;
+        return next();
+      }
     }
-    req.user = {
-      ...decoded,
-      id: userId,
-      userId,
-      userFirstname: user.userFirstname,
-      userSurname: user.userSurname,
-      userEmail: user.userEmail,
-      userPhone: user.userPhone || '',
-    };
-    next();
+
+    // 2. Sinon, chercher dans la collection User
+    const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone role');
+    if (user) {
+      req.user = {
+        ...decoded,
+        id: user._id,
+        userId: user._id,
+        userFirstname: user.userFirstname || '',
+        userSurname: user.userSurname || '',
+        userEmail: user.userEmail || '',
+        userPhone: user.userPhone || '',
+        role: user.role || decoded.role || 'user',
+      };
+      return next();
+    }
+
+    // 3. Fallback : si non trouvé dans User, vérifier dans Admin
+    const admin = await Admin.findById(userId).select('-adminPassword');
+    if (admin) {
+      req.user = {
+        ...decoded,
+        id: admin._id,
+        userId: admin._id,
+        userFirstname: admin.adminFirstname || '',
+        userSurname: admin.adminSurname || '',
+        userEmail: admin.adminName || '',
+        userPhone: admin.adminPhone || '',
+        role: admin.role || 'admin',
+      };
+      req.admin = admin;
+      return next();
+    }
+
+    return res.status(401).json({ message: 'Utilisateur introuvable.' });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Session expirée, veuillez vous reconnecter.' });
