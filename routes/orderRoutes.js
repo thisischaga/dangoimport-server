@@ -306,7 +306,7 @@ router.get('/:id', verifyToken, async (req, res) => {
         }
 
         // Vérifier que l'utilisateur est le propriétaire ou un admin
-        if (order.customerId.toString() !== req.user.id && req.user.role !== 'admin') {
+        if (order.customerId.toString() !== req.user.id && !['admin', 'dev-admin'].includes(req.user.role)) {
             return res.status(403).json({ success: false, message: 'Accès refusé' });
         }
 
@@ -320,7 +320,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 // GET - Toutes les commandes (Admin)
 router.get('/admin/all', verifyToken, async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
+        if (!['admin', 'dev-admin'].includes(req.user.role)) {
             return res.status(403).json({ success: false, message: 'Accès refusé' });
         }
 
@@ -362,7 +362,7 @@ router.get('/admin/all', verifyToken, async (req, res) => {
 // PATCH - Mettre à jour le statut de la commande (Admin)
 router.patch('/:id/status', verifyToken, async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
+        if (!['admin', 'dev-admin'].includes(req.user.role)) {
             return res.status(403).json({ success: false, message: 'Accès refusé' });
         }
 
