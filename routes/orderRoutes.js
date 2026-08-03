@@ -134,8 +134,8 @@ router.post('/preview', verifyToken, async (req, res) => {
 
         const shippingCost = getShippingCost(subtotal, shippingMethod);
         const discount = promoResult.discount || 0;
-        const tax = Math.round(subtotal * 0.18);
-        const total = Math.max(0, subtotal + shippingCost + tax - discount);
+        const tax = 0;
+        const total = Math.max(0, subtotal + shippingCost - discount);
 
         return res.json({
             success: true,
@@ -216,15 +216,15 @@ router.post('/', verifyToken, async (req, res) => {
             estimatedDelivery.setDate(estimatedDelivery.getDate() + 5);
         }
 
-        const tax = Math.round(subtotal * 0.18);
-        const total = Math.max(0, subtotal + shippingCost + tax - discount);
+        const tax = 0;
+        const total = Math.max(0, subtotal + shippingCost - discount);
 
         const order = new Order({
             orderNumber: generateOrderNumber(),
             customerId: req.user.id,
             customerName: `${req.user.userFirstname} ${req.user.userSurname}`,
-            customerEmail: req.user.userEmail,
-            customerPhone: req.user.userPhone || '',
+            customerEmail: req.body.customerEmail || req.user.userEmail,
+            customerPhone: req.body.customerPhone || req.user.userPhone || '',
             shippingAddress,
             items: orderItems,
             subtotal,
