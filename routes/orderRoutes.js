@@ -4,6 +4,8 @@ const Cart = require('../Models/Cart');
 const Product = require('../Models/Product');
 const Promotion = require('../Models/Promotion');
 const PromoUsage = require('../Models/PromoUsage');
+const VendorOrder = require('../Models/VendorOrder');
+const Store = require('../Models/Store');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -220,7 +222,7 @@ router.post('/', verifyToken, async (req, res) => {
 
         const tax = 0;
         const total = Math.max(0, subtotal + shippingCost - discount);
-        const paymentStatus = ['fedapay', 'mobile_money'].includes(paymentMethod) ? 'completed' : 'pending';
+        const paymentStatus = paymentMethod === 'mobile_money' ? 'completed' : paymentMethod === 'fedapay' ? 'pending' : 'pending';
         const orderStatus = paymentStatus === 'completed' ? 'confirmed' : 'pending';
 
         const order = new Order({
@@ -245,6 +247,43 @@ router.post('/', verifyToken, async (req, res) => {
         });
 
         await order.save();
+
+        const vendorGroups = orderItems.reduce((groups, item) => {
+            const vendorId = item.vendorId ? item.vendorId.toString() : null;
+            const key = vendorId || item.vendorName || `vendor-${Math.random().toString(36).slice(2, 8)}`;
+            if (!groups[key]) {
+                groups[key] = {
+                    vendorId,
+                    vendorName: item.vendorName || 'Vendeur Indépendant',
+                    items: [],
+                    total: 0,
+                };
+            }
+            groups[key].items.push({
+                productId: item.productId,
+                quantity: item.quantity,
+                price: item.price,
+            });
+            groups[key].total += item.subtotal || 0;
+            return groups;
+        }, {});
+
+        for (const groupKey of Object.keys(vendorGroups)) {
+            const group = vendorGroups[groupKey];
+            if (!group.vendorId) continue;
+            const store = await Store.findOne({ userId: group.vendorId });
+            if (!store) continue;
+
+            const vendorOrder = new VendorOrder({
+                storeId: store._id,
+                customerName: order.customerName,
+                customerPhone: order.customerPhone,
+                total: group.total,
+                status: paymentStatus === 'completed' ? 'paid' : 'pending',
+                items: group.items,
+            });
+            await vendorOrder.save();
+        }
 
         // Réduire le stock
         for (const item of items) {
