@@ -22,6 +22,20 @@ const normalizeSpecifications = (specs) => {
     .filter((s) => s.key && s.value);
 };
 
+const normalizeDeliveryZones = (zones) => {
+  if (!Array.isArray(zones)) return [];
+  return zones
+    .map((zone) => ({
+      country: zone.country?.trim(),
+      area: zone.area?.trim(),
+      locality: zone.locality?.trim(),
+      price: toNumber(zone.price, zone.freeShipping ? 0 : 0) || 0,
+      deliveryTime: zone.deliveryTime?.trim(),
+      freeShipping: Boolean(zone.freeShipping),
+    }))
+    .filter((zone) => zone.country && zone.area && zone.locality && zone.deliveryTime);
+};
+
 const isBlobUrl = (url) => typeof url === 'string' && url.startsWith('blob:');
 const isPersistableUrl = (url) =>
   typeof url === 'string' &&
@@ -74,6 +88,7 @@ function buildProductPayload(body, { existingProduct } = {}) {
     specifications: normalizeSpecifications(body.specifications),
     features: toStringList(body.features),
     shippingInfo: body.shippingInfo?.trim() || undefined,
+    deliveryZones: normalizeDeliveryZones(body.shipping?.deliveryZones || body.deliveryZones),
     warranty: body.warranty?.trim() || undefined,
     image,
     images,

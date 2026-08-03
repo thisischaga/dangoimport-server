@@ -92,6 +92,16 @@ const productSchema = new mongoose.Schema({
 
     // Livraison et garantie
     shippingInfo: String,
+    deliveryZones: [
+      {
+        country: String,
+        area: String,
+        locality: String,
+        price: { type: Number, min: 0, default: 0 },
+        deliveryTime: String,
+        freeShipping: { type: Boolean, default: false },
+      }
+    ],
     warranty: String,
 
     // Images et médias

@@ -539,6 +539,7 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
     }
 
     let payload = buildProductPayload({
+      ...req.body,
       name,
       description,
       price,
