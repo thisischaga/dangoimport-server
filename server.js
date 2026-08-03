@@ -826,8 +826,22 @@ const startServer = async () => {
           vendorName: vendorName || 'Dango Import',
         };
 
-        newOrder = new Achat(achatPayload);
-        await newOrder.save();
+        // If caller supplied an orderId (frontend created an Order beforehand), reuse it
+        let createdAchat = null;
+        if (req.body.orderId) {
+          try {
+            createdAchat = await Achat.findById(req.body.orderId);
+          } catch (e) {
+            createdAchat = null;
+          }
+        }
+
+        if (!createdAchat) {
+          newOrder = new Achat(achatPayload);
+          await newOrder.save();
+        } else {
+          newOrder = createdAchat;
+        }
 
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
@@ -927,8 +941,22 @@ const startServer = async () => {
           vendorName: vendorName || 'Dango Import',
         };
 
-        newOrder = new Achat(achatPayload);
-        await newOrder.save();
+        // If caller supplied an orderId (frontend created an order beforehand), reuse it
+        let createdAchat = null;
+        if (req.body.orderId) {
+          try {
+            createdAchat = await Achat.findById(req.body.orderId);
+          } catch (e) {
+            createdAchat = null;
+          }
+        }
+
+        if (!createdAchat) {
+          newOrder = new Achat(achatPayload);
+          await newOrder.save();
+        } else {
+          newOrder = createdAchat;
+        }
 
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
