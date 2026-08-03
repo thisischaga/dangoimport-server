@@ -3,6 +3,7 @@ const Order = require('../Models/Commande');
 const Cart = require('../Models/Cart');
 const Product = require('../Models/Product');
 const Promotion = require('../Models/Promotion');
+const PromoUsage = require('../Models/PromoUsage');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -20,26 +21,84 @@ const getShippingCost = (subtotal, shippingMethod) => {
     return Math.round(subtotal * 0.05);
 };
 
-const calculateDiscount = async (promoCode, subtotal) => {
-    if (!promoCode) return 0;
-
-    const code = String(promoCode).trim().toUpperCase();
-    const promotion = await Promotion.findOne({
-        code,
-        isActive: true,
-        startDate: { $lte: new Date() },
-        endDate: { $gte: new Date() },
-    });
-
-    if (!promotion) return 0;
-    if (promotion.minOrderAmount && subtotal < promotion.minOrderAmount) return 0;
-
-    if (promotion.discountType === 'percentage') {
-        const raw = subtotal * (promotion.discountValue / 100);
-        return promotion.maxDiscount ? Math.min(raw, promotion.maxDiscount) : raw;
+const validatePromotion = async (promoCode, subtotal, userId, cartItems = []) => {
+    if (!promoCode) {
+        return { discount: 0 };
     }
 
-    return Math.min(Number(promotion.discountValue || 0), subtotal);
+    const code = String(promoCode).trim().toUpperCase();
+    const promotion = await Promotion.findOne({ code });
+    if (!promotion) {
+        return { error: 'Code promo invalide.' };
+    }
+
+    const now = new Date();
+    if (promotion.status !== 'active') {
+        return { error: 'Ce code promo n’est pas actif.' };
+    }
+    if (promotion.startDate && promotion.startDate > now) {
+        return { error: 'Ce code promo n’est pas encore actif.' };
+    }
+    if (promotion.endDate && promotion.endDate < now) {
+        return { error: 'Ce code promo est expiré.' };
+    }
+    if (promotion.minOrderAmount && subtotal < promotion.minOrderAmount) {
+        return { error: `Montant minimum de commande ${promotion.minOrderAmount} FCFA requis.` };
+    }
+    if (promotion.maxUses !== null && promotion.maxUses !== undefined && promotion.usedCount >= promotion.maxUses) {
+        return { error: 'Ce code promo a atteint sa limite d’utilisation.' };
+    }
+    if (promotion.maxUsesPerUser) {
+        const userUses = await PromoUsage.countDocuments({ promotionId: promotion._id, userId });
+        if (userUses >= promotion.maxUsesPerUser) {
+            return { error: 'Vous avez déjà utilisé ce code promo le nombre maximum de fois.' };
+        }
+    }
+
+    const eligibleProducts = promotion.applicableProducts?.map(String) || [];
+    const excludedProducts = promotion.excludedProducts?.map(String) || [];
+    const eligibleCategories = promotion.applicableCategories || [];
+    const excludedCategories = promotion.excludedCategories || [];
+
+    let eligibleSubtotal = 0;
+    for (const item of cartItems) {
+        const productId = String(item.productId || item._id || item.id);
+        const category = item.category || item.productCategory || '';
+        const unitPrice = Number(item.price || item.salePrice || item.promoPrice || 0);
+        const itemSubtotal = unitPrice * Number(item.quantity || 1);
+
+        const isExcludedProduct = excludedProducts.length > 0 && excludedProducts.includes(productId);
+        const isExcludedCategory = excludedCategories.length > 0 && excludedCategories.includes(category);
+        const isSaleProduct = promotion.excludeOnSale && Number(item.salePrice || item.promoPrice || 0) > 0 && Number(item.salePrice || item.promoPrice || 0) < Number(item.price || 0);
+
+        if (isExcludedProduct || isExcludedCategory || isSaleProduct) {
+            continue;
+        }
+
+        if (eligibleProducts.length > 0 && !eligibleProducts.includes(productId)) {
+            continue;
+        }
+
+        if (eligibleCategories.length > 0 && !eligibleCategories.includes(category)) {
+            continue;
+        }
+
+        eligibleSubtotal += itemSubtotal;
+    }
+
+    if (eligibleSubtotal <= 0) {
+        return { error: 'Aucun article éligible pour ce code promo.' };
+    }
+
+    let discount = 0;
+    if (promotion.discountType === 'percentage') {
+        const raw = eligibleSubtotal * (promotion.discountValue / 100);
+        discount = promotion.maxDiscount ? Math.min(raw, promotion.maxDiscount) : raw;
+    } else {
+        discount = Math.min(Number(promotion.discountValue || 0), eligibleSubtotal);
+    }
+
+    return { promotion, discount, eligibleSubtotal };
 };
 
 // POST - Aperçu de commande côté serveur
@@ -51,6 +110,7 @@ router.post('/preview', verifyToken, async (req, res) => {
         }
 
         let subtotal = 0;
+        const previewItems = [];
         for (const item of items) {
             const product = await Product.findById(item.productId);
             if (!product) {
@@ -58,10 +118,22 @@ router.post('/preview', verifyToken, async (req, res) => {
             }
             const unitPrice = Number(product.salePrice || product.price || 0);
             subtotal += unitPrice * Number(item.quantity || 1);
+            previewItems.push({
+                productId: product._id,
+                category: product.category,
+                price: product.price,
+                salePrice: product.salePrice,
+                quantity: item.quantity,
+            });
+        }
+
+        const promoResult = await validatePromotion(promoCode, subtotal, req.user.id, previewItems);
+        if (promoResult.error) {
+            return res.status(400).json({ success: false, message: promoResult.error });
         }
 
         const shippingCost = getShippingCost(subtotal, shippingMethod);
-        const discount = await calculateDiscount(promoCode, subtotal);
+        const discount = promoResult.discount || 0;
         const tax = Math.round(subtotal * 0.18);
         const total = Math.max(0, subtotal + shippingCost + tax - discount);
 
@@ -109,6 +181,9 @@ router.post('/', verifyToken, async (req, res) => {
                 productName: product.name,
                 productImage: product.images[0]?.url || '',
                 price: itemPrice,
+                originalPrice: product.price,
+                salePrice: product.salePrice,
+                category: product.category,
                 quantity: item.quantity,
                 selectedOptions: item.selectedOptions || {},
                 subtotal: itemTotal
@@ -117,8 +192,20 @@ router.post('/', verifyToken, async (req, res) => {
             subtotal += itemTotal;
         }
 
+        const promoResult = await validatePromotion(promoCode, subtotal, req.user.id, orderItems.map((item) => ({
+            productId: item.productId,
+            category: item.category,
+            price: item.originalPrice,
+            salePrice: item.salePrice,
+            quantity: item.quantity,
+        })));
+        if (promoResult.error) {
+            return res.status(400).json({ success: false, message: promoResult.error });
+        }
+
         const shippingCost = getShippingCost(subtotal, shippingMethod);
-        const discount = await calculateDiscount(promoCode, subtotal);
+        const discount = promoResult.discount || 0;
+        const promotion = promoResult.promotion || null;
         let estimatedDelivery = new Date();
 
         if (shippingMethod === 'express') {
@@ -156,6 +243,18 @@ router.post('/', verifyToken, async (req, res) => {
         for (const item of items) {
             await Product.findByIdAndUpdate(item.productId, {
                 $inc: { stock: -item.quantity, totalSales: item.quantity }
+            });
+        }
+
+        if (promotion && discount > 0) {
+            await Promotion.findByIdAndUpdate(promotion._id, { $inc: { usedCount: 1 } });
+            await PromoUsage.create({
+                promotionId: promotion._id,
+                code: promotion.code,
+                userId: req.user.id,
+                orderId: order._id,
+                subtotal,
+                discountAmount: discount,
             });
         }
 

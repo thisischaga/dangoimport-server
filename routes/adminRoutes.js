@@ -109,22 +109,32 @@ router.get('/products', verifyToken, adminOnly, async (req, res) => {
 router.post('/promotions', verifyToken, adminOnly, async (req, res) => {
     try {
         const {
-            code, description, discountType, discountValue, maxDiscount,
-            minOrderAmount, applicableCategories, applicableProducts, usageLimit, startDate, endDate
+            name, code, description, discountType, discountValue, maxDiscount,
+            minOrderAmount, applicableCategories, applicableProducts,
+            maxUses, maxUsesPerUser, excludedCategories, excludedProducts,
+            eligibleUsers, excludeOnSale, status, startDate, endDate
         } = req.body;
 
         const promotion = new Promotion({
+            name,
             code: code.toUpperCase(),
             description,
             discountType,
             discountValue,
             maxDiscount,
             minOrderAmount,
+            maxUses,
+            maxUsesPerUser,
             applicableCategories,
             applicableProducts,
-            usageLimit,
+            excludedCategories,
+            excludedProducts,
+            eligibleUsers,
+            excludeOnSale,
+            status: status || 'active',
             startDate,
-            endDate
+            endDate,
+            createdBy: req.user.userId || req.user.id,
         });
 
         await promotion.save();
@@ -138,7 +148,7 @@ router.post('/promotions', verifyToken, adminOnly, async (req, res) => {
 // GET - Toutes les promotions
 router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
     try {
-        const promotions = await Promotion.find();
+        const promotions = await Promotion.find().sort({ createdAt: -1 });
         res.json({ success: true, data: promotions });
     } catch (error) {
       console.error("[adminRoutes.js] Erreur capturée :", error);
@@ -149,7 +159,13 @@ router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
 // PUT - Mettre à jour une promotion
 router.put('/promotions/:id', verifyToken, adminOnly, async (req, res) => {
     try {
-        const promotion = await Promotion.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        const updateData = {
+            ...req.body,
+            maxUses: req.body.maxUses ?? req.body.usageLimit,
+            updatedAt: new Date(),
+        };
+
+        const promotion = await Promotion.findByIdAndUpdate(req.params.id, updateData, { new: true });
 
         if (!promotion) {
             return res.status(404).json({ success: false, message: 'Promotion non trouvée' });
