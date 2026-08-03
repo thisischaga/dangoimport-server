@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const Admin = require('../Models/Admin');
+const User = require('../Models/User');
 
 /**
  * Middleware verifyToken — vérifie que le JWT est valide
@@ -18,7 +19,19 @@ const verifyToken = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.userId || decoded.id;
-    req.user = { ...decoded, id: userId, userId };
+    const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone');
+    if (!user) {
+      return res.status(401).json({ message: 'Utilisateur introuvable.' });
+    }
+    req.user = {
+      ...decoded,
+      id: userId,
+      userId,
+      userFirstname: user.userFirstname,
+      userSurname: user.userSurname,
+      userEmail: user.userEmail,
+      userPhone: user.userPhone || '',
+    };
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
