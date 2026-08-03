@@ -180,6 +180,8 @@ router.post('/', verifyToken, async (req, res) => {
                 productId: product._id,
                 productName: product.name,
                 productImage: product.images[0]?.url || '',
+                vendorName: product.vendorName || 'Vendeur Indépendant',
+                vendorId: product.vendorId || null,
                 price: itemPrice,
                 originalPrice: product.price,
                 salePrice: product.salePrice,
@@ -218,6 +220,8 @@ router.post('/', verifyToken, async (req, res) => {
 
         const tax = 0;
         const total = Math.max(0, subtotal + shippingCost - discount);
+        const paymentStatus = ['fedapay', 'mobile_money'].includes(paymentMethod) ? 'completed' : 'pending';
+        const orderStatus = paymentStatus === 'completed' ? 'confirmed' : 'pending';
 
         const order = new Order({
             orderNumber: generateOrderNumber(),
@@ -234,7 +238,10 @@ router.post('/', verifyToken, async (req, res) => {
             total,
             shippingMethod,
             estimatedDelivery,
-            paymentMethod
+            paymentMethod,
+            paymentStatus,
+            status: orderStatus,
+            paymentDate: paymentStatus === 'completed' ? new Date() : null,
         });
 
         await order.save();

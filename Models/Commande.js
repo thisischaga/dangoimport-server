@@ -48,6 +48,12 @@ const orderSchema = new mongoose.Schema({
             },
             productName: String,
             productImage: String,
+            vendorName: String,
+            vendorId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Vendor',
+                default: null
+            },
             price: Number,
             quantity: {
                 type: Number,

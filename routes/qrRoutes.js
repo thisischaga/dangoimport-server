@@ -11,11 +11,13 @@ const router = express.Router();
 
 const QR_TOKEN_EXPIRES_IN = '24h';
 
-const generatePayload = ({ orderId, orderNumber, vendorId, vendorName, expiresAt }) => ({
+const generatePayload = ({ orderId, orderNumber, vendorId, vendorName, vendorTotal, paymentMethod, expiresAt }) => ({
   orderId,
   orderNumber,
   vendorId,
   vendorName,
+  vendorTotal,
+  paymentMethod,
   expiresAt: expiresAt.toISOString(),
 });
 
@@ -50,11 +52,14 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
     }, {});
 
     const qrTokens = Object.values(vendorGroups).map((group) => {
+      const vendorTotal = group.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
       const payload = generatePayload({
         orderId: order._id.toString(),
         orderNumber: order.orderNumber,
         vendorId: group.vendorId,
         vendorName: group.vendorName,
+        vendorTotal,
+        paymentMethod: order.paymentMethod,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
 
@@ -65,6 +70,7 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
       return {
         vendorId: group.vendorId,
         vendorName: group.vendorName,
+        vendorTotal,
         token,
       };
     });
