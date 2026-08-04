@@ -110,7 +110,7 @@ const orderSchema = new mongoose.Schema({
     // Paiement
     paymentMethod: {
         type: String,
-        enum: ['mobile_money', 'fedapay', 'credit_card', 'crypto', 'paypal', 'bank_transfer'],
+        enum: ['mobile_money', 'credit_card', 'crypto', 'paypal', 'bank_transfer'],
         required: true
     },
     paymentStatus: {

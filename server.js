@@ -737,7 +737,7 @@ const startServer = async () => {
       app.use('/api/upload', uploadRoutesEarly);
     }
 
-    app.post('/api/payment/webhook', express.json(), async (req, res) => {
+    const handleFedapayWebhook = async (req, res) => {
       try {
         const signature = req.headers['x-fedapay-signature'];
         const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
@@ -758,27 +758,33 @@ const startServer = async () => {
           const meta = transaction?.custom_metadata || {};
           const { orderId, type } = meta;
 
-          if (type === 'cart') {
-            await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-          } else if (type === 'devis') {
-            await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-          } else if (type === 'sourcing') {
-            const SourcingRequest = require('./Models/SourcingRequest');
-            await SourcingRequest.findByIdAndUpdate(orderId, {
-              status: 'paid',
-              paymentTransactionId: String(transaction.id || ''),
-            });
-          } else {
-            await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+          if (orderId) {
+            if (type === 'cart') {
+              await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
+            } else if (type === 'devis') {
+              await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
+            } else if (type === 'sourcing') {
+              const SourcingRequest = require('./Models/SourcingRequest');
+              await SourcingRequest.findByIdAndUpdate(orderId, {
+                status: 'paid',
+                paymentTransactionId: String(transaction.id || ''),
+              });
+            } else {
+              await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
+            }
           }
         }
 
         return res.status(200).send('Webhook traité avec succès');
       } catch (err) {
-        console.error('Erreur Webhook paiement :', err);
+        console.error('Erreur Webhook FedaPay :', err);
         return res.status(500).send('Erreur webhook paiement');
       }
-    });
+    };
+
+    app.post('/api/payment/webhook', express.json(), handleFedapayWebhook);
+    app.post('/api/fedapay/webhook', express.json(), handleFedapayWebhook);
+    app.post('/webhook/paiement', express.json(), handleFedapayWebhook);
 
     app.post('/api/fedapay/checkout', async (req, res) => {
       const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
@@ -826,22 +832,8 @@ const startServer = async () => {
           vendorName: vendorName || 'Dango Import',
         };
 
-        // If caller supplied an orderId (frontend created an Order beforehand), reuse it
-        let createdAchat = null;
-        if (req.body.orderId) {
-          try {
-            createdAchat = await Achat.findById(req.body.orderId);
-          } catch (e) {
-            createdAchat = null;
-          }
-        }
-
-        if (!createdAchat) {
-          newOrder = new Achat(achatPayload);
-          await newOrder.save();
-        } else {
-          newOrder = createdAchat;
-        }
+        newOrder = new Achat(achatPayload);
+        await newOrder.save();
 
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
@@ -941,22 +933,8 @@ const startServer = async () => {
           vendorName: vendorName || 'Dango Import',
         };
 
-        // If caller supplied an orderId (frontend created an order beforehand), reuse it
-        let createdAchat = null;
-        if (req.body.orderId) {
-          try {
-            createdAchat = await Achat.findById(req.body.orderId);
-          } catch (e) {
-            createdAchat = null;
-          }
-        }
-
-        if (!createdAchat) {
-          newOrder = new Achat(achatPayload);
-          await newOrder.save();
-        } else {
-          newOrder = createdAchat;
-        }
+        newOrder = new Achat(achatPayload);
+        await newOrder.save();
 
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
@@ -1037,53 +1015,6 @@ const startServer = async () => {
       } catch (error) {
         console.error('Erreur status FedaPay:', error.message);
         res.status(500).json({ message: 'Erreur lors de la récupération du statut', error: error.message });
-      }
-    });
-
-    app.post('/api/fedapay/webhook', express.json(), async (req, res) => {
-      try {
-        const signature = req.headers['x-fedapay-signature'];
-        const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
-
-        // Vérification de la signature si la clé est configurée
-        if (secret && signature) {
-          const hash = crypto.createHmac('sha256', secret)
-            .update(JSON.stringify(req.body))
-            .digest('hex');
-          if (hash !== signature) {
-            console.error("Signature FedaPay invalide !");
-            return res.status(403).send('Signature invalide');
-          }
-        }
-
-        const event = req.body;
-
-        if (event && event.name === 'transaction.approved') {
-          const transaction = event.entity;
-          if (transaction && transaction.custom_metadata) {
-            const { orderId, type } = transaction.custom_metadata;
-
-            if (type === 'cart') {
-              await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-            } else if (type === 'devis') {
-              await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-            } else if (type === 'sourcing') {
-              const SourcingRequest = require('./Models/SourcingRequest');
-              await SourcingRequest.findByIdAndUpdate(orderId, {
-                status: 'paid',
-                paymentTransactionId: String(transaction.id || ''),
-              });
-            } else {
-              await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
-            }
-
-            console.log(`✅ Commande ${orderId} (${type}) marquée comme payée via Webhook FedaPay.`);
-          }
-        }
-        res.status(200).send('Webhook traité avec succès');
-      } catch (err) {
-        console.error("Erreur Webhook FedaPay:", err);
-        res.status(500).send('Erreur Webhook');
       }
     });
 

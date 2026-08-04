@@ -6,16 +6,14 @@ function cleanEnv(value) {
 }
 
 function resolveFedapayEnvironment(apiKey) {
-  // Prefer explicit FEDAPAY_ENVIRONMENT when provided (allows overriding key prefix)
+  // Le préfixe de la clé prime sur FEDAPAY_ENVIRONMENT (évite live key + sandbox)
+  if (apiKey.startsWith('sk_live_')) return 'live';
+  if (apiKey.startsWith('sk_sandbox_') || apiKey.startsWith('sk_test_')) return 'sandbox';
+
   const explicit = cleanEnv(process.env.FEDAPAY_ENVIRONMENT).toLowerCase();
   if (explicit === 'live' || explicit === 'production') return 'live';
   if (explicit === 'sandbox' || explicit === 'test') return 'sandbox';
 
-  // Fallback to API key prefix inference
-  if (apiKey.startsWith('sk_live_')) return 'live';
-  if (apiKey.startsWith('sk_sandbox_') || apiKey.startsWith('sk_test_')) return 'sandbox';
-
-  // Safe default
   return 'sandbox';
 }
 
