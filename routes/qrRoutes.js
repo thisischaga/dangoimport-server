@@ -24,6 +24,10 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
   try {
     let order = await ShopOrder.findById(req.params.orderId);
     if (!order) {
+      const Commande = require('../Models/Commande');
+      order = await Commande.findById(req.params.orderId);
+    }
+    if (!order) {
       const Achat = require('../Models/Achat');
       order = await Achat.findById(req.params.orderId);
     }
@@ -36,10 +40,6 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
 
     if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'dev-admin') {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
-    }
-
-    if (order.paymentStatus !== 'completed' && order.status !== 'confirmed') {
-      return res.status(400).json({ success: false, message: 'Paiement non confirmé' });
     }
 
     // Find QRCode documents for this order
