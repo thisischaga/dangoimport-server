@@ -7,6 +7,7 @@ const Store = require('../Models/Store');
 const Product = require('../Models/Product');
 const VendorProduct = require('../Models/VendorProduct');
 const VendorOrder = require('../Models/VendorOrder');
+const QRCode = require('../Models/QRCode');
 const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { buildProductPayload } = require('../utils/productPayload');

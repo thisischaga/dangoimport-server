@@ -25,6 +25,12 @@ const vendorOrderSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  shopOrderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ShopOrder',
+    required: false,
+    index: true,
+  },
   customerName: {
     type: String,
     required: true,

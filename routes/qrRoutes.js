@@ -32,8 +32,12 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
       const Achat = require('../Models/Achat');
       order = await Achat.findById(req.params.orderId);
     }
+    let vendorOrder = null;
     if (!order) {
-      order = await VendorOrder.findById(req.params.orderId);
+      vendorOrder = await VendorOrder.findById(req.params.orderId);
+      if (vendorOrder && vendorOrder.shopOrderId) {
+        order = await ShopOrder.findById(vendorOrder.shopOrderId);
+      }
     }
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 

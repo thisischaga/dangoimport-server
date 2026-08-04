@@ -79,6 +79,7 @@ const createVendorOrdersForShopOrder = async ({ order, session }) => {
     const [vendorOrder] = await VendorOrder.create([
       {
         storeId: store._id,
+        shopOrderId: order._id,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
         total: vendorTotal,
