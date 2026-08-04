@@ -178,7 +178,7 @@ const orderDeliveryDate = (shippingMethod) => {
 
 const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippingCost, tax, discount, total, shippingMethod }) => ({
   orderNumber: generateOrderNumber(),
-  customerId: mongoose.Types.ObjectId(userId),
+  customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
   customerName: `${customer.firstname || 'Client'} ${customer.lastname || ''}`.trim(),
   customerEmail: customer.email,
   customerPhone: customer.phone_number?.number || '',
