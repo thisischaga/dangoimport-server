@@ -545,15 +545,12 @@ router.get('/transaction/:id', async (req, res) => {
     const id = req.params.id;
     let transaction = null;
 
-    // If id looks like a Mongo ObjectId, try findById first
-    const mongoose = require('mongoose');
-    if (mongoose.Types.ObjectId.isValid(id) && String(id).length === 24) {
-      transaction = await TransactionModel.findById(id);
-    }
+    // Try lookup by provider transaction ID stored in `transactionId` field first (e.g. "481454")
+    transaction = await TransactionModel.findOne({ transactionId: String(id) });
 
-    // If not found by _id, try lookup by provider transaction id stored in `transactionId` field
-    if (!transaction) {
-      transaction = await TransactionModel.findOne({ transactionId: String(id) });
+    // If not found by transactionId and id is a valid 24-hex Mongo ObjectId, try findById
+    if (!transaction && /^[0-9a-fA-F]{24}$/.test(String(id))) {
+      transaction = await TransactionModel.findById(id);
     }
 
     if (!transaction) {
