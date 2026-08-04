@@ -38,7 +38,7 @@ const generateOrderNumber = () => {
   return `DI-${random}-${timestamp.slice(-8)}`;
 };
 
-const createLocalTransaction = async ({ checkoutUrl, transactionId, amount, currency, user, metadata, provider = 'fedapay' }) => {
+const createLocalTransaction = async ({ checkoutUrl, transactionId, amount, currency, user, metadata, provider = 'fedapay', orderId = null }) => {
   return TransactionModel.create({
     checkoutUrl,
     transactionId,
@@ -48,7 +48,67 @@ const createLocalTransaction = async ({ checkoutUrl, transactionId, amount, curr
     metadata,
     provider,
     status: 'pending',
+    orderId,
   });
+};
+
+const createPendingShopOrder = async ({ transaction }) => {
+  const metadata = transaction.metadata || {};
+  const userId = metadata.userId;
+  const customer = transaction.customer;
+  const shippingAddress = metadata.shippingAddress || {};
+  const items = metadata.items || [];
+  const subtotal = metadata.subtotal || transaction.amount;
+  const shippingCost = metadata.shippingCost || 0;
+  const tax = metadata.tax || 0;
+  const discount = metadata.discount || 0;
+  const total = metadata.total || transaction.amount;
+  const shippingMethod = metadata.shippingMethod || 'standard';
+
+  const orderItems = [];
+  for (const item of items) {
+    const product = await Product.findById(item.productId);
+    if (!product) {
+      throw new Error(`Produit introuvable : ${item.productId}`);
+    }
+    const unitPrice = Number(item.price || product.salePrice || product.price || 0);
+    orderItems.push({
+      productId: product._id,
+      productName: product.name,
+      productImage: product.images?.[0]?.url || product.image || '',
+      vendorId: product.vendorId,
+      vendorName: product.vendorName || item.vendorName || 'Vendeur Indépendant',
+      price: unitPrice,
+      originalPrice: product.price,
+      salePrice: product.salePrice || 0,
+      category: product.category,
+      quantity: item.quantity,
+      selectedOptions: item.selectedOptions || {},
+      subtotal: item.subtotal || unitPrice * item.quantity,
+      delivered: false,
+    });
+  }
+
+  const orderPayload = buildOrder({
+    userId,
+    customer,
+    shippingAddress,
+    items: orderItems,
+    subtotal,
+    shippingCost,
+    tax,
+    discount,
+    total,
+    shippingMethod,
+  });
+
+  orderPayload.status = 'pending';
+  orderPayload.paymentStatus = 'pending';
+  orderPayload.paymentMethod = 'FedaPay';
+  orderPayload.history = ['Commande créée en attente de paiement'];
+
+  const [order] = await ShopOrder.create([orderPayload]);
+  return order;
 };
 
 const createVendorOrdersForShopOrder = async ({ order, session }) => {
@@ -131,11 +191,6 @@ const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippi
   total,
   shippingMethod,
   estimatedDelivery: orderDeliveryDate(shippingMethod),
-  status: 'confirmed',
-  paymentStatus: 'completed',
-  paymentMethod: 'FedaPay',
-  paymentDate: new Date(),
-  history: ['Order created after payment confirmed'],
 });
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
@@ -177,6 +232,25 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     });
   }
 
+  const existingOrder = transaction.orderId ? await ShopOrder.findById(transaction.orderId).session(session) : null;
+  if (existingOrder) {
+    existingOrder.items = orderItems;
+    existingOrder.subtotal = subtotal;
+    existingOrder.shippingCost = shippingCost;
+    existingOrder.tax = tax;
+    existingOrder.discount = discount;
+    existingOrder.total = total;
+    existingOrder.shippingMethod = shippingMethod;
+    existingOrder.shippingAddress = shippingAddress;
+    existingOrder.paymentMethod = 'FedaPay';
+    existingOrder.status = 'confirmed';
+    existingOrder.paymentStatus = 'completed';
+    existingOrder.paymentDate = new Date();
+    existingOrder.history = [...(existingOrder.history || []), 'Paiement confirmé par FedaPay'];
+    await existingOrder.save({ session });
+    return existingOrder;
+  }
+
   const orderPayload = buildOrder({
     userId,
     customer,
@@ -189,6 +263,12 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     total,
     shippingMethod,
   });
+
+  orderPayload.status = 'confirmed';
+  orderPayload.paymentStatus = 'completed';
+  orderPayload.paymentMethod = 'FedaPay';
+  orderPayload.paymentDate = new Date();
+  orderPayload.history = ['Order created after payment confirmed'];
 
   const order = await ShopOrder.create([orderPayload], { session });
   return order[0];
@@ -349,6 +429,24 @@ router.post('/checkout', verifyToken, async (req, res) => {
       customer,
     };
 
+    const pendingOrder = await createPendingShopOrder({
+      transaction: {
+        metadata: {
+          userId: req.user?.id || payload.userId || null,
+          shippingAddress,
+          items: orderItems,
+          subtotal,
+          shippingCost,
+          tax,
+          discount,
+          total,
+          shippingMethod,
+          promoCode: payload.promoCode || '',
+        },
+        customer,
+      },
+    });
+
     const fedapayTransaction = await FedapayTransaction.create(transactionPayload);
     const token = await fedapayTransaction.generateToken();
 
@@ -370,6 +468,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
         shippingMethod,
         promoCode: payload.promoCode || '',
       },
+      orderId: pendingOrder._id,
     });
 
     return res.status(201).json({
