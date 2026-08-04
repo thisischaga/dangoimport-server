@@ -456,6 +456,7 @@ const handleFedapayWebhook = async (req, res) => {
         const createdOrder = await createOrderFromTransaction({ transaction: localTransaction, session });
         const payment = await createPaymentRecord({ orderId: createdOrder._id, transaction: localTransaction });
         const qrDocs = await createQRCodeRecords({ order: createdOrder, transactionId, session });
+        const vendorOrders = await createVendorOrdersForShopOrder({ order: createdOrder, session });
 
         // attach QR ids to order
         createdOrder.qrCodeIds = (qrDocs || []).map((q) => q._id);
