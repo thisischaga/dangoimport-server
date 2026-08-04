@@ -1353,6 +1353,9 @@ const startServer = async () => {
 
     // Order Routes
     app.use('/api/orders', orderRoutes);
+    // ShopOrder (webhook-first orders) routes
+    const shopOrderRoutes = require('./routes/shopOrderRoutes');
+    app.use('/api/shop-orders', shopOrderRoutes);
 
     // Product Routes
     const productRoutes = require('./routes/productRoutes');
