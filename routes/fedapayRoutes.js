@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const { FedaPay, Transaction: FedapayTransaction } = require('fedapay');
 const { configureFedapay } = require('../config/fedapay');
+const verifyToken = require('../Middlewares/verifyTokens');
 const TransactionModel = require('../Models/Transaction');
 const ShopOrder = require('../Models/ShopOrder');
 const Payment = require('../Models/Payment');
@@ -10,6 +11,8 @@ const QRCode = require('../Models/QRCode');
 const WebhookLog = require('../Models/WebhookLog');
 const OrderHistory = require('../Models/OrderHistory');
 const Cart = require('../Models/Cart');
+const Store = require('../Models/Store');
+const VendorOrder = require('../Models/VendorOrder');
 const Product = require('../Models/Product');
 const User = require('../Models/User');
 const Notification = require('../Models/Notification');
@@ -46,6 +49,52 @@ const createLocalTransaction = async ({ checkoutUrl, transactionId, amount, curr
     provider,
     status: 'pending',
   });
+};
+
+const createVendorOrdersForShopOrder = async ({ order, session }) => {
+  const byVendor = order.items.reduce((acc, item) => {
+    if (!item.vendorId) return acc;
+    const vendorId = item.vendorId.toString();
+    if (!acc[vendorId]) {
+      acc[vendorId] = {
+        vendorId: item.vendorId,
+        vendorName: item.vendorName || 'Vendeur Indépendant',
+        items: [],
+        subtotal: 0,
+      };
+    }
+    acc[vendorId].items.push(item);
+    acc[vendorId].subtotal += Number(item.subtotal || item.price * item.quantity || 0);
+    return acc;
+  }, {});
+
+  const createdOrders = [];
+  for (const vendorGroup of Object.values(byVendor)) {
+    const store = await Store.findOne({ userId: mongoose.Types.ObjectId(vendorGroup.vendorId) }).session(session);
+    if (!store) continue;
+
+    const shippingShare = order.subtotal ? Math.round(order.shippingCost * (vendorGroup.subtotal / order.subtotal)) : 0;
+    const vendorTotal = vendorGroup.subtotal + shippingShare;
+
+    const [vendorOrder] = await VendorOrder.create([
+      {
+        storeId: store._id,
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        total: vendorTotal,
+        status: 'pending',
+        items: vendorGroup.items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+      }
+    ], { session });
+
+    createdOrders.push(vendorOrder);
+  }
+
+  return createdOrders;
 };
 
 const logWebhookEvent = async ({ eventId, payload, signature, status, error }) => {
@@ -156,17 +205,34 @@ const createPaymentRecord = async ({ orderId, transaction }) => {
   });
 };
 
-const createQRCodeRecord = async ({ orderId, transactionId }) => {
-  const code = crypto.randomBytes(24).toString('hex');
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  return QRCode.create({
-    code,
-    orderId,
-    transactionId,
-    vendorId: null,
-    status: 'active',
-    expiresAt,
+const createQRCodeRecords = async ({ order, transactionId, session }) => {
+  // Group items by vendorId (null vendor -> platform)
+  const byVendor = (order.items || []).reduce((acc, item) => {
+    const vid = item.vendorId ? String(item.vendorId) : 'platform';
+    if (!acc[vid]) acc[vid] = { vendorId: item.vendorId || null, vendorName: item.vendorName || 'Dango Import', items: [] };
+    acc[vid].items.push(item);
+    return acc;
+  }, {});
+
+  const qrDocsPayload = Object.values(byVendor).map((group) => {
+    const vendorTotal = group.items.reduce((s, it) => s + Number(it.subtotal || it.price * it.quantity || 0), 0);
+    const code = crypto.randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    return {
+      code,
+      orderId: order._id,
+      transactionId,
+      vendorId: group.vendorId,
+      vendorName: group.vendorName,
+      status: 'active',
+      metadata: { vendorTotal },
+      expiresAt,
+    };
   });
+
+  if (qrDocsPayload.length === 0) return [];
+  const created = await QRCode.create(qrDocsPayload, { session });
+  return created;
 };
 
 const notifyCustomerAndVendors = async ({ order, qrCode }) => {
@@ -192,22 +258,35 @@ const notifyCustomerAndVendors = async ({ order, qrCode }) => {
   }
 };
 
-router.post('/checkout', async (req, res) => {
+router.post('/checkout', verifyToken, async (req, res) => {
   const fedapayConfig = configureFedapay();
   if (!fedapayConfig.ok) {
     return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
   }
 
-  const {
-    userId,
-    customer,
-    shippingAddress,
-    items,
-    promoCode,
-    shippingMethod = 'standard',
-  } = req.body;
+  const payload = req.body || {};
+  const customerName = payload.customer?.firstname || payload.firstName || payload.userFirstname || '';
+  const customerLastName = payload.customer?.lastname || payload.lastName || payload.userSurname || '';
+  const userName = payload.userName || `${customerName} ${customerLastName}`.trim();
+  const userEmail = payload.customer?.email || payload.userEmail || payload.email;
+  const userNumber = payload.customer?.phone_number?.number || payload.customer?.phone_number || payload.userNumber || payload.userPhone || payload.phone;
 
-  if (!userId || !customer || !customer.email || !customer.firstname || !customer.lastname || !customer.phone_number || !items || !Array.isArray(items) || items.length === 0) {
+  const items = Array.isArray(payload.items)
+    ? payload.items
+    : Array.isArray(payload.cartItems)
+      ? payload.cartItems
+      : [];
+
+  const shippingAddress = payload.shippingAddress || {
+    country: payload.selectedCountry || payload.country || 'Togo',
+    city: payload.city || '',
+    neighborhood: payload.neighborhood || '',
+    fullAddress: payload.address || payload.fullAddress || '',
+    postalCode: payload.postalCode || payload.postalCode || '',
+    instructions: payload.instructions || '',
+  };
+
+  if (!userName || !userEmail || !userNumber || !items.length) {
     return res.status(400).json({ message: 'Données de paiement incomplètes.' });
   }
 
@@ -215,30 +294,46 @@ router.post('/checkout', async (req, res) => {
     const orderItems = [];
     let subtotal = 0;
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = await Product.findById(item.productId || item._id || item.id);
       if (!product) {
-        return res.status(404).json({ message: `Produit introuvable: ${item.productId}` });
+        return res.status(404).json({ message: `Produit introuvable: ${item.productId || item._id || item.id}` });
       }
-      const unitPrice = product.salePrice || product.price;
+      const unitPrice = Number(item.price || product.salePrice || product.price || 0);
       const quantity = Number(item.quantity || 1);
       const lineTotal = unitPrice * quantity;
       subtotal += lineTotal;
 
       orderItems.push({
         productId: product._id,
+        productName: product.name,
+        productImage: product.images?.[0]?.url || product.image || '',
+        vendorId: product.vendorId || null,
+        vendorName: product.vendorName || item.vendorName || 'Vendeur Indépendant',
+        price: unitPrice,
+        originalPrice: product.price,
+        salePrice: product.salePrice || 0,
+        category: product.category,
         quantity,
         selectedOptions: item.selectedOptions || {},
-        price: unitPrice,
-        vendorId: product.vendorId,
-        vendorName: product.vendorName || 'Vendeur Indépendant',
         subtotal: lineTotal,
       });
     }
 
-    const shippingCost = Number(req.body.shippingCost || 0);
-    const discount = Number(req.body.discount || 0);
-    const tax = Number(req.body.tax || 0);
-    const total = Math.max(0, subtotal + shippingCost + tax - discount);
+    const shippingCost = Number(payload.shippingCost || payload.deliveryFee || 0);
+    const discount = Number(payload.discount || 0);
+    const tax = Number(payload.tax || 0);
+    const total = Number(payload.total || payload.totalPrice || Math.max(0, subtotal + shippingCost + tax - discount));
+    const shippingMethod = payload.shippingMethod || payload.shippingLabel || 'standard';
+
+    const customer = {
+      firstname: customerName || 'Client',
+      lastname: customerLastName || 'Dango',
+      email: userEmail,
+      phone_number: {
+        number: normalizePhoneNumber(userNumber),
+        country: payload.countryCode || (shippingAddress.country === 'Togo' ? 'TG' : 'BJ') || 'BJ',
+      },
+    };
 
     const transactionPayload = {
       description: `Paiement Dango Import - ${customer.firstname} ${customer.lastname}`,
@@ -246,17 +341,11 @@ router.post('/checkout', async (req, res) => {
       currency: { iso: 'XOF' },
       callback_url: process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/checkout',
       custom_metadata: {
-        transactionRef: crypto.randomBytes(8).toString('hex'),
+        cartSource: 'frontend',
+        shippingMethod,
+        promoCode: payload.promoCode || '',
       },
-      customer: {
-        firstname: customer.firstname,
-        lastname: customer.lastname,
-        email: customer.email,
-        phone_number: {
-          number: normalizePhoneNumber(customer.phone_number.number || customer.phone_number),
-          country: customer.phone_number.country || 'BJ',
-        },
-      },
+      customer,
     };
 
     const fedapayTransaction = await FedapayTransaction.create(transactionPayload);
@@ -267,9 +356,9 @@ router.post('/checkout', async (req, res) => {
       transactionId: fedapayTransaction.id,
       amount: Math.round(total),
       currency: 'XOF',
-      user: transactionPayload.customer,
+      user: customer,
       metadata: {
-        userId,
+        userId: req.user?.id || payload.userId || null,
         shippingAddress,
         items: orderItems,
         subtotal,
@@ -278,14 +367,15 @@ router.post('/checkout', async (req, res) => {
         discount,
         total,
         shippingMethod,
-        promoCode,
+        promoCode: payload.promoCode || '',
       },
     });
 
     return res.status(201).json({
       success: true,
-      checkoutUrl: token.url,
-      transactionId: localTx._id,
+      url: token.url,
+      transactionId: fedapayTransaction.id,
+      localTransactionId: localTx._id,
     });
   } catch (error) {
     console.error('[fedapayRoutes] checkout error:', error);
@@ -364,9 +454,10 @@ const handleFedapayWebhook = async (req, res) => {
 
         const createdOrder = await createOrderFromTransaction({ transaction: localTransaction, session });
         const payment = await createPaymentRecord({ orderId: createdOrder._id, transaction: localTransaction });
-        const qrCode = await createQRCodeRecord({ orderId: createdOrder._id, transactionId });
+        const qrDocs = await createQRCodeRecords({ order: createdOrder, transactionId, session });
 
-        createdOrder.qrCodeId = qrCode._id;
+        // attach QR ids to order
+        createdOrder.qrCodeIds = (qrDocs || []).map((q) => q._id);
         await createdOrder.save({ session });
 
         // Décrémenter les stocks

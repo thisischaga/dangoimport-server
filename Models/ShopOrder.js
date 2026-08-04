@@ -113,12 +113,10 @@ const orderSchema = new mongoose.Schema({
       required: true,
     }
   ],
-  qrCodeId: {
+  qrCodeIds: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'QRCode',
-    default: null,
-    index: true,
-  },
+  }],
   createdAt: {
     type: Date,
     default: Date.now,

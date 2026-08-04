@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Inspect integration files",
+			"type": "shell",
+			"command": "cd \"c:\\Users\\ds pcc\" && echo done",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

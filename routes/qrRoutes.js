@@ -1,6 +1,5 @@
 const express = require('express');
-const jwt = require('jsonwebtoken');
-const Order = require('../Models/Commande');
+const ShopOrder = require('../Models/ShopOrder');
 const User = require('../Models/User');
 const verifyToken = require('../Middlewares/verifyTokens');
 const AuditLog = require('../Models/AuditLog');
@@ -23,57 +22,44 @@ const generatePayload = ({ orderId, orderNumber, vendorId, vendorName, vendorTot
 
 router.post('/generate/:orderId', verifyToken, async (req, res) => {
   try {
-    const order = await Order.findById(req.params.orderId);
+    const order = await ShopOrder.findById(req.params.orderId);
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 
-    if (order.customerId.toString() !== req.user.id) {
+    if (order.customerId && order.customerId.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
 
-    if (order.paymentStatus !== 'completed') {
+    if (order.paymentStatus !== 'completed' && order.status !== 'confirmed') {
       return res.status(400).json({ success: false, message: 'Paiement non confirmé' });
     }
 
-    const vendorGroups = order.items.reduce((groups, item) => {
-      const vendorName = item.vendorName || 'Vendeur Indépendant';
-      const vendorId = item.vendorId ? item.vendorId.toString() : null;
-      const key = `${vendorId || 'unknown'}::${vendorName}`;
+    // Find QRCode documents for this order
+    const QRModel = require('../Models/QRCode');
+    let qrDocs = await QRModel.find({ orderId: order._id });
 
-      if (!groups[key]) {
-        groups[key] = {
-          vendorId,
-          vendorName,
-          items: [],
-        };
+    // If the requester is the customer, ensure ownership
+    if (req.user && req.user.role === 'customer') {
+      if (order.customerId && order.customerId.toString() !== req.user.id) {
+        return res.status(403).json({ success: false, message: 'Accès refusé' });
       }
+    }
 
-      groups[key].items.push(item);
-      return groups;
-    }, {});
+    // If requester is vendor, filter to vendor-specific QR docs
+    if (req.user && req.user.role === 'vendor') {
+      qrDocs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === String(req.user.id));
+      if (!qrDocs.length) {
+        return res.status(404).json({ success: false, message: 'Aucun QR disponible pour ce vendeur' });
+      }
+    }
 
-    const qrTokens = Object.values(vendorGroups).map((group) => {
-      const vendorTotal = group.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
-      const payload = generatePayload({
-        orderId: order._id.toString(),
-        orderNumber: order.orderNumber,
-        vendorId: group.vendorId,
-        vendorName: group.vendorName,
-        vendorTotal,
-        paymentMethod: order.paymentMethod,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      });
-
-      const token = jwt.sign(payload, process.env.QR_SECRET || process.env.JWT_SECRET, {
-        expiresIn: QR_TOKEN_EXPIRES_IN,
-      });
-
-      return {
-        vendorId: group.vendorId,
-        vendorName: group.vendorName,
-        vendorTotal,
-        token,
-      };
-    });
+    const qrTokens = qrDocs.map((q) => ({
+      vendorId: q.vendorId || null,
+      vendorName: q.vendorName || 'Vendeur',
+      vendorTotal: q.metadata?.vendorTotal || 0,
+      token: q.code,
+      expiresAt: q.expiresAt,
+      status: q.status,
+    }));
 
     return res.json({ success: true, data: { orderId: order._id, orderNumber: order.orderNumber, qrTokens } });
   } catch (error) {
@@ -85,38 +71,38 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
 router.post('/validate', verifyToken, async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ success: false, message: 'Token absent' });
+    if (!token) return res.status(400).json({ success: false, message: 'Token absent' });
+
+    const QRModel = require('../Models/QRCode');
+    const qrDoc = await QRModel.findOne({ code: token });
+    if (!qrDoc) return res.status(404).json({ success: false, message: 'QR introuvable' });
+
+    if (qrDoc.expiresAt && new Date(qrDoc.expiresAt) < new Date()) {
+      qrDoc.status = 'expired';
+      await qrDoc.save();
+      return res.status(400).json({ success: false, message: 'QR expiré' });
     }
 
-    let payload;
-    try {
-      payload = jwt.verify(token, process.env.QR_SECRET || process.env.JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({ success: false, message: 'Token invalide ou expiré' });
+    if (qrDoc.status === 'used' || qrDoc.status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'QR invalide ou déjà utilisé' });
     }
 
-    const order = await Order.findById(payload.orderId);
-    if (!order) {
-      return res.status(404).json({ success: false, message: 'Commande introuvable' });
-    }
+    const order = await ShopOrder.findById(qrDoc.orderId);
+    if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 
-    if (order.paymentStatus !== 'completed') {
+    if (order.paymentStatus !== 'completed' && order.status !== 'confirmed') {
       return res.status(400).json({ success: false, message: 'Paiement non confirmé' });
-    }
-
-    if (order.status === 'delivered') {
-      return res.status(400).json({ success: false, message: 'Commande déjà remise' });
-    }
-
-    const vendorItems = order.items.filter((item) => item.vendorId?.toString() === payload.vendorId?.toString());
-    if (vendorItems.length === 0) {
-      return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande' });
     }
 
     const vendorUser = await User.findById(req.user.id);
     if (!vendorUser || (vendorUser.role !== 'vendor' && vendorUser.role !== 'admin')) {
       return res.status(403).json({ success: false, message: 'Accès vendeur requis' });
+    }
+
+    const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.user.id);
+    const vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
+    if (vendorItems.length === 0 && vendorUser.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande' });
     }
 
     const validatedItems = vendorItems.map((item) => ({
@@ -127,15 +113,15 @@ router.post('/validate', verifyToken, async (req, res) => {
       subtotal: item.subtotal,
     }));
 
-    const isFullyDelivered = order.items.every((item) => item.delivered === true || item.vendorId?.toString() === payload.vendorId?.toString());
-
+    // Mark items delivered for this vendor
     order.items = order.items.map((item) => {
-      if (item.vendorId?.toString() === payload.vendorId?.toString()) {
+      if (String(item.vendorId) === vendorIdToUse) {
         return { ...item, delivered: true, deliveredAt: new Date() };
       }
       return item;
     });
 
+    const isFullyDelivered = order.items.every((item) => item.delivered === true);
     if (isFullyDelivered) {
       order.status = 'delivered';
       order.deliveredAt = new Date();
@@ -146,39 +132,46 @@ router.post('/validate', verifyToken, async (req, res) => {
     order.updatedAt = new Date();
     await order.save();
 
+    qrDoc.status = 'used';
+    qrDoc.usedAt = new Date();
+    qrDoc.scannedAt = qrDoc.scannedAt || new Date();
+    await qrDoc.save();
+
     await AuditLog.create({
       userId: req.user.id,
       userName: `${vendorUser.userFirstname || ''} ${vendorUser.userSurname || ''}`.trim(),
       role: vendorUser.role,
       action: 'QR_VALIDATION',
-      targetResource: 'Order',
+      targetResource: 'ShopOrder',
       targetId: order._id,
       details: {
-        vendorId: payload.vendorId,
-        vendorName: payload.vendorName,
+        vendorId: vendorIdToUse,
+        vendorName: qrDoc.vendorName || vendorUser.storeName || '',
         validatedItems,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'] || '',
       },
     });
 
-    await Notification.create({
-      recipient: order.customerId.toString(),
-      recipientType: 'user',
-      title: 'Votre commande a été remise',
-      message: `Votre commande ${order.orderNumber} a été remise avec succès par ${payload.vendorName}.`,
-      type: 'order_delivered',
-      link: `/mes-commandes/${order._id}`,
-      isRead: false,
-    });
+    if (order.customerId) {
+      await Notification.create({
+        recipient: order.customerId.toString(),
+        recipientType: 'user',
+        title: 'Votre commande a été remise',
+        message: `Votre commande ${order.orderNumber} a été remise avec succès.`,
+        type: 'order_delivered',
+        link: `/mes-commandes/${order._id}`,
+        isRead: false,
+      });
 
-    await emailService.sendOrderDeliveredEmail({
-      customerEmail: order.customerEmail,
-      customerName: order.customerName,
-      orderNumber: order.orderNumber,
-      vendorName: payload.vendorName,
-      amount: order.total,
-    });
+      await emailService.sendOrderDeliveredEmail({
+        customerEmail: order.customerEmail,
+        customerName: order.customerName,
+        orderNumber: order.orderNumber,
+        vendorName: qrDoc.vendorName || vendorUser.storeName || '',
+        amount: order.total,
+      });
+    }
 
     return res.json({ success: true, message: 'Commande validée avec succès', data: { orderId: order._id, orderNumber: order.orderNumber, validatedItems, orderStatus: order.status } });
   } catch (error) {

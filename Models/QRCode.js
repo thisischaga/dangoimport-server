@@ -21,7 +21,12 @@ const qrCodeSchema = new mongoose.Schema({
   vendorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    required: false,
+    index: true,
+  },
+  vendorName: {
+    type: String,
+    default: '',
     index: true,
   },
   status: {
