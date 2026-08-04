@@ -119,6 +119,52 @@ const emailService = {
       console.warn('⚠️ [Resend Email] Changes requested email skipped or failed:', err.message);
     }
   },
+
+  sendOrderConfirmedEmail: async ({ customerEmail, customerName, orderNumber, total, qrCode }) => {
+    try {
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+          <h2 style="color: #ea580c; margin-bottom: 8px;">Commande confirmée</h2>
+          <p>Bonjour ${customerName || 'Client'},</p>
+          <p>Votre commande <strong>${orderNumber}</strong> a bien été confirmée.</p>
+          <p>Montant total : <strong>${Number(total || 0).toLocaleString('fr-FR')} FCFA</strong></p>
+          <p>Votre QR de retrait est disponible dans votre espace Mes commandes.</p>
+          ${qrCode ? `<p>Code QR : <strong>${qrCode}</strong></p>` : ''}
+        </div>
+      `;
+
+      await resend.emails.send({
+        from: 'Dango Import Marketplace <marketplace@dangoimport.com>',
+        to: customerEmail,
+        subject: `Commande confirmée - ${orderNumber}`,
+        html,
+      });
+    } catch (err) {
+      console.warn('⚠️ [Resend Email] Order confirmed email skipped or failed:', err.message);
+    }
+  },
+
+  sendOrderDeliveredEmail: async ({ customerEmail, customerName, orderNumber, vendorName, amount }) => {
+    try {
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+          <h2 style="color: #16a34a; margin-bottom: 8px;">Commande livrée</h2>
+          <p>Bonjour ${customerName || 'Client'},</p>
+          <p>Votre commande <strong>${orderNumber}</strong> a été livrée par ${vendorName || 'le vendeur'}.</p>
+          <p>Montant total : <strong>${Number(amount || 0).toLocaleString('fr-FR')} FCFA</strong></p>
+        </div>
+      `;
+
+      await resend.emails.send({
+        from: 'Dango Import Marketplace <marketplace@dangoimport.com>',
+        to: customerEmail,
+        subject: `Commande livrée - ${orderNumber}`,
+        html,
+      });
+    } catch (err) {
+      console.warn('⚠️ [Resend Email] Order delivered email skipped or failed:', err.message);
+    }
+  },
 };
 
 module.exports = emailService;
