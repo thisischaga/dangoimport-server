@@ -22,10 +22,19 @@ const generatePayload = ({ orderId, orderNumber, vendorId, vendorName, vendorTot
 
 router.post('/generate/:orderId', verifyToken, async (req, res) => {
   try {
-    const order = await ShopOrder.findById(req.params.orderId);
+    let order = await ShopOrder.findById(req.params.orderId);
+    if (!order) {
+      const Achat = require('../Models/Achat');
+      order = await Achat.findById(req.params.orderId);
+    }
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 
-    if (order.customerId && order.customerId.toString() !== req.user.id) {
+    const reqUserEmail = (req.user.userEmail || req.user.email || '').toLowerCase();
+    const isOwner = (order.customerId && order.customerId.toString() === req.user.id) ||
+                    (order.userId && order.userId.toString() === req.user.id) ||
+                    (order.userEmail && reqUserEmail && order.userEmail.toLowerCase() === reqUserEmail);
+
+    if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'dev-admin') {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
 
@@ -36,13 +45,6 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
     // Find QRCode documents for this order
     const QRModel = require('../Models/QRCode');
     let qrDocs = await QRModel.find({ orderId: order._id });
-
-    // If the requester is the customer, ensure ownership
-    if (req.user && req.user.role === 'customer') {
-      if (order.customerId && order.customerId.toString() !== req.user.id) {
-        return res.status(403).json({ success: false, message: 'Accès refusé' });
-      }
-    }
 
     // If requester is vendor, filter to vendor-specific QR docs
     if (req.user && req.user.role === 'vendor') {
