@@ -542,7 +542,20 @@ router.post('/webhook', async (req, res) => handleFedapayWebhook(req, res));
 
 router.get('/transaction/:id', async (req, res) => {
   try {
-    const transaction = await TransactionModel.findById(req.params.id);
+    const id = req.params.id;
+    let transaction = null;
+
+    // If id looks like a Mongo ObjectId, try findById first
+    const mongoose = require('mongoose');
+    if (mongoose.Types.ObjectId.isValid(id) && String(id).length === 24) {
+      transaction = await TransactionModel.findById(id);
+    }
+
+    // If not found by _id, try lookup by provider transaction id stored in `transactionId` field
+    if (!transaction) {
+      transaction = await TransactionModel.findOne({ transactionId: String(id) });
+    }
+
     if (!transaction) {
       return res.status(404).json({ message: 'Transaction introuvable' });
     }
