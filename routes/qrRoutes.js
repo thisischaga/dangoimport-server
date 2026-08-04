@@ -1,6 +1,7 @@
 const express = require('express');
 const ShopOrder = require('../Models/ShopOrder');
 const User = require('../Models/User');
+const VendorOrder = require('../Models/VendorOrder');
 const verifyToken = require('../Middlewares/verifyTokens');
 const AuditLog = require('../Models/AuditLog');
 const Notification = require('../Models/Notification');
@@ -30,6 +31,9 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
     if (!order) {
       const Achat = require('../Models/Achat');
       order = await Achat.findById(req.params.orderId);
+    }
+    if (!order) {
+      order = await VendorOrder.findById(req.params.orderId);
     }
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 
