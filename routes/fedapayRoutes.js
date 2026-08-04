@@ -475,6 +475,8 @@ const handleFedapayWebhook = async (req, res) => {
           totalPrice: 0,
         }, { session });
 
+        const qrCode = (qrDocs || [])[0];
+
         // Notifications et emails
         await notifyCustomerAndVendors({ order: createdOrder, qrCode });
         await emailService.sendOrderConfirmedEmail({
@@ -482,7 +484,7 @@ const handleFedapayWebhook = async (req, res) => {
           customerName: createdOrder.customerName,
           orderNumber: createdOrder.orderNumber,
           total: createdOrder.total,
-          qrCode: qrCode.code,
+          qrCode: qrCode?.code,
         });
 
         await OrderHistory.create([{
