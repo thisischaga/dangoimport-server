@@ -1,4 +1,5 @@
 const express = require('express');
+const verifyToken = require('../Middlewares/verifyTokens');
 const { configureFedapay } = require('../config/fedapay');
 const { createTransaction, retrieveTransaction } = require('../services/fedapayService');
 const { createLocalTransaction, findTransactionByProviderId, findTransactionById } = require('../services/paymentService');
@@ -24,7 +25,7 @@ const normalizeShippingCountry = (country) => {
   return 'BJ';
 };
 
-router.post('/create', async (req, res) => {
+router.post('/create', verifyToken, async (req, res) => {
   const {
     amount,
     currency = 'XOF',
