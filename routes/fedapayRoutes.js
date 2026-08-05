@@ -32,6 +32,21 @@ const normalizePhoneNumber = (value) => {
   return digits;
 };
 
+const normalizeShippingMethod = (value) => {
+  if (!value) return 'standard';
+  const normalized = String(value).trim().toLowerCase();
+  if (['standard', 'livraison standard', 'livraison_standarde', 'livraison_standard', 'standard_delivery'].includes(normalized)) {
+    return 'standard';
+  }
+  if (['express', 'livraison express', 'livraison_express', 'express_delivery'].includes(normalized)) {
+    return 'express';
+  }
+  if (['pickup', 'retrait', 'pickup_point', 'pick-up', 'retrait_sur_place', 'retrait_en_magasin'].includes(normalized)) {
+    return 'pickup';
+  }
+  return 'standard';
+};
+
 const generateOrderNumber = () => {
   const timestamp = Date.now().toString();
   const random = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -63,7 +78,7 @@ const createPendingShopOrder = async ({ transaction }) => {
   const tax = metadata.tax || 0;
   const discount = metadata.discount || 0;
   const total = metadata.total || transaction.amount;
-  const shippingMethod = metadata.shippingMethod || 'standard';
+  const shippingMethod = normalizeShippingMethod(metadata.shippingMethod || 'standard');
 
   const orderItems = [];
   for (const item of items) {
@@ -204,7 +219,7 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
   const tax = metadata.tax || 0;
   const discount = metadata.discount || 0;
   const total = metadata.total || transaction.amount;
-  const shippingMethod = metadata.shippingMethod || 'standard';
+  const shippingMethod = normalizeShippingMethod(metadata.shippingMethod || 'standard');
 
   const orderItems = [];
   for (const item of items) {
@@ -404,7 +419,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
     const discount = Number(payload.discount || 0);
     const tax = Number(payload.tax || 0);
     const total = Number(payload.total || payload.totalPrice || Math.max(0, subtotal + shippingCost + tax - discount));
-    const shippingMethod = payload.shippingMethod || payload.shippingLabel || 'standard';
+    const shippingMethod = normalizeShippingMethod(payload.shippingMethod || payload.shippingLabel || 'standard');
 
     const customer = {
       firstname: customerName || 'Client',
