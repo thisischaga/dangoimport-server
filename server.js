@@ -693,6 +693,9 @@ const startServer = async () => {
     // Existing FedaPay router can remain for legacy endpoints if needed
     app.use('/api/fedapay', fedapayRouter);
 
+    // Alias for legacy FedaPay webhook configuration
+    app.post('/webhook/paiement', fedapayWebhook);
+
     // Sourcing — enregistré tôt (même zone que payment) pour éviter 404 si le mount tardif échoue
     {
       const sourcingRoutesEarly = require('./routes/sourcingRoutes');
