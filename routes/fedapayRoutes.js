@@ -641,11 +641,14 @@ const handleFedapayWebhook = async (req, res) => {
         }
 
         // Vider le panier du client
-        await Cart.findOneAndUpdate({ userId: mongoose.Types.ObjectId(localTransaction.metadata.userId) }, {
-          items: [],
-          totalItems: 0,
-          totalPrice: 0,
-        }, { session });
+        const userIdToClear = localTransaction.metadata?.userId;
+        if (mongoose.isValidObjectId(userIdToClear)) {
+          await Cart.findOneAndUpdate({ userId: new mongoose.Types.ObjectId(userIdToClear) }, {
+            items: [],
+            totalItems: 0,
+            totalPrice: 0,
+          }, { session });
+        }
 
         const qrCode = (qrDocs || [])[0];
 
