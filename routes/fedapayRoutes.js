@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const slugify = require('slugify');
 const mongoose = require('mongoose');
 const { FedaPay, Transaction: FedapayTransaction } = require('fedapay');
 const { configureFedapay } = require('../config/fedapay');
@@ -145,8 +146,22 @@ const createVendorOrdersForShopOrder = async ({ order, session }) => {
 
   const createdOrders = [];
   for (const vendorGroup of Object.values(byVendor)) {
-    const store = await Store.findOne({ userId: mongoose.Types.ObjectId(vendorGroup.vendorId) }).session(session);
-    if (!store) continue;
+    // Find store by vendor user id (do not force ObjectId conversion)
+    let store = await Store.findOne({ userId: vendorGroup.vendorId }).session(session);
+    // If no store exists for this vendor, try to create a minimal one so vendor can see orders
+    if (!store) {
+      try {
+        const vendorUser = await User.findById(vendorGroup.vendorId).session(session);
+        const baseName = vendorGroup.vendorName || (vendorUser ? (vendorUser.vendorName || `${vendorUser.userFirstname || ''} ${vendorUser.userSurname || ''}`.trim()) : 'Ma boutique');
+        const storeSlug = `${slugify(baseName || 'ma-boutique', { lower: true, strict: true })}-${crypto.randomBytes(3).toString('hex')}`;
+        store = await Store.create([{ userId: vendorGroup.vendorId, slug: storeSlug, name: baseName, whatsapp: vendorUser ? vendorUser.userPhone : '' }], { session });
+        store = Array.isArray(store) ? store[0] : store;
+      } catch (e) {
+        // If creation fails, skip vendor order creation for this vendor
+        console.error('[fedapayRoutes] failed to ensure vendor store:', e.message || e);
+        continue;
+      }
+    }
 
     const shippingShare = order.subtotal ? Math.round(order.shippingCost * (vendorGroup.subtotal / order.subtotal)) : 0;
     const vendorTotal = vendorGroup.subtotal + shippingShare;

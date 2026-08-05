@@ -10,7 +10,7 @@ router.get('/my-orders', verifyToken, async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
     const filter = { customerId: req.user.id };
-    const orders = await ShopOrder.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const orders = await ShopOrder.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)).populate('qrCodeIds');
     const total = await ShopOrder.countDocuments(filter);
     return res.json({ success: true, data: orders, pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / limit), totalItems: total } });
   } catch (err) {
