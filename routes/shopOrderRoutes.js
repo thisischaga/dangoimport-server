@@ -2,6 +2,8 @@ const express = require('express');
 const verifyToken = require('../Middlewares/verifyTokens');
 const ShopOrder = require('../Models/ShopOrder');
 
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const router = express.Router();
 
 // GET - mes commandes (ShopOrder)
@@ -9,7 +11,10 @@ router.get('/my-orders', verifyToken, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
-    const filter = { customerId: req.user.id };
+    const filter = { $or: [{ customerId: req.user.id }] };
+    if (req.user.userEmail) {
+      filter.$or.push({ customerEmail: new RegExp(`^${escapeRegExp(req.user.userEmail.trim())}$`, 'i') });
+    }
     const orders = await ShopOrder.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)).populate('qrCodeIds');
     const total = await ShopOrder.countDocuments(filter);
     return res.json({ success: true, data: orders, pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / limit), totalItems: total } });
@@ -24,7 +29,12 @@ router.get('/:id', verifyToken, async (req, res) => {
   try {
     const order = await ShopOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
-    if (order.customerId && order.customerId.toString() !== req.user.id && !['admin', 'dev-admin'].includes(req.user.role)) {
+
+    const userEmail = (req.user.userEmail || '').trim().toLowerCase();
+    const isCustomerIdMatch = order.customerId && order.customerId.toString() === req.user.id;
+    const isEmailMatch = order.customerEmail && userEmail && order.customerEmail.toLowerCase() === userEmail;
+
+    if (!isCustomerIdMatch && !isEmailMatch && !['admin', 'dev-admin'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
     return res.json({ success: true, data: order });

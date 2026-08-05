@@ -27,6 +27,29 @@ const orderDeliveryDate = (shippingMethod) => {
   return date;
 };
 
+const resolveCustomerId = async ({ transaction, session }) => {
+  const metadata = transaction.metadata || {};
+  const userId = metadata.userId;
+  if (mongoose.isValidObjectId(userId)) {
+    const existingUser = await User.findById(userId).select('_id').session(session);
+    if (existingUser) return existingUser._id;
+  }
+
+  const customerEmail = String(transaction.customer?.email || '').trim().toLowerCase();
+  if (customerEmail) {
+    const existingUser = await User.findOne({ userEmail: new RegExp(`^${customerEmail}$`, 'i') }).select('_id').session(session);
+    if (existingUser) return existingUser._id;
+  }
+
+  const customerPhone = String(transaction.customer?.phone_number?.number || transaction.customer?.phone || '').replace(/\D/g, '');
+  if (customerPhone) {
+    const existingUser = await User.findOne({ userPhone: customerPhone }).select('_id').session(session);
+    if (existingUser) return existingUser._id;
+  }
+
+  return null;
+};
+
 const buildOrderPayload = ({ userId, customer, shippingAddress, items, subtotal, shippingCost, tax, discount, total, shippingMethod }) => ({
   orderNumber: generateOrderNumber(),
   customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
@@ -46,7 +69,7 @@ const buildOrderPayload = ({ userId, customer, shippingAddress, items, subtotal,
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
   const metadata = transaction.metadata || {};
-  const userId = metadata.userId;
+  const userId = await resolveCustomerId({ transaction, session });
   const customer = transaction.customer;
   const shippingAddress = metadata.shippingAddress || {};
   const items = metadata.items || [];
