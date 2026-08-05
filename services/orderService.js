@@ -143,7 +143,6 @@ const recordOrderHistory = async ({ orderId, event, details, session }) => {
 
 module.exports = {
   createOrderFromTransaction,
-  createVendorOrdersForShopOrder,
   decrementStockForOrder,
   recordOrderHistory,
 };
