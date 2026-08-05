@@ -55,11 +55,25 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
     // Find QRCode documents for this order
     const QRModel = require('../Models/QRCode');
     let qrDocs = await QRModel.find({ orderId: order._id });
+    console.log('[qrRoutes] generate token request', {
+      orderId: req.params.orderId,
+      matchedOrderId: String(order._id),
+      orderNumber: order.orderNumber,
+      reqUserId,
+      reqUserRole: req.user.role,
+      qrTotal: qrDocs.length,
+      qrVendorIds: qrDocs.map((q) => (q.vendorId ? String(q.vendorId) : null)),
+    });
 
     // If requester is vendor, filter to vendor-specific QR docs
     if (req.user && req.user.role === 'vendor') {
       // Use reqUserId which already normalizes req.user.id or req.user.userId
-      qrDocs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === reqUserId);
+      const vendorQrs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === reqUserId);
+      console.log('[qrRoutes] vendor-specific QR check', {
+        vendorQrsCount: vendorQrs.length,
+        requestedVendorId: reqUserId,
+      });
+      qrDocs = vendorQrs;
       if (!qrDocs.length) {
         return res.status(404).json({ success: false, message: 'Aucun QR disponible pour ce vendeur' });
       }

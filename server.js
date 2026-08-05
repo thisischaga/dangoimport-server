@@ -186,6 +186,22 @@ app.use(express.urlencoded({
   },
 }));
 
+// Logger global des requêtes pour debug local
+app.use((req, res, next) => {
+  console.log(`[server.js] incoming request ${req.method} ${req.originalUrl}`);
+  console.log('  headers:', {
+    host: req.headers.host,
+    origin: req.headers.origin,
+    referer: req.headers.referer,
+    authorization: req.headers.authorization ? 'yes' : 'no',
+    'x-fedapay-signature': req.headers['x-fedapay-signature'] || null,
+  });
+  if (req.rawBody && req.rawBody.length > 0) {
+    console.log('[server.js] body snippet:', req.rawBody.slice(0, 400));
+  }
+  next();
+});
+
 // Servir les images statiques
 app.use('/images', express.static(path.join(__dirname, 'public/images')));
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
