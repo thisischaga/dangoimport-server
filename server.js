@@ -172,8 +172,19 @@ app.use((req, res, next) => {
 });
 
 // Parser avec limites augmentées pour les images
-app.use(express.json({ limit: '125mb' }));
-app.use(express.urlencoded({ limit: '125mb', extended: true }));
+app.use(express.json({
+  limit: '125mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
+app.use(express.urlencoded({
+  limit: '125mb',
+  extended: true,
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
 
 // Servir les images statiques
 app.use('/images', express.static(path.join(__dirname, 'public/images')));

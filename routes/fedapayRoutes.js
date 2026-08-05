@@ -526,12 +526,13 @@ const handleFedapayWebhook = async (req, res) => {
 
   try {
     if (secret && signature) {
+      const payloadString = req.rawBody || JSON.stringify(req.body);
       const hash = crypto.createHmac('sha256', secret)
-        .update(JSON.stringify(req.body))
+        .update(payloadString)
         .digest('hex');
       if (hash !== signature) {
         await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature invalide' });
-        console.error('[fedapayRoutes] signature invalid');
+        console.error('[fedapayRoutes] signature invalid - expected', hash, 'received', signature);
         return res.status(403).send('Signature invalide');
       }
     }
