@@ -795,7 +795,16 @@ const startServer = async () => {
     };
 
     app.use('/api/fedapay', fedapayRouter);
-    app.post('/webhook/paiement', fedapayWebhook);
+    app.post('/webhook/paiement', async (req, res, next) => {
+      console.log('[server.js] incoming webhook /webhook/paiement', {
+        method: req.method,
+        path: req.path,
+        signature: req.headers['x-fedapay-signature'],
+        contentType: req.headers['content-type'],
+        bodySnippet: req.rawBody ? req.rawBody.slice(0, 500) : null,
+      });
+      return fedapayWebhook(req, res, next);
+    });
 
     app.post('/api/fedapay/direct-pay', async (req, res) => {
       const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
