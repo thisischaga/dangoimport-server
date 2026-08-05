@@ -547,18 +547,30 @@ const handleFedapayWebhook = async (req, res) => {
     const webhookLog = await logWebhookEvent({ eventId, payload: event, signature, status: 'received' });
 
     const transactionId = event?.entity?.id;
+    console.log('[fedapayRoutes] webhook payload', {
+      eventId,
+      signaturePresent: Boolean(signature),
+      eventName: event?.name,
+      transactionId,
+      entityStatus: event?.entity?.status,
+      expectedSecretConfigured: Boolean(secret),
+    });
+
     if (!transactionId) {
       webhookLog.status = 'failed';
       webhookLog.error = 'Transaction ID absent dans le payload';
       await webhookLog.save();
+      console.error('[fedapayRoutes] webhook missing transaction id', { event });
       return res.status(400).send('Transaction ID absent');
     }
 
     const localTransaction = await TransactionModel.findOne({ transactionId });
+    console.log('[fedapayRoutes] local transaction lookup', { transactionId, localTransaction: localTransaction ? { id: localTransaction._id, status: localTransaction.status, webhookProcessed: localTransaction.webhookProcessed } : null });
     if (!localTransaction) {
       webhookLog.status = 'failed';
       webhookLog.error = 'Transaction locale introuvable';
       await webhookLog.save();
+      console.error('[fedapayRoutes] local transaction not found', { transactionId });
       return res.status(404).send('Transaction introuvable');
     }
 

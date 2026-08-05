@@ -390,8 +390,12 @@ router.put('/store', verifyToken, getStore, async (req, res) => {
 // GET /api/vendor/dashboard/stats
 router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
   try {
-    const vendorId = req.vendorUser._id;
+    const vendorId = req.vendorUser?._id || req.user?.userId || req.user?.id;
     const storeId = req.storeId;
+    if (!vendorId) {
+      console.error('[vendorRoutes.js] get dashboard stats: missing vendor id', { user: req.user, vendorUser: req.vendorUser });
+      return res.status(400).json({ message: 'Impossible de récupérer l’identifiant du vendeur.' });
+    }
     const nb_produits = await Product.countDocuments({ vendorId, isPublished: true });
 
     const now = new Date();
