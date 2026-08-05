@@ -17,6 +17,8 @@ const uri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://local
     for (const qr of qrs) {
       const order = await ShopOrder.findById(qr.orderId).lean();
       console.log('QR:', qr.code.slice(0, 8),
+        'vendorId:', qr.vendorId ? String(qr.vendorId) : 'null',
+        'vendorName:', qr.vendorName || 'null',
         'qrStatus:', qr.status,
         'orderId:', String(qr.orderId),
         'orderStatus:', order?.status || 'missing',
