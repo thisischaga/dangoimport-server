@@ -587,6 +587,11 @@ const handleFedapayWebhook = async (req, res) => {
         const qrDocs = await createQRCodeRecords({ order: createdOrder, transactionId, session });
         const vendorOrders = await createVendorOrdersForShopOrder({ order: createdOrder, session });
 
+        // DEBUG: log created resources for webhook processing verification
+        console.debug('[fedapayRoutes] webhook debug - createdOrder:', createdOrder?._id || createdOrder);
+        console.debug('[fedapayRoutes] webhook debug - qrDocs count:', Array.isArray(qrDocs) ? qrDocs.length : 0);
+        console.debug('[fedapayRoutes] webhook debug - vendorOrders count:', Array.isArray(vendorOrders) ? vendorOrders.length : 0);
+
         // attach QR ids to order
         createdOrder.qrCodeIds = (qrDocs || []).map((q) => q._id);
         await createdOrder.save({ session });

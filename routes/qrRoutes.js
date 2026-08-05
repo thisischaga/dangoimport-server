@@ -58,7 +58,8 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
 
     // If requester is vendor, filter to vendor-specific QR docs
     if (req.user && req.user.role === 'vendor') {
-      qrDocs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === String(req.user.id));
+      // Use reqUserId which already normalizes req.user.id or req.user.userId
+      qrDocs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === reqUserId);
       if (!qrDocs.length) {
         return res.status(404).json({ success: false, message: 'Aucun QR disponible pour ce vendeur' });
       }
@@ -106,12 +107,12 @@ router.post('/validate', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Paiement non confirmé' });
     }
 
-    const vendorUser = await User.findById(req.user.id);
+    const vendorUser = await User.findById(req.user.id || req.user.userId);
     if (!vendorUser || (vendorUser.role !== 'vendor' && vendorUser.role !== 'admin')) {
       return res.status(403).json({ success: false, message: 'Accès vendeur requis' });
     }
 
-    const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.user.id);
+    const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.user.id || req.user.userId);
     const vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
     if (vendorItems.length === 0 && vendorUser.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande' });
