@@ -47,6 +47,7 @@ const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
@@ -686,75 +687,11 @@ const startServer = async () => {
       res.json(getFedapayStatus());
     });
 
-    app.post('/api/payment/create', async (req, res) => {
-      const {
-        amount,
-        currency = 'XOF',
-        description,
-        callback_url,
-        customer,
-        deliveryCountry = 'Togo',
-        custom_metadata,
-      } = req.body;
+    // New payment API routes
+    app.use('/api/payments', paymentRoutes);
 
-      if (!amount || !customer?.email || !customer?.phone) {
-        return res.status(400).json({ message: 'Montant, email et téléphone requis pour le paiement.' });
-      }
-
-      if (!process.env.FEDAPAY_SECRET_KEY) {
-        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
-      }
-
-      const fedapayConfig = configureFedapay();
-      if (!fedapayConfig.ok) {
-        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
-      }
-
-      try {
-        const phoneDigits = String(customer.phone).replace(/\D/g, '');
-        const normalizedPhone = phoneDigits.startsWith('229') || phoneDigits.startsWith('228') || phoneDigits.startsWith('225') || phoneDigits.startsWith('221') || phoneDigits.startsWith('226') || phoneDigits.startsWith('227') || phoneDigits.startsWith('223') || phoneDigits.startsWith('224') || phoneDigits.startsWith('220') || phoneDigits.startsWith('222') || phoneDigits.startsWith('230')
-          ? phoneDigits.replace(/^(229|228|225|221|226|227|223|224|220|222|230)/, '')
-          : phoneDigits;
-
-        const countryCode = deliveryCountry === 'Togo' ? 'TG' : 'BJ';
-        const transactionPayload = {
-          description: description || 'Paiement Dango Import',
-          amount: Math.round(Number(amount)),
-          currency: { iso: String(currency).toUpperCase() },
-          callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/checkout',
-          customer: {
-            firstname: customer.firstname || 'Client',
-            lastname: customer.lastname || 'Dango',
-            email: customer.email,
-            phone_number: {
-              number: normalizedPhone || '97000000',
-              country: countryCode,
-            }
-          }
-        };
-
-        if (custom_metadata && typeof custom_metadata === 'object') {
-          transactionPayload.custom_metadata = custom_metadata;
-        }
-
-        const transaction = await Transaction.create(transactionPayload);
-
-        const token = await transaction.generateToken();
-        return res.status(201).json({
-          message: 'Paiement initialisé.',
-          payment_url: token.url,
-          paymentUrl: token.url,
-          transactionId: transaction.id,
-        });
-      } catch (error) {
-        console.error('=== Erreur /api/payment/create ===');
-        console.error(error.message);
-        return res.status(500).json({
-          message: 'Erreur lors de l’initialisation du paiement FedaPay.',
-          error: error.message,
-        });
-      }
-    });
+    // Existing FedaPay router can remain for legacy endpoints if needed
+    app.use('/api/fedapay', fedapayRouter);
 
     // Sourcing — enregistré tôt (même zone que payment) pour éviter 404 si le mount tardif échoue
     {
@@ -764,63 +701,6 @@ const startServer = async () => {
       const uploadRoutesEarly = require('./routes/uploadRoutes');
       app.use('/api/upload', uploadRoutesEarly);
     }
-
-    const handleFedapayWebhook = async (req, res) => {
-      try {
-        const signature = req.headers['x-fedapay-signature'];
-        const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
-
-        if (secret && signature) {
-          const hash = crypto.createHmac('sha256', secret)
-            .update(JSON.stringify(req.body))
-            .digest('hex');
-          if (hash !== signature) {
-            console.error('Signature FedaPay invalide !');
-            return res.status(403).send('Signature invalide');
-          }
-        }
-
-        const event = req.body;
-        if (event?.name === 'transaction.approved') {
-          const transaction = event.entity;
-          const meta = transaction?.custom_metadata || {};
-          const { orderId, type } = meta;
-
-          if (orderId) {
-            if (type === 'cart') {
-              await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-            } else if (type === 'devis') {
-              await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-            } else if (type === 'sourcing') {
-              const SourcingRequest = require('./Models/SourcingRequest');
-              await SourcingRequest.findByIdAndUpdate(orderId, {
-                status: 'paid',
-                paymentTransactionId: String(transaction.id || ''),
-              });
-            } else {
-              await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
-            }
-          }
-        }
-
-        return res.status(200).send('Webhook traité avec succès');
-      } catch (err) {
-        console.error('Erreur Webhook FedaPay :', err);
-        return res.status(500).send('Erreur webhook paiement');
-      }
-    };
-
-    app.use('/api/fedapay', fedapayRouter);
-    app.post('/webhook/paiement', async (req, res, next) => {
-      console.log('[server.js] incoming webhook /webhook/paiement', {
-        method: req.method,
-        path: req.path,
-        signature: req.headers['x-fedapay-signature'],
-        contentType: req.headers['content-type'],
-        bodySnippet: req.rawBody ? req.rawBody.slice(0, 500) : null,
-      });
-      return fedapayWebhook(req, res, next);
-    });
 
     app.post('/api/fedapay/direct-pay', async (req, res) => {
       const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
