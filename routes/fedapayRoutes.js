@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const slugify = require('slugify');
 const mongoose = require('mongoose');
-const { FedaPay, Transaction: FedapayTransaction } = require('fedapay');
+const { FedaPay, Transaction: FedapayTransaction, Webhook } = require('fedapay');
 const { configureFedapay } = require('../config/fedapay');
 const verifyToken = require('../Middlewares/verifyTokens');
 const TransactionModel = require('../Models/Transaction');
@@ -526,25 +526,11 @@ const handleFedapayWebhook = async (req, res) => {
 
   try {
     if (secret && signature) {
-      const parseSignature = (sig) => {
-        if (typeof sig !== 'string') return sig;
-        const parts = sig.split(',').reduce((acc, chunk) => {
-          const [key, value] = chunk.split('=');
-          if (key && value) acc[key.trim()] = value.trim();
-          return acc;
-        }, {});
-        return parts.s || parts.signature || sig;
-      };
-
-      const rawSignature = parseSignature(signature);
-      const payloadString = req.rawBody || JSON.stringify(req.body);
-      const hash = crypto.createHmac('sha256', secret)
-        .update(payloadString)
-        .digest('hex');
-
-      if (hash !== rawSignature) {
-        await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature invalide' });
-        console.error('[fedapayRoutes] signature invalid - expected', hash, 'received', signature, 'parsed', rawSignature);
+      try {
+        Webhook.constructEvent(req.rawBody || JSON.stringify(req.body), signature, secret);
+      } catch (err) {
+        await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
+        console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret) });
         return res.status(403).send('Signature invalide');
       }
     }
