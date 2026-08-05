@@ -522,15 +522,18 @@ const handleFedapayWebhook = async (req, res) => {
   const signature = req.headers['x-fedapay-signature'];
   const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
   const event = req.body;
-  const eventId = event?.id || event?.entity?.id || crypto.randomBytes(12).toString('hex');
+  const eventName = event?.name || event?.event || 'unknown.event';
+  const entityId = event?.entity?.id || event?.entity?.transaction_id || null;
+  const payloadString = req.rawBody || JSON.stringify(req.body);
+  const eventId = event?.id || event?.event_id || crypto.createHash('sha256').update(payloadString).digest('hex');
 
   try {
     if (secret && signature) {
       try {
-        Webhook.constructEvent(req.rawBody || JSON.stringify(req.body), signature, secret);
+        Webhook.constructEvent(payloadString, signature, secret);
       } catch (err) {
         await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
-        console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret) });
+        console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret), eventName, entityId });
         return res.status(403).send('Signature invalide');
       }
     }
