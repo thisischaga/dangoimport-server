@@ -281,7 +281,7 @@ router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, asyn
           },
           ipAddress: req.ip,
         }
-      ], { session });
+      ], { session, ordered: true });
 
       const eventLogs = [
         {
@@ -306,7 +306,7 @@ router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, asyn
           createdBy: 'system',
         });
       }
-      await OrderHistory.create(eventLogs, { session });
+      await OrderHistory.create(eventLogs, { session, ordered: true });
 
       if (shopOrder.customerId) {
         const notification = {
