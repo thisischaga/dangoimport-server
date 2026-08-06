@@ -6,6 +6,7 @@ const QRCode = require('../Models/QRCode');
 const Store = require('../Models/Store');
 const User = require('../Models/User');
 const AuditLog = require('../Models/AuditLog');
+const OrderHistory = require('../Models/OrderHistory');
 const Notification = require('../Models/Notification');
 const verifyToken = require('../Middlewares/verifyTokens');
 const emailService = require('../utils/emailService');
