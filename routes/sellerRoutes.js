@@ -53,10 +53,30 @@ router.get('/orders', verifyToken, verifySeller, getSellerStore, async (req, res
       .sort({ createdAt: -1 })
       .populate({
         path: 'shopOrderId',
-        select: 'orderNumber paymentStatus status customerName customerEmail customerPhone shippingAddress createdAt',
+        select: 'orderNumber paymentStatus status customerName customerEmail customerPhone shippingAddress createdAt items',
       });
 
-    return res.status(200).json({ success: true, data: orders });
+    const enrichedOrders = orders.map((order) => {
+      const shopOrder = order.shopOrderId;
+      if (!shopOrder) return order.toObject();
+      const vendorIdToUse = String(req.vendorUser._id);
+      const vendorItems = (shopOrder.items || []).filter((item) => String(item.vendorId) === vendorIdToUse);
+      return {
+        ...order.toObject(),
+        items: vendorItems.map(item => ({
+          productId: item.productId,
+          productName: item.productName,
+          productImage: item.productImage,
+          quantity: item.quantity,
+          price: item.price,
+          subtotal: item.subtotal || (item.price * item.quantity)
+        })),
+        paymentStatus: shopOrder.paymentStatus,
+        deliveryStatus: order.status || shopOrder.status,
+      };
+    });
+
+    return res.status(200).json({ success: true, data: enrichedOrders });
   } catch (error) {
     console.error('[sellerRoutes] get orders:', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération des commandes vendeur.' });
@@ -75,11 +95,30 @@ router.get('/orders/:id', verifyToken, verifySeller, getSellerStore, async (req,
       return res.status(404).json({ success: false, message: 'Commande vendeur introuvable.' });
     }
 
-    const qrTokens = await QRCode.find({ orderId: order.shopOrderId?._id, vendorId: req.vendorUser._id })
+    const shopOrder = order.shopOrderId;
+    const vendorIdToUse = String(req.vendorUser._id);
+    const vendorItems = shopOrder ? (shopOrder.items || []).filter((item) => String(item.vendorId) === vendorIdToUse) : [];
+
+    const qrTokens = await QRCode.find({ orderId: shopOrder?._id, vendorId: req.vendorUser._id })
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({ success: true, data: { ...order.toObject(), qrTokens } });
+    const data = {
+      ...order.toObject(),
+      items: vendorItems.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        productImage: item.productImage,
+        quantity: item.quantity,
+        price: item.price,
+        subtotal: item.subtotal || (item.price * item.quantity)
+      })),
+      paymentStatus: shopOrder ? shopOrder.paymentStatus : 'pending',
+      deliveryStatus: order.status || (shopOrder ? shopOrder.status : 'pending'),
+      qrTokens
+    };
+
+    return res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('[sellerRoutes] get order detail:', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération du détail de la commande vendeur.' });
@@ -87,149 +126,117 @@ router.get('/orders/:id', verifyToken, verifySeller, getSellerStore, async (req,
 });
 
 router.post('/scan', verifyToken, verifySeller, async (req, res) => {
-  const session = await mongoose.startSession();
   try {
     const { token } = req.body;
     if (!token) {
       return res.status(400).json({ success: false, message: 'Le code QR est requis.' });
     }
 
-    session.startTransaction();
-    const qrDoc = await validateVendorQr({ code: token, vendorUserId: req.vendorUser._id, session });
-    const order = await ShopOrder.findById(qrDoc.orderId).session(session);
+    const QRCodeModel = require('../Models/QRCode');
+    const qrDoc = await QRCodeModel.findOne({ code: token });
+    if (!qrDoc) {
+      return res.status(404).json({ success: false, message: 'Code QR introuvable.' });
+    }
+
+    if (qrDoc.expiresAt && new Date(qrDoc.expiresAt) < new Date() && qrDoc.status === 'active') {
+      qrDoc.status = 'expired';
+      await qrDoc.save();
+    }
+
+    const order = await ShopOrder.findById(qrDoc.orderId);
     if (!order) {
-      await session.abortTransaction();
       return res.status(404).json({ success: false, message: 'Commande associée introuvable.' });
     }
 
     const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.vendorUser._id);
+    if (qrDoc.vendorId && String(qrDoc.vendorId) !== String(req.vendorUser._id) && req.vendorUser.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider ce code QR.' });
+    }
+
     const vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
-    if (vendorItems.length === 0) {
-      await session.abortTransaction();
-      return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande.' });
-    }
+    const store = await Store.findOne({ userId: vendorIdToUse });
+    const storeName = store ? store.name : (qrDoc.vendorName || 'Boutique');
 
-    const validatedItems = vendorItems.map((item) => ({
-      productId: item.productId,
-      productName: item.productName,
-      quantity: item.quantity,
-      selectedOptions: item.selectedOptions,
-      subtotal: item.subtotal,
-    }));
+    const vendorTotal = vendorItems.reduce((sum, item) => sum + Number(item.subtotal || item.price * item.quantity || 0), 0);
 
-    order.items = order.items.map((item) => {
-      if (String(item.vendorId) === vendorIdToUse) {
-        const itemObject = typeof item.toObject === 'function' ? item.toObject() : item;
-        return {
-          ...itemObject,
-          delivered: true,
-          deliveredAt: new Date(),
-        };
-      }
-      return item;
-    });
-
-    const isFullyDelivered = order.items.every((item) => item.delivered === true);
-    if (isFullyDelivered) {
-      order.status = 'delivered';
-      order.deliveredAt = new Date();
-    } else if (['pending', 'confirmed'].includes(order.status)) {
-      order.status = 'processing';
-    }
-    order.updatedAt = new Date();
-    await order.save({ session });
-
-    await markQrUsed({ qrDoc, session });
-
-    await AuditLog.create([
-      {
-        userId: req.vendorUser._id,
-        userName: `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
-        role: req.vendorUser.role,
-        action: 'SELLER_QR_SCAN',
-        targetResource: 'ShopOrder',
-        targetId: order._id,
-        details: {
-          qrCode: qrDoc.code,
-          validatedItems,
-          vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
-          orderStatus: order.status,
-          paymentStatus: order.paymentStatus,
-        },
-        ipAddress: req.ip,
-      }
-    ], { session });
-
-    if (order.customerId) {
-      const notification = {
-        recipient: order.customerId.toString(),
-        recipientType: 'user',
-        title: 'Votre commande a été mise à jour',
-        message: isFullyDelivered
-          ? `Votre commande ${order.orderNumber} a été remise en totalité.`
-          : `Une partie de votre commande ${order.orderNumber} a été remise.`,
-        type: 'order_delivery',
-        link: `/mes-commandes/${order._id}`,
-        isRead: false,
-      };
-      await Notification.create([notification], { session });
-
-      if (isFullyDelivered) {
-        await emailService.sendOrderDeliveredEmail({
-          customerEmail: order.customerEmail,
-          customerName: order.customerName,
-          orderNumber: order.orderNumber,
-          vendorName: req.vendorUser.vendorName || '',
-          amount: order.total,
-        });
-      }
-    }
-
-    await session.commitTransaction();
+    const data = {
+      qrCode: qrDoc.code,
+      status: qrDoc.status,
+      alreadyUsed: qrDoc.status === 'used',
+      usedAt: qrDoc.usedAt || qrDoc.scannedAt,
+      validatedBy: qrDoc.vendorName || 'Vendeur',
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      storeName: storeName,
+      items: vendorItems.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        productImage: item.productImage,
+        quantity: item.quantity,
+        price: item.price,
+        subtotal: item.subtotal || (item.price * item.quantity)
+      })),
+      vendorTotal: vendorTotal,
+      createdAt: order.createdAt,
+      paymentDate: order.paymentDate,
+      paymentStatus: order.paymentStatus,
+      deliveryStatus: order.status
+    };
 
     return res.status(200).json({
       success: true,
-      message: 'QR validé avec succès.',
-      data: {
-        orderId: order._id,
-        orderNumber: order.orderNumber,
-        orderStatus: order.status,
-        paymentStatus: order.paymentStatus,
-        validatedItems,
-        qrToken: qrDoc.code,
-        qrStatus: 'used',
-        isFullyDelivered,
-      },
+      data
     });
   } catch (error) {
-    await session.abortTransaction();
     console.error('[sellerRoutes] scan error:', error);
-    return res.status(500).json({ success: false, message: error.message || 'Erreur lors de la validation du QR.' });
-  } finally {
-    session.endSession();
+    return res.status(500).json({ success: false, message: error.message || 'Erreur lors de la lecture du QR.' });
   }
 });
 
 router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, async (req, res) => {
   const session = await mongoose.startSession();
   try {
-    const { vendorOrderId, orderId } = req.body;
-    if (!vendorOrderId && !orderId) {
-      return res.status(400).json({ success: false, message: 'vendorOrderId ou orderId est requis.' });
+    const { token, vendorOrderId, orderId } = req.body;
+    
+    session.startTransaction();
+
+    let qrDoc = null;
+    let shopOrderId = orderId;
+    let storeIdToUse = req.storeId;
+
+    if (token) {
+      qrDoc = await QRCode.findOne({ code: token }).session(session);
+      if (!qrDoc) {
+        await session.abortTransaction();
+        return res.status(404).json({ success: false, message: 'Code QR introuvable.' });
+      }
+      if (qrDoc.status !== 'active') {
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: 'Ce code QR est invalide ou déjà utilisé.' });
+      }
+      shopOrderId = qrDoc.orderId;
     }
 
     let vendorOrder = null;
     if (vendorOrderId) {
-      vendorOrder = await VendorOrder.findOne({ _id: vendorOrderId, storeId: req.storeId }).session(session);
+      vendorOrder = await VendorOrder.findOne({ _id: vendorOrderId, storeId: storeIdToUse }).session(session);
+    } else if (shopOrderId) {
+      vendorOrder = await VendorOrder.findOne({ shopOrderId, storeId: storeIdToUse }).session(session);
     }
-    if (!vendorOrder && orderId) {
-      vendorOrder = await VendorOrder.findOne({ shopOrderId: orderId, storeId: req.storeId }).session(session);
-    }
+
     if (!vendorOrder) {
+      await session.abortTransaction();
       return res.status(404).json({ success: false, message: 'Commande vendeur introuvable pour la confirmation.' });
     }
 
-    session.startTransaction();
+    if (qrDoc) {
+      qrDoc.status = 'used';
+      qrDoc.usedAt = new Date();
+      qrDoc.scannedAt = qrDoc.scannedAt || new Date();
+      await qrDoc.save({ session });
+    }
+
     vendorOrder.status = 'delivered';
     await vendorOrder.save({ session });
 
@@ -238,9 +245,9 @@ router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, asyn
       const vendorIdToUse = String(req.vendorUser._id);
       shopOrder.items = shopOrder.items.map((item) => {
         if (String(item.vendorId) === vendorIdToUse) {
+          const itemObject = typeof item.toObject === 'function' ? item.toObject() : item;
           return {
-            ...item.toObject?.(),
-            ...item,
+            ...itemObject,
             delivered: true,
             deliveredAt: new Date(),
           };
@@ -257,10 +264,83 @@ router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, asyn
       }
       shopOrder.updatedAt = new Date();
       await shopOrder.save({ session });
+
+      await AuditLog.create([
+        {
+          userId: req.vendorUser._id,
+          userName: `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
+          role: req.vendorUser.role,
+          action: 'SELLER_QR_CONFIRM_DELIVERY',
+          targetResource: 'ShopOrder',
+          targetId: shopOrder._id,
+          details: {
+            token,
+            vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
+            isFullyDelivered,
+          },
+          ipAddress: req.ip,
+        }
+      ], { session });
+
+      const eventLogs = [
+        {
+          orderId: shopOrder._id,
+          event: token ? 'qr_scanned' : 'delivered',
+          details: {
+            token: token || '',
+            vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
+            itemsCount: shopOrder.items.filter(item => String(item.vendorId) === vendorIdToUse).length
+          },
+          createdBy: req.vendorUser.vendorName || `${req.vendorUser.userFirstname || ''} ${req.vendorUser.userSurname || ''}`.trim(),
+        }
+      ];
+
+      if (isFullyDelivered) {
+        eventLogs.push({
+          orderId: shopOrder._id,
+          event: 'order_delivered',
+          details: {
+            orderNumber: shopOrder.orderNumber
+          },
+          createdBy: 'system',
+        });
+      }
+      await OrderHistory.create(eventLogs, { session });
+
+      if (shopOrder.customerId) {
+        const notification = {
+          recipient: shopOrder.customerId.toString(),
+          recipientType: 'user',
+          title: 'Votre commande a été mise à jour',
+          message: isFullyDelivered
+            ? `Votre commande ${shopOrder.orderNumber} a été remise en totalité.`
+            : `Une partie de votre commande ${shopOrder.orderNumber} a été remise.`,
+          type: 'order_delivery',
+          link: `/mes-commandes/${shopOrder._id}`,
+          isRead: false,
+        };
+        await Notification.create([notification], { session });
+
+        await emailService.sendOrderDeliveredEmail({
+          customerEmail: shopOrder.customerEmail,
+          customerName: shopOrder.customerName,
+          orderNumber: shopOrder.orderNumber,
+          vendorName: req.vendorUser.vendorName || '',
+          amount: shopOrder.total,
+        });
+      }
     }
 
     await session.commitTransaction();
-    return res.status(200).json({ success: true, message: 'Livraison confirmée pour le vendeur.', data: { vendorOrderId: vendorOrder._id, shopOrderId: vendorOrder.shopOrderId } });
+    return res.status(200).json({
+      success: true,
+      message: 'Livraison confirmée avec succès.',
+      data: {
+        vendorOrderId: vendorOrder._id,
+        shopOrderId: vendorOrder.shopOrderId,
+        status: 'delivered'
+      }
+    });
   } catch (error) {
     await session.abortTransaction();
     console.error('[sellerRoutes] confirm-delivery error:', error);

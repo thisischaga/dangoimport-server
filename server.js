@@ -1697,6 +1697,10 @@ const startServer = async () => {
     // Routes QR code
     app.use('/api/qr', qrRoutes);
 
+    // Routes Vendeur (Seller Dashboard & QR Scanner)
+    const sellerRoutes = require('./routes/sellerRoutes');
+    app.use('/api/seller', sellerRoutes);
+
     // Gestion des erreurs 404
     app.use((req, res) => {
       res.status(404).json({ message: 'Route non trouvée' });

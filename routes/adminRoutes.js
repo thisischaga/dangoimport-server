@@ -162,21 +162,54 @@ router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
 // GET - Historique complet des commandes pour l'administration
 router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
     try {
-        const { page = 1, limit = 20, status, paymentStatus, search, from, to } = req.query;
+        const { page = 1, limit = 20, status, paymentStatus, search, from, to, dateFilter } = req.query;
         const skip = (page - 1) * limit;
+        const mongoose = require('mongoose');
 
         const filter = {};
         if (status) filter.status = status;
         if (paymentStatus) filter.paymentStatus = paymentStatus;
+
         if (search) {
+            // Find transactionIds matching the search criteria
+            const matchingTxs = await mongoose.model('Transaction').find({
+                transactionId: { $regex: search, $options: 'i' }
+            }).select('orderId').lean();
+            const orderIdsFromTxs = matchingTxs.map(t => t.orderId).filter(Boolean);
+
             filter.$or = [
                 { orderNumber: { $regex: search, $options: 'i' } },
                 { customerName: { $regex: search, $options: 'i' } },
                 { customerEmail: { $regex: search, $options: 'i' } },
                 { 'items.productName': { $regex: search, $options: 'i' } },
+                { 'items.vendorName': { $regex: search, $options: 'i' } },
+                { _id: { $in: orderIdsFromTxs } }
             ];
         }
-        if (from || to) {
+
+        const dateRange = dateFilter || req.query.dateRange;
+        if (dateRange && dateRange !== 'all') {
+            filter.createdAt = {};
+            const now = new Date();
+            if (dateRange === 'today') {
+                const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                filter.createdAt.$gte = start;
+            } else if (dateRange === 'yesterday') {
+                const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                filter.createdAt.$gte = start;
+                filter.createdAt.$lt = end;
+            } else if (dateRange === '7d') {
+                const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                filter.createdAt.$gte = start;
+            } else if (dateRange === '30d') {
+                const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                filter.createdAt.$gte = start;
+            } else if (dateRange === 'year') {
+                const start = new Date(now.getFullYear(), 0, 1);
+                filter.createdAt.$gte = start;
+            }
+        } else if (from || to) {
             filter.createdAt = {};
             if (from) filter.createdAt.$gte = new Date(from);
             if (to) filter.createdAt.$lte = new Date(to);
@@ -193,15 +226,60 @@ router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
         const histories = orderIds.length > 0 ? await OrderHistory.find({ orderId: { $in: orderIds } }).sort({ createdAt: -1 }).lean() : [];
         const qrTokens = orderIds.length > 0 ? await QRCode.find({ orderId: { $in: orderIds } }).lean() : [];
 
-        const enrichedOrders = orders.map((order) => ({
-            ...order,
-            history: histories.filter((history) => String(history.orderId) === String(order._id)),
-            qrTokens: qrTokens.filter((qr) => String(qr.orderId) === String(order._id)),
+        // Build stats
+        const statsAggregation = await ShopOrder.aggregate([
+            {
+                $facet: {
+                    totalOrders: [{ $count: "count" }],
+                    completedPayments: [
+                        { $match: { paymentStatus: "completed" } },
+                        { $count: "count" }
+                    ],
+                    inProgressOrders: [
+                        { $match: { status: { $in: ["confirmed", "processing", "shipped"] } } },
+                        { $count: "count" }
+                    ],
+                    deliveredOrders: [
+                        { $match: { status: "delivered" } },
+                        { $count: "count" }
+                    ],
+                    cancelledOrders: [
+                        { $match: { status: "cancelled" } },
+                        { $count: "count" }
+                    ],
+                    totalSales: [
+                        { $match: { paymentStatus: "completed" } },
+                        { $group: { _id: null, sum: { $sum: "$total" } } }
+                    ]
+                }
+            }
+        ]);
+
+        const stats = {
+            totalOrders: statsAggregation[0]?.totalOrders[0]?.count || 0,
+            completedPayments: statsAggregation[0]?.completedPayments[0]?.count || 0,
+            inProgressOrders: statsAggregation[0]?.inProgressOrders[0]?.count || 0,
+            deliveredOrders: statsAggregation[0]?.deliveredOrders[0]?.count || 0,
+            cancelledOrders: statsAggregation[0]?.cancelledOrders[0]?.count || 0,
+            totalSales: statsAggregation[0]?.totalSales[0]?.sum || 0,
+        };
+
+        const enrichedOrders = await Promise.all(orders.map(async (order) => {
+            const tx = await mongoose.model('Transaction').findOne({ orderId: order._id }).select('transactionId').lean();
+            const uniqueVendors = new Set((order.items || []).map(it => String(it.vendorId || 'Dango'))).size;
+            return {
+                ...order,
+                fedapayRef: tx ? tx.transactionId : '—',
+                uniqueVendorsCount: uniqueVendors,
+                history: histories.filter((h) => String(h.orderId) === String(order._id)),
+                qrTokens: qrTokens.filter((qr) => String(qr.orderId) === String(order._id)),
+            };
         }));
 
         res.json({
             success: true,
             data: enrichedOrders,
+            stats,
             pagination: {
                 currentPage: parseInt(page, 10),
                 totalPages: Math.ceil(total / limit),
@@ -209,7 +287,7 @@ router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
             },
         });
     } catch (error) {
-      console.error("[adminRoutes.js] Erreur capturée :", error);
+        console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -217,6 +295,7 @@ router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
 // GET - Détail d'une commande pour l'administration
 router.get('/orders/:id', verifyToken, adminOnly, async (req, res) => {
     try {
+        const mongoose = require('mongoose');
         const order = await ShopOrder.findById(req.params.id).lean();
         if (!order) {
             return res.status(404).json({ success: false, message: 'Commande non trouvée.' });
@@ -224,10 +303,11 @@ router.get('/orders/:id', verifyToken, adminOnly, async (req, res) => {
 
         const history = await OrderHistory.find({ orderId: order._id }).sort({ createdAt: -1 }).lean();
         const qrTokens = await QRCode.find({ orderId: order._id }).lean();
+        const tx = await mongoose.model('Transaction').findOne({ orderId: order._id }).select('transactionId').lean();
 
-        return res.json({ success: true, data: { ...order, history, qrTokens } });
+        return res.json({ success: true, data: { ...order, history, qrTokens, fedapayRef: tx ? tx.transactionId : '—' } });
     } catch (error) {
-      console.error("[adminRoutes.js] Erreur capturée :", error);
+        console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
