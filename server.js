@@ -47,6 +47,7 @@ const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const sellerRoutes = require('./routes/sellerRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
 const { notifyAdmins } = require('./utils/notifications');
@@ -1269,6 +1270,9 @@ const startServer = async () => {
     // Vendor Routes
     const vendorRoutes = require('./routes/vendorRoutes');
     app.use('/api/vendor', vendorRoutes);
+
+    // Seller Routes
+    app.use('/api/seller', sellerRoutes);
 
     // Order Routes
     app.use('/api/orders', orderRoutes);

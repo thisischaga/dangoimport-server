@@ -1,6 +1,9 @@
 const express = require('express');
 const Product = require('../Models/Product');
 const Promotion = require('../Models/Promotion');
+const ShopOrder = require('../Models/ShopOrder');
+const OrderHistory = require('../Models/OrderHistory');
+const QRCode = require('../Models/QRCode');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -150,6 +153,79 @@ router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
     try {
         const promotions = await Promotion.find().sort({ createdAt: -1 });
         res.json({ success: true, data: promotions });
+    } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET - Historique complet des commandes pour l'administration
+router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { page = 1, limit = 20, status, paymentStatus, search, from, to } = req.query;
+        const skip = (page - 1) * limit;
+
+        const filter = {};
+        if (status) filter.status = status;
+        if (paymentStatus) filter.paymentStatus = paymentStatus;
+        if (search) {
+            filter.$or = [
+                { orderNumber: { $regex: search, $options: 'i' } },
+                { customerName: { $regex: search, $options: 'i' } },
+                { customerEmail: { $regex: search, $options: 'i' } },
+                { 'items.productName': { $regex: search, $options: 'i' } },
+            ];
+        }
+        if (from || to) {
+            filter.createdAt = {};
+            if (from) filter.createdAt.$gte = new Date(from);
+            if (to) filter.createdAt.$lte = new Date(to);
+        }
+
+        const orders = await ShopOrder.find(filter)
+            .sort({ createdAt: -1 })
+            .skip(parseInt(skip, 10))
+            .limit(parseInt(limit, 10))
+            .lean();
+
+        const total = await ShopOrder.countDocuments(filter);
+        const orderIds = orders.map((o) => o._id);
+        const histories = orderIds.length > 0 ? await OrderHistory.find({ orderId: { $in: orderIds } }).sort({ createdAt: -1 }).lean() : [];
+        const qrTokens = orderIds.length > 0 ? await QRCode.find({ orderId: { $in: orderIds } }).lean() : [];
+
+        const enrichedOrders = orders.map((order) => ({
+            ...order,
+            history: histories.filter((history) => String(history.orderId) === String(order._id)),
+            qrTokens: qrTokens.filter((qr) => String(qr.orderId) === String(order._id)),
+        }));
+
+        res.json({
+            success: true,
+            data: enrichedOrders,
+            pagination: {
+                currentPage: parseInt(page, 10),
+                totalPages: Math.ceil(total / limit),
+                totalItems: total,
+            },
+        });
+    } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET - Détail d'une commande pour l'administration
+router.get('/orders/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const order = await ShopOrder.findById(req.params.id).lean();
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Commande non trouvée.' });
+        }
+
+        const history = await OrderHistory.find({ orderId: order._id }).sort({ createdAt: -1 }).lean();
+        const qrTokens = await QRCode.find({ orderId: order._id }).lean();
+
+        return res.json({ success: true, data: { ...order, history, qrTokens } });
     } catch (error) {
       console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
