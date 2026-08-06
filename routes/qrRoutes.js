@@ -159,10 +159,16 @@ router.post('/validate', verifyToken, async (req, res) => {
     order.updatedAt = new Date();
     await order.save();
 
-    qrDoc.status = 'used';
-    qrDoc.usedAt = new Date();
-    qrDoc.scannedAt = qrDoc.scannedAt || new Date();
-    await qrDoc.save();
+    const now = new Date();
+    const updatedQrDoc = await QRModel.findOneAndUpdate(
+      { _id: qrDoc._id, status: 'active' },
+      { $set: { status: 'used', usedAt: now, scannedAt: qrDoc.scannedAt || now } },
+      { new: true }
+    );
+
+    if (!updatedQrDoc) {
+      return res.status(400).json({ success: false, message: 'QR invalide ou déjà utilisé' });
+    }
 
     await AuditLog.create({
       userId: req.user.id,
