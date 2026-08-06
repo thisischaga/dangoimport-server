@@ -365,7 +365,7 @@ const createQRCodeRecords = async ({ order, transactionId, session }) => {
   });
 
   if (qrDocsPayload.length === 0) return [];
-  const created = await QRCode.create(qrDocsPayload, { session });
+  const created = await QRCode.create(qrDocsPayload, { session, ordered: true });
   return created;
 };
 
