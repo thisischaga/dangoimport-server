@@ -232,6 +232,62 @@ router.get('/orders/:id', verifyToken, adminOnly, async (req, res) => {
     }
 });
 
+// PATCH - Mettre à jour le statut d'une commande ShopOrder (Admin)
+router.patch('/orders/:id/status', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { status, paymentStatus, trackingNumber, carrier, adminNotes } = req.body;
+        const order = await ShopOrder.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Commande non trouvée.' });
+        }
+
+        const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'];
+        if (status) {
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({ success: false, message: 'Statut invalide.' });
+            }
+            order.status = status;
+        }
+
+        const validPaymentStatuses = ['pending', 'completed', 'failed', 'refunded'];
+        if (paymentStatus) {
+            if (!validPaymentStatuses.includes(paymentStatus)) {
+                return res.status(400).json({ success: false, message: 'Statut de paiement invalide.' });
+            }
+            order.paymentStatus = paymentStatus;
+        }
+
+        if (trackingNumber) order.trackingNumber = trackingNumber;
+        if (carrier) order.carrier = carrier;
+        if (adminNotes) order.adminNotes = adminNotes;
+        order.updatedAt = new Date();
+
+        await order.save();
+        return res.json({ success: true, message: 'Commande mise à jour', data: order });
+    } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// DELETE - Supprimer une commande ShopOrder (Admin)
+router.delete('/orders/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const order = await ShopOrder.findByIdAndDelete(req.params.id);
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Commande non trouvée.' });
+        }
+
+        await OrderHistory.deleteMany({ orderId: order._id });
+        await QRCode.deleteMany({ orderId: order._id });
+
+        return res.json({ success: true, message: 'Commande supprimée' });
+    } catch (error) {
+      console.error("[adminRoutes.js] Erreur capturée :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 // PUT - Mettre à jour une promotion
 router.put('/promotions/:id', verifyToken, adminOnly, async (req, res) => {
     try {
