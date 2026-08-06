@@ -324,6 +324,29 @@ router.get('/:id', verifyToken, async (req, res) => {
     }
 });
 
+// GET - Facture PDF de la commande
+router.get('/:id/invoice', verifyToken, async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.id);
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Commande non trouvée' });
+        }
+
+        if (order.customerId.toString() !== req.user.id && !['admin', 'dev-admin'].includes(req.user.role)) {
+            return res.status(403).json({ success: false, message: 'Accès refusé' });
+        }
+
+        const { streamOrderInvoicePdf } = require('../utils/invoiceGenerator');
+        streamOrderInvoicePdf(res, order, { fileName: `facture-${order.orderNumber || order._id}.pdf` });
+    } catch (error) {
+      console.error("[orderRoutes.js] Erreur capturée :", error);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+});
+
 // GET - Toutes les commandes (Admin)
 router.get('/admin/all', verifyToken, async (req, res) => {
     try {
