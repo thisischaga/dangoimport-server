@@ -4,6 +4,11 @@ const Promotion = require('../Models/Promotion');
 const ShopOrder = require('../Models/ShopOrder');
 const OrderHistory = require('../Models/OrderHistory');
 const QRCode = require('../Models/QRCode');
+const Transaction = require('../Models/Transaction');
+const Review = require('../Models/Review');
+const AuditLog = require('../Models/AuditLog');
+const WithdrawalRequest = require('../Models/WithdrawalRequest');
+const Notification = require('../Models/Notification');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -365,6 +370,109 @@ router.delete('/orders/:id', verifyToken, adminOnly, async (req, res) => {
     } catch (error) {
       console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/transactions — transactions paiement marketplace
+router.get('/transactions', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { page = 1, limit = 50 } = req.query;
+        const skip = (Number(page) - 1) * Number(limit);
+        const rows = await Transaction.find({}).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean();
+        const total = await Transaction.countDocuments({});
+        return res.json({ success: true, data: rows, pagination: { currentPage: Number(page), totalPages: Math.ceil(total / Number(limit)), totalItems: total } });
+    } catch (error) {
+        console.error('[adminRoutes.js] transactions:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/refunds — remboursements et retours gagnés
+router.get('/refunds', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await ShopOrder.find({
+            $or: [{ status: 'refunded' }, { status: 'cancelled' }, { paymentStatus: 'refunded' }]
+        }).sort({ createdAt: -1 }).lean();
+
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] refunds:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/deliveries — suivi des livraisons
+router.get('/deliveries', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await ShopOrder.find({
+            status: { $in: ['confirmed', 'processing', 'shipped', 'delivered'] }
+        }).sort({ createdAt: -1 }).lean();
+
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] deliveries:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/disputes — signalements / support / litiges
+router.get('/disputes', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await Notification.find({
+            $or: [
+              { type: 'support' },
+              { type: 'ticket' },
+              { type: 'dispute' },
+              { title: { $regex: 'litige|signal|support|réclamation', $options: 'i' } },
+              { message: { $regex: 'litige|signal|support|réclamation', $options: 'i' } }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] disputes:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/reviews — avis produits
+router.get('/reviews', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await Review.find({}).populate('productId').sort({ createdAt: -1 }).lean();
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] reviews:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/reported-products — catalogue signalé / en besoin de modération
+router.get('/reported-products', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await Product.find({
+            $or: [
+                { reported: true },
+                { validationStatus: 'changes_requested' },
+                { validationStatus: 'rejected' },
+                { rejectionReason: { $exists: true, $ne: '' } }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] reported-products:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/activity-log — audit trail admin
+router.get('/activity-log', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const rows = await AuditLog.find({}).sort({ createdAt: -1 }).limit(100).lean();
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] activity-log:', error);
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 
