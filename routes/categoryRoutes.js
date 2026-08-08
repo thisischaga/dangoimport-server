@@ -3,6 +3,18 @@ const router = express.Router();
 const Category = require('../Models/Category');
 const Product = require('../Models/Product');
 
+const FALLBACK_CATEGORIES = [
+  { name: 'Électronique', slug: 'electronique' },
+  { name: 'Mode', slug: 'mode' },
+  { name: 'Maison', slug: 'maison' },
+  { name: 'Beauté', slug: 'beaute' },
+  { name: 'Téléphones', slug: 'telephones' },
+  { name: 'Informatique', slug: 'informatique' },
+  { name: 'Accessoires', slug: 'accessoires' },
+  { name: 'Sport', slug: 'sport' },
+  { name: 'Vêtements', slug: 'vetements' }
+];
+
 // GET /api/categories - list categories with product counts
 router.get('/', async (req, res) => {
   try {
@@ -21,6 +33,24 @@ router.get('/', async (req, res) => {
       { $project: { products: 0 } },
       { $sort: { productCount: -1, name: 1 } }
     ]);
+
+    if (!categories || categories.length === 0) {
+      const fallback = FALLBACK_CATEGORIES.map((cat, index) => ({
+        _id: `fallback-${index}-${cat.slug}`,
+        name: cat.name,
+        slug: cat.slug,
+        description: '',
+        image: '',
+        banner: '',
+        seoTitle: '',
+        seoDescription: '',
+        createdAt: new Date(),
+        productCount: 0
+      }));
+
+      return res.json({ data: fallback });
+    }
+
     res.json({ data: categories });
   } catch (err) {
     console.error('GET /api/categories error', err);
