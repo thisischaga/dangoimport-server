@@ -42,11 +42,11 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
 
     const reqUserId = String(req.user.id || req.user.userId || '');
-    const reqUserEmail = (req.user.userEmail || req.user.email || '').trim().toLowerCase();
+    const reqUserEmail = (req.user.userEmail || req.user.email || '').toLowerCase();
     const isOwner = (order.customerId && String(order.customerId) === reqUserId) ||
                     (order.userId && String(order.userId) === reqUserId) ||
-                    (order.customerEmail && reqUserEmail && order.customerEmail.toLowerCase() === reqUserEmail) ||
-                    (order.userEmail && reqUserEmail && order.userEmail.toLowerCase() === reqUserEmail);
+                    (order.userEmail && reqUserEmail && order.userEmail.toLowerCase() === reqUserEmail) ||
+                    (order.customerEmail && reqUserEmail && order.customerEmail.toLowerCase() === reqUserEmail);
 
     if (!isOwner && !['admin', 'dev-admin', 'vendor'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
@@ -159,16 +159,10 @@ router.post('/validate', verifyToken, async (req, res) => {
     order.updatedAt = new Date();
     await order.save();
 
-    const now = new Date();
-    const updatedQrDoc = await QRModel.findOneAndUpdate(
-      { _id: qrDoc._id, status: 'active' },
-      { $set: { status: 'used', usedAt: now, scannedAt: qrDoc.scannedAt || now } },
-      { new: true }
-    );
-
-    if (!updatedQrDoc) {
-      return res.status(400).json({ success: false, message: 'QR invalide ou déjà utilisé' });
-    }
+    qrDoc.status = 'used';
+    qrDoc.usedAt = new Date();
+    qrDoc.scannedAt = qrDoc.scannedAt || new Date();
+    await qrDoc.save();
 
     await AuditLog.create({
       userId: req.user.id,

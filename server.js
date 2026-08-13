@@ -47,8 +47,7 @@ const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
-  const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
+const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const slugify = require('slugify');
@@ -134,10 +133,9 @@ const corsOptions = {
       'http://127.0.0.1:5174',
       'https://www.dangoimport.com',
       'https://dangoimport.com',
-      'https://admin.dangoimport.com',
-      'https://seller.dangoimport.com',
-      "https://seller.dangoimport.com",
-      'https://www.seller.dangoimport.com',
+      'https://dangoimport-admin.vercel.app',
+      'https://vendeur.dangoimport.com',
+      'https://marketplace.dangoimport.com',
     ];
 
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -174,8 +172,35 @@ app.use((req, res, next) => {
 });
 
 // Parser avec limites augmentées pour les images
-app.use(express.json({ limit: '125mb' }));
-app.use(express.urlencoded({ limit: '125mb', extended: true }));
+app.use(express.json({
+  limit: '125mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
+app.use(express.urlencoded({
+  limit: '125mb',
+  extended: true,
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
+
+// Logger global des requêtes pour debug local
+app.use((req, res, next) => {
+  console.log(`[server.js] incoming request ${req.method} ${req.originalUrl}`);
+  console.log('  headers:', {
+    host: req.headers.host,
+    origin: req.headers.origin,
+    referer: req.headers.referer,
+    authorization: req.headers.authorization ? 'yes' : 'no',
+    'x-fedapay-signature': req.headers['x-fedapay-signature'] || null,
+  });
+  if (req.rawBody && req.rawBody.length > 0) {
+    console.log('[server.js] body snippet:', req.rawBody.slice(0, 400));
+  }
+  next();
+});
 
 // Servir les images statiques
 app.use('/images', express.static(path.join(__dirname, 'public/images')));
@@ -786,7 +811,16 @@ const startServer = async () => {
     };
 
     app.use('/api/fedapay', fedapayRouter);
-    app.post('/webhook/paiement', fedapayWebhook);
+    app.post('/webhook/paiement', async (req, res, next) => {
+      console.log('[server.js] incoming webhook /webhook/paiement', {
+        method: req.method,
+        path: req.path,
+        signature: req.headers['x-fedapay-signature'],
+        contentType: req.headers['content-type'],
+        bodySnippet: req.rawBody ? req.rawBody.slice(0, 500) : null,
+      });
+      return fedapayWebhook(req, res, next);
+    });
 
     app.post('/api/fedapay/direct-pay', async (req, res) => {
       const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
@@ -1363,9 +1397,6 @@ const startServer = async () => {
     const productRoutes = require('./routes/productRoutes');
     app.use('/api/products', productRoutes);
 
-    // Payment Routes
-    app.use('/api/payments', paymentRoutes);
-
     // Store / Shop Routes
     const storeRoutes = require('./routes/storeRoutes');
     app.use('/api/stores', storeRoutes);
@@ -1701,10 +1732,6 @@ const startServer = async () => {
     // Routes QR code
     app.use('/api/qr', qrRoutes);
 
-    // Routes Vendeur (Seller Dashboard & QR Scanner)
-    const sellerRoutes = require('./routes/sellerRoutes');
-    app.use('/api/seller', sellerRoutes);
-
     // Gestion des erreurs 404
     app.use((req, res) => {
       res.status(404).json({ message: 'Route non trouvée' });
@@ -1719,7 +1746,7 @@ const startServer = async () => {
       });
     });
 
-    
+    // Lancer le serveur avec HTTP + Socket.io
     const server = http.createServer(app);
     initSocket(server);
 
