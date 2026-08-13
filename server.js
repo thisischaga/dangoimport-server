@@ -133,8 +133,8 @@ const corsOptions = {
       'http://127.0.0.1:5174',
       'https://www.dangoimport.com',
       'https://dangoimport.com',
-      'https://dangoimport-admin.vercel.app',
-      'https://vendeur.dangoimport.com',
+      'https://dangoimport-admin-eiim.vercel.app',
+      'https://business.dangoimport.com',
       'https://marketplace.dangoimport.com',
     ];
 
