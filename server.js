@@ -686,7 +686,7 @@ const startServer = async () => {
       res.json(getFedapayStatus());
     });
 
-    app.post('/api/payment/create', async (req, res) => {
+    app.post(['/api/payment/create', '/api/payments/create'], async (req, res) => {
       const {
         amount,
         currency = 'XOF',
