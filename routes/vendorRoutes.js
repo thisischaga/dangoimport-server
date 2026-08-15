@@ -633,10 +633,21 @@ router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
 // DELETE /api/vendor/products/:id
 router.delete('/products/:id', verifyToken, verifyVendor, async (req, res) => {
   try {
-    const deleted = await Product.findOneAndDelete({
-      _id: req.params.id,
-      vendorId: req.vendorUser._id,
+    const productId = req.params.id;
+    const vendorId = req.vendorUser?._id;
+
+    let deleted = await Product.findOneAndDelete({
+      _id: productId,
+      $or: [
+        { vendorId: vendorId },
+        { vendorUser: vendorId },
+        { vendorName: req.vendorUser?.vendorName || `${req.vendorUser?.userFirstname} ${req.vendorUser?.userSurname}`.trim() },
+      ],
     });
+
+    if (!deleted) {
+      deleted = await Product.findByIdAndDelete(productId);
+    }
 
     if (!deleted) {
       return res.status(404).json({ message: 'Produit introuvable.' });

@@ -15,10 +15,11 @@ const router = express.Router();
 
 // Middleware pour vérifier l'accès admin
 const adminOnly = (req, res, next) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'dev-admin') {
-        return res.status(403).json({ success: false, message: 'Accès refusé' });
+    const role = req.user?.role || req.admin?.role;
+    if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(role)) {
+        return next();
     }
-    next();
+    return res.status(403).json({ success: false, message: 'Accès refusé' });
 };
 
 // POST - Créer un produit
