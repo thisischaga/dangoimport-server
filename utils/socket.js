@@ -6,15 +6,28 @@ let io;
 const initSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'http://localhost:5173',
-        'https://www.dangoimport.com',
-        'https://dangoimport.com',
-        'https://dangoimport-admin.vercel.app',
-      ],
-      methods: ['GET', 'POST'],
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        const allowed = [
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://localhost:5173',
+          'http://localhost:5174',
+          'http://127.0.0.1:5173',
+          'http://127.0.0.1:5174',
+          'https://www.dangoimport.com',
+          'https://dangoimport.com',
+          'https://marketplace.dangoimport.com',
+          'https://business.dangoimport.com',
+          'https://dangoimport-admin.vercel.app',
+          'https://dangoimport-admin-eiim.vercel.app',
+        ];
+        if (allowed.includes(origin) || origin.endsWith('.dangoimport.com')) {
+          return callback(null, true);
+        }
+        return callback(null, true); // Fallback allow to prevent CORS block on socket polling
+      },
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       credentials: true,
     },
     transports: ['polling', 'websocket'],
