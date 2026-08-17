@@ -459,13 +459,23 @@ router.post('/checkout', verifyToken, async (req, res) => {
     const total = Number(payload.total || payload.totalPrice || Math.max(0, subtotal + shippingCost + tax - discount));
     const shippingMethod = normalizeShippingMethod(payload.shippingMethod || payload.shippingLabel || 'standard');
 
+    // Resolve the ISO country code: prefer explicit countryCode from payload,
+    // then derive from shippingAddress.country (strip accents for robustness)
+    const resolveCountryCode = (country) => {
+      const norm = String(country || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (['togo', 'tg'].includes(norm)) return 'TG';
+      if (['benin', 'bj'].includes(norm)) return 'BJ';
+      return 'BJ';
+    };
+    const resolvedCountryCode = payload.countryCode || resolveCountryCode(shippingAddress.country);
+
     const customer = {
       firstname: customerName || 'Client',
       lastname: customerLastName || 'Dango',
       email: userEmail,
       phone_number: {
         number: normalizePhoneNumber(userNumber),
-        country: payload.countryCode || (shippingAddress.country === 'Togo' ? 'TG' : 'BJ') || 'BJ',
+        country: resolvedCountryCode,
       },
     };
 
