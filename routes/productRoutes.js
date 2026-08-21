@@ -268,6 +268,18 @@ router.post('/:id/reviews', verifyToken, async (req, res) => {
   try {
     const { rating, title, comment, images } = req.body;
 
+    const existingReview = await Review.findOne({
+      productId: req.params.id,
+      userId: req.user.id,
+    });
+
+    if (existingReview) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vous avez déjà soumis un avis pour ce produit.',
+      });
+    }
+
     const review = new Review({
       productId: req.params.id,
       userId: req.user.id,
