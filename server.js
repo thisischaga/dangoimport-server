@@ -716,7 +716,11 @@ const startServer = async () => {
           ? phoneDigits.replace(/^(229|228|225|221|226|227|223|224|220|222|230)/, '')
           : phoneDigits;
 
-        const countryCode = deliveryCountry === 'Togo' ? 'TG' : 'BJ';
+        // Résolution robuste du pays pour FedaPay
+        const inputCountry = req.body.countryCode || req.body.selectedCountry || deliveryCountry || 'Togo';
+        const norm = String(inputCountry).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const countryCode = (norm === 'bj' || norm === 'benin' || norm === 'bénin') ? 'BJ' : 'TG';
+
         const transactionPayload = {
           description: description || 'Paiement Dango Import',
           amount: Math.round(Number(amount)),
