@@ -47,11 +47,12 @@ const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
+//const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const slugify = require('slugify');
-
+const fedapayRouter = require('./routes/fedapayRoutes');
+const fedapayWebhook = fedapayRouter.handleWebhook;
 
 const app = express();
 app.set('trust proxy', 1);
