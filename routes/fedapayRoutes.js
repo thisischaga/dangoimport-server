@@ -473,7 +473,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
       description: `Paiement Dango Import - ${customer.firstname} ${customer.lastname}`,
       amount: Math.round(total),
       currency: { iso: 'XOF' },
-      callback_url: process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/checkout',
+      callback_url: process.env.FEDAPAY_RETURN_URL || 'https://marketplace.dangoimport.com/checkout',
       custom_metadata: {
         cartSource: 'frontend',
         shippingMethod,
