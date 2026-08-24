@@ -374,12 +374,26 @@ router.put('/store', verifyToken, getStore, async (req, res) => {
       return res.status(400).json({ message: 'Le nom de la boutique est requis.' });
     }
 
-    req.store.name = name.trim();
+    const newVendorName = name.trim();
+    req.store.name = newVendorName;
     req.store.description = description ? description.trim() : '';
     req.store.whatsapp = whatsapp ? whatsapp.trim() : '';
     req.store.fedaPayLink = fedaPayLink ? fedaPayLink.trim() : '';
 
     await req.store.save();
+
+    // Synchroniser le nom de vendeur sur l'utilisateur et tous ses produits
+    const vendorId = req.vendorUser?._id || req.user?.userId || req.user?.id;
+    if (vendorId) {
+      await User.findByIdAndUpdate(vendorId, { vendorName: newVendorName });
+      await Product.updateMany(
+        { vendorId },
+        { $set: { vendorName: newVendorName } }
+      );
+      const cache = require('../utils/cache');
+      if (cache && cache.delPrefix) cache.delPrefix('products:');
+    }
+
     return res.status(200).json({ success: true, data: req.store });
   } catch (error) {
     console.error('[vendorRoutes.js] update store settings:', error);
