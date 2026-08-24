@@ -1392,6 +1392,13 @@ const startServer = async () => {
     const vendorRoutes = require('./routes/vendorRoutes');
     app.use('/api/vendor', vendorRoutes);
 
+    // Seller Routes
+    const sellerRoutes = require('./routes/sellerRoutes');
+    app.use('/api/seller', sellerRoutes);
+
+    // QR Routes
+    app.use('/api/qr', qrRoutes);
+
     // Order Routes
     app.use('/api/orders', orderRoutes);
     // ShopOrder (webhook-first orders) routes

@@ -65,8 +65,8 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
       qrVendorIds: qrDocs.map((q) => (q.vendorId ? String(q.vendorId) : null)),
     });
 
-    // If requester is vendor, filter to vendor-specific QR docs
-    if (req.user && req.user.role === 'vendor') {
+    // If requester is vendor and not the owner/buyer, filter to vendor-specific QR docs
+    if (req.user && req.user.role === 'vendor' && !isOwner) {
       // Use reqUserId which already normalizes req.user.id or req.user.userId
       const vendorQrs = qrDocs.filter((q) => q.vendorId && String(q.vendorId) === reqUserId);
       console.log('[qrRoutes] vendor-specific QR check', {
