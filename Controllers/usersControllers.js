@@ -369,10 +369,88 @@ const googleCallback = async (req, res) => {
     }
 };
 
+const getCurrentUser = async (req, res) => {
+
+    try {
+
+        const user =
+            await User.findById(
+                req.userId
+            );
+
+
+        if (!user) {
+
+            return res.status(404).json({
+                message:
+                    'Utilisateur non trouvé'
+            });
+        }
+
+
+        return res.status(200).json({
+
+            user: {
+
+                id: user._id,
+
+                userId: user._id,
+
+                userFirstname:
+                    user.userFirstname,
+
+                userSurname:
+                    user.userSurname,
+
+                userEmail:
+                    user.userEmail,
+
+                userPhone:
+                    user.userPhone || '',
+
+                profileImage:
+                    user.profileImage || '',
+
+                role:
+                    user.role || 'customer',
+
+                isVendor:
+                    user.isVendor ||
+                    user.role === 'vendor',
+
+                vendorName:
+                    user.vendorName || '',
+
+                balance:
+                    user.balance || 0,
+
+                bankDetails:
+                    user.bankDetails || {}
+
+            }
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            'Erreur récupération utilisateur:',
+            error
+        );
+
+
+        return res.status(500).json({
+            message:
+                'Erreur interne du serveur'
+        });
+    }
+};
+
 module.exports = {
     login,
     signup,
     sendSignupOTP,
     googleLogin,
-    googleCallback
+    googleCallback,
+    getCurrentUser
 };

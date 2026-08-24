@@ -1,6 +1,7 @@
 const express = require('express');
 
 const router = express.Router();
+const authMiddleware = require('../Middleware/authMiddleware');
 
 const {
     login,
@@ -28,6 +29,12 @@ router.get('/google', googleLogin);
 router.get(
     '/google/callback',
     googleCallback
+);
+
+router.get(
+    '/me',
+    authMiddleware,
+    getCurrentUser
 );
 
 
