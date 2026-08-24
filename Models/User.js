@@ -64,6 +64,10 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    isCertified: {
+        type: Boolean,
+        default: false
+    },
     vendorName: {
         type: String,
         default: ''

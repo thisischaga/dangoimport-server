@@ -259,6 +259,10 @@ const productSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Vendor'
     },
+    isVendorCertified: {
+        type: Boolean,
+        default: false
+    },
 
     createdAt: {
         type: Date,

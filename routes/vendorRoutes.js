@@ -559,6 +559,7 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
     });
 
     payload.vendorId = req.vendorUser._id;
+    payload.isVendorCertified = Boolean(req.vendorUser.isCertified);
     payload.sku = await resolveSkuForCreate(payload.sku);
     payload = await normalizeProductImages(payload);
     payload.history = [

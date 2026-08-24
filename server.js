@@ -1509,6 +1509,35 @@ const startServer = async () => {
       }
     });
 
+    // Basculer la certification d'un vendeur (admin only)
+    app.put('/api/users/:id/certify', verifyToken, async (req, res) => {
+      try {
+        const admin = await Admin.findById(req.user.userId);
+        if (!admin) return res.status(401).json({ message: "Non autorisé" });
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ message: "Utilisateur introuvable" });
+
+        user.isCertified = !user.isCertified;
+        await user.save();
+
+        // Synchroniser tous les produits de ce vendeur
+        const Product = require('./Models/Product');
+        await Product.updateMany(
+          { vendorId: user._id },
+          { $set: { isVendorCertified: user.isCertified } }
+        );
+
+        // Vider le cache des produits
+        const cache = require('./utils/cache');
+        if (cache && cache.delPrefix) cache.delPrefix('products:');
+
+        res.status(200).json({ success: true, isCertified: user.isCertified, message: `Vendeur ${user.isCertified ? 'certifié' : 'décertifié'} avec succès` });
+      } catch (error) {
+        console.error("Erreur PUT /api/users/:id/certify :", error);
+        res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
     // Statistiques globales (admin only)
     app.get('/api/admin/stats', verifyToken, async (req, res) => {
       try {
