@@ -74,7 +74,9 @@ router.post('/add', verifyToken, async (req, res) => {
                 productImage: product.images[0]?.url || '',
                 price,
                 quantity,
-                selectedOptions: selectedOptions || {}
+                selectedOptions: selectedOptions || {},
+                vendorId: product.vendorId,
+                vendorName: product.vendorName
             });
         }
 

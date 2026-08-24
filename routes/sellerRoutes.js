@@ -149,13 +149,43 @@ router.post('/scan', verifyToken, verifySeller, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Commande associée introuvable.' });
     }
 
-    const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.vendorUser._id);
-    if (qrDoc.vendorId && String(qrDoc.vendorId) !== String(req.vendorUser._id) && req.vendorUser.role !== 'admin') {
+    const store = await Store.findOne({ userId: req.vendorUser._id });
+    const vendorName = req.vendorUser.vendorName || store?.name || '';
+
+    // Authorization check
+    let isAuthorized = req.vendorUser.role === 'admin';
+    if (!isAuthorized) {
+      if (qrDoc.vendorId) {
+        const qrVidStr = String(qrDoc.vendorId);
+        if (qrVidStr === String(req.vendorUser._id) || (store && qrVidStr === String(store._id))) {
+          isAuthorized = true;
+        }
+      }
+      if (!isAuthorized && qrDoc.vendorName && qrDoc.vendorName.trim().toLowerCase() === vendorName.trim().toLowerCase()) {
+        isAuthorized = true;
+      }
+      if (!isAuthorized && !qrDoc.vendorId) {
+        // Fallback for legacy orders missing vendorId on QR
+        const hasMatchingItem = order.items.some(item => 
+          (item.vendorId && (String(item.vendorId) === String(req.vendorUser._id) || (store && String(item.vendorId) === String(store._id)))) ||
+          (item.vendorName && item.vendorName.trim().toLowerCase() === vendorName.trim().toLowerCase())
+        );
+        if (hasMatchingItem) isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider ce code QR.' });
     }
 
-    const vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
-    const store = await Store.findOne({ userId: vendorIdToUse });
+    // Filter vendor items based on the matching criteria
+    const vendorItems = order.items.filter((item) => {
+      const vidMatch = item.vendorId && (String(item.vendorId) === String(req.vendorUser._id) || (store && String(item.vendorId) === String(store._id)));
+      const vNameMatch = item.vendorName && item.vendorName.trim().toLowerCase() === vendorName.trim().toLowerCase();
+      const qrVidMatch = item.vendorId && qrDoc.vendorId && String(item.vendorId) === String(qrDoc.vendorId);
+      return vidMatch || vNameMatch || qrVidMatch;
+    });
+
     const storeName = store ? store.name : (qrDoc.vendorName || 'Boutique');
 
     const vendorTotal = vendorItems.reduce((sum, item) => sum + Number(item.subtotal || item.price * item.quantity || 0), 0);
@@ -241,11 +271,16 @@ router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, asyn
     vendorOrder.status = 'delivered';
     await vendorOrder.save({ session });
 
-    const shopOrder = await ShopOrder.findById(vendorOrder.shopOrderId).session(session);
+    const store = await Store.findOne({ userId: req.vendorUser._id }).session(session);
+    const vendorName = req.vendorUser.vendorName || store?.name || '';
+
     if (shopOrder) {
-      const vendorIdToUse = String(req.vendorUser._id);
       shopOrder.items = shopOrder.items.map((item) => {
-        if (String(item.vendorId) === vendorIdToUse) {
+        const vidMatch = item.vendorId && (String(item.vendorId) === String(req.vendorUser._id) || (store && String(item.vendorId) === String(store._id)));
+        const vNameMatch = item.vendorName && item.vendorName.trim().toLowerCase() === vendorName.trim().toLowerCase();
+        const qrVidMatch = item.vendorId && qrDoc?.vendorId && String(item.vendorId) === String(qrDoc.vendorId);
+        
+        if (vidMatch || vNameMatch || qrVidMatch || req.vendorUser.role === 'admin') {
           const itemObject = typeof item.toObject === 'function' ? item.toObject() : item;
           return {
             ...itemObject,
