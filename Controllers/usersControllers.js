@@ -5,6 +5,11 @@ const User = require('../Models/User');
 const { Resend } = require('resend');
 const { generateOTP } = require('../utils/otp');
 
+const {
+    getGoogleAuthUrl,
+    getGoogleUser
+} = require('../utils/googleAuth');
+
 dotenv.config();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -26,7 +31,7 @@ const login = async (req, res) => {
         }
 
         // Vérifier si le compte est vérifié (si on décide d'utiliser isVerified)
-        // if (!user.isVerified) return res.status(403).json({ message: "Veuillez vérifier votre compte avant de vous connecter." });
+        if (!user.isVerified) return res.status(403).json({ message: "Veuillez vérifier votre compte avant de vous connecter." });
 
         const isMatch = await bcrypt.compare(userPassword, user.userPassword);
         if (!isMatch) {
@@ -80,9 +85,9 @@ const sendSignupOTP = async (req, res) => {
 
         try {
             await resend.emails.send({
-                from: `Dango Import <${process.env.EMAIL || 'onboarding@resend.dev'}>`,
+                from: `Dangoimport <${process.env.EMAIL || 'onboarding@resend.dev'}>`,
                 to: userEmail,
-                subject: 'Vérifiez votre compte Dango Import',
+                subject: 'Vérifiez votre compte Dangoimport',
                 text: `Votre code de vérification est : ${otp}. Il expire dans 10 minutes.`,
             });
         } catch (emailError) {
@@ -162,4 +167,212 @@ const signup = async (req, res) => {
     }
 };
 
-module.exports = { login, signup, sendSignupOTP };
+const googleLogin = async (req, res) => {
+
+    try {
+
+        const authUrl = getGoogleAuthUrl();
+
+        return res.redirect(authUrl);
+
+    } catch (error) {
+
+        console.error(
+            'Erreur démarrage Google OAuth:',
+            error
+        );
+
+        return res.status(500).json({
+            message: 'Impossible de démarrer la connexion avec Google'
+        });
+    }
+};
+
+const googleCallback = async (req, res) => {
+
+    try {
+
+        const { code, error } = req.query;
+
+
+        // L'utilisateur a annulé Google
+        if (error) {
+
+            return res.redirect(
+                `${process.env.FRONTEND_URL}/login?error=google_cancelled`
+            );
+        }
+
+
+        if (!code) {
+
+            return res.redirect(
+                `${process.env.FRONTEND_URL}/login?error=google_no_code`
+            );
+        }
+
+
+        // ============================
+        // RÉCUPÉRER LE PROFIL GOOGLE
+        // ============================
+
+        const googleUser = await getGoogleUser(code);
+
+
+        if (!googleUser.userEmail) {
+
+            return res.redirect(
+                `${process.env.FRONTEND_URL}/login?error=google_no_email`
+            );
+        }
+
+
+        const email = googleUser.userEmail.toLowerCase();
+
+
+        // ============================
+        // 1. RECHERCHE PAR GOOGLE ID
+        // ============================
+
+        let user = await User.findOne({
+            googleId: googleUser.googleId
+        });
+
+
+        // ============================
+        // 2. SI GOOGLE ID INEXISTANT
+        // ============================
+
+        if (!user) {
+
+            // Recherche d'un compte existant
+            // avec le même email
+            user = await User.findOne({
+                userEmail: email
+            });
+
+
+            // ============================
+            // COMPTE DÉJÀ EXISTANT
+            // ============================
+
+            if (user) {
+
+                // Lier Google au compte existant
+                user.googleId = googleUser.googleId;
+
+                if (!user.authProviders.includes('google')) {
+                    user.authProviders.push('google');
+                }
+
+
+                // Ajouter la photo Google seulement
+                // si l'utilisateur n'a pas encore de photo
+                if (!user.profileImage && googleUser.profileImage) {
+                    user.profileImage =
+                        googleUser.profileImage;
+                }
+
+
+                // Google a déjà vérifié l'email
+                if (googleUser.emailVerified) {
+                    user.isVerified = true;
+                }
+
+
+                user.updatedAt = new Date();
+
+                await user.save();
+
+            } else {
+
+                // ============================
+                // NOUVEL UTILISATEUR GOOGLE
+                // ============================
+
+                user = new User({
+
+                    userFirstname:
+                        googleUser.userFirstname ||
+                        'Utilisateur',
+
+                    userSurname:
+                        googleUser.userSurname ||
+                        '',
+
+                    userEmail: email,
+
+                    googleId:
+                        googleUser.googleId,
+
+                    authProviders: ['google'],
+
+                    profileImage:
+                        googleUser.profileImage || '',
+
+                    isVerified:
+                        googleUser.emailVerified || false,
+
+                    role: 'customer',
+
+                    isVendor: false
+
+                });
+
+                await user.save();
+            }
+        }
+
+
+        // ============================
+        // GÉNÉRATION DU JWT
+        // ============================
+
+        const token = jwt.sign(
+
+            {
+                userId: user._id,
+                role: user.role || 'customer'
+            },
+
+            process.env.JWT_SECRET,
+
+            {
+                expiresIn: '24h'
+            }
+
+        );
+
+
+        // ============================
+        // REDIRECTION FRONTEND
+        // ============================
+
+        return res.redirect(
+
+            `${process.env.FRONTEND_URL}/oauth-success?token=${encodeURIComponent(token)}`
+
+        );
+
+    } catch (error) {
+
+        console.error(
+            'Erreur Google OAuth callback:',
+            error
+        );
+
+        return res.redirect(
+
+            `${process.env.FRONTEND_URL}/login?error=google_failed`
+
+        );
+    }
+};
+
+module.exports = {
+    login,
+    signup,
+    sendSignupOTP,
+    googleLogin,
+    googleCallback
+};

@@ -1,17 +1,20 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
+
     // Informations de base
     userFirstname: {
         type: String,
         required: true,
         trim: true
     },
+
     userSurname: {
         type: String,
         required: true,
         trim: true
     },
+
     userEmail: {
         type: String,
         required: true,
@@ -19,10 +22,31 @@ const userSchema = new mongoose.Schema({
         lowercase: true,
         index: true
     },
+
+    // Le mot de passe devient optionnel pour Google OAuth
     userPassword: {
         type: String,
-        required: true
+        required: function () {
+            return !this.googleId;
+        }
     },
+
+    // =========================
+    // GOOGLE OAUTH
+    // =========================
+
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true
+    },
+
+    authProviders: {
+        type: [String],
+        default: ['local']
+    },
+
     userPhone: {
         type: String,
         trim: true
@@ -30,18 +54,28 @@ const userSchema = new mongoose.Schema({
 
     // Profil
     profileImage: String,
+
     bio: String,
 
     // Adresses
     addresses: [
         {
-            label: { type: String, enum: ['home', 'work', 'other'], default: 'home' },
+            label: {
+                type: String,
+                enum: ['home', 'work', 'other'],
+                default: 'home'
+            },
+
             country: String,
             city: String,
             neighborhood: String,
             fullAddress: String,
             postalCode: String,
-            isDefault: { type: Boolean, default: false }
+
+            isDefault: {
+                type: Boolean,
+                default: false
+            }
         }
     ],
 
@@ -50,6 +84,7 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+
     emailVerificationToken: String,
     phoneVerificationToken: String,
 
@@ -60,20 +95,25 @@ const userSchema = new mongoose.Schema({
         default: 'customer',
         index: true
     },
+
     isVendor: {
         type: Boolean,
         default: false
     },
+
     isCertified: {
         type: Boolean,
         default: false
     },
+
     vendorName: {
         type: String,
         default: ''
     },
+
     vendorDescription: String,
     vendorLogo: String,
+
     vendorRating: {
         type: Number,
         default: 0,
@@ -86,19 +126,23 @@ const userSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+
     bankDetails: {
         accountHolder: {
             type: String,
             default: ''
         },
+
         accountNumber: {
             type: String,
             default: ''
         },
+
         bankName: {
             type: String,
             default: ''
         },
+
         iban: {
             type: String,
             default: ''
@@ -107,15 +151,38 @@ const userSchema = new mongoose.Schema({
 
     // Préférences
     preferences: {
-        newsletter: { type: Boolean, default: true },
-        notifications: { type: Boolean, default: true },
-        currency: { type: String, default: 'XOF' },
-        language: { type: String, default: 'fr' }
+        newsletter: {
+            type: Boolean,
+            default: true
+        },
+
+        notifications: {
+            type: Boolean,
+            default: true
+        },
+
+        currency: {
+            type: String,
+            default: 'XOF'
+        },
+
+        language: {
+            type: String,
+            default: 'fr'
+        }
     },
 
     // Statistiques
-    totalOrders: { type: Number, default: 0 },
-    totalSpent: { type: Number, default: 0 },
+    totalOrders: {
+        type: Number,
+        default: 0
+    },
+
+    totalSpent: {
+        type: Number,
+        default: 0
+    },
+
     lastOrderDate: Date,
 
     // Dates
@@ -124,10 +191,12 @@ const userSchema = new mongoose.Schema({
         default: Date.now,
         index: true
     },
+
     updatedAt: {
         type: Date,
         default: Date.now
     }
+
 });
 
 module.exports = mongoose.model('User', userSchema);
