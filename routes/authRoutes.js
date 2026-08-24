@@ -9,7 +9,7 @@ const {
     sendSignupOTP,
     googleLogin,
     googleCallback
-} = require('../Controllers/authController');
+} = require('../Controllers/usersController');
 
 
 // Auth classique
