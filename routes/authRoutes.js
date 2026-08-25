@@ -7,7 +7,7 @@ const {
     signup,
     sendSignupOTP,
     googleLogin
-} = require('../Controllers/usersController');
+} = require('../Controllers/usersControllers');
 
 
 // Connexion classique
