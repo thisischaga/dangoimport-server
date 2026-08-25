@@ -175,18 +175,33 @@ const signup = async (req, res) => {
     }
 };
 
+const { google } = require('googleapis');
+
+const googleOAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CALLBACK_URL
+);
+
 const googleLogin = (req, res) => {
+    console.log('GOOGLE_CLIENT_ID:', !!process.env.GOOGLE_CLIENT_ID);
+    console.log('GOOGLE_CLIENT_SECRET:', !!process.env.GOOGLE_CLIENT_SECRET);
+    console.log(
+        'GOOGLE_CALLBACK_URL:',
+        process.env.GOOGLE_CALLBACK_URL
+    );
+
     const authUrl = googleOAuth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: [
             'openid',
-            'profile',
-            'email'
+            'email',
+            'profile'
         ],
         prompt: 'select_account'
     });
 
-    console.log('Google OAuth URL:', authUrl);
+    console.log('URL Google:', authUrl);
 
     res.redirect(authUrl);
 };
