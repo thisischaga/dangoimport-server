@@ -8,7 +8,8 @@ const {
     signup,
     sendSignupOTP,
     googleLogin,
-    googleCallback
+    googleCallback,
+    getCurrentUser
 } = require('../Controllers/usersControllers');
 
 
