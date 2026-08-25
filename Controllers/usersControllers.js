@@ -175,7 +175,6 @@ const signup = async (req, res) => {
     }
 };
 
-const { google } = require('googleapis');
 
 const googleOAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
