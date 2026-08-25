@@ -199,7 +199,7 @@ const googleCallback = async (req, res) => {
         if (error) {
 
             return res.redirect(
-                `${process.env.FRONTEND_URL}/login?error=google_cancelled`
+                `$https://marketplace.dangoimport.com/login?error=google_cancelled`
             );
         }
 
@@ -207,7 +207,7 @@ const googleCallback = async (req, res) => {
         if (!code) {
 
             return res.redirect(
-                `${process.env.FRONTEND_URL}/login?error=google_no_code`
+                `$https://marketplace.dangoimport.com/login?error=google_no_code`
             );
         }
 
@@ -350,7 +350,7 @@ const googleCallback = async (req, res) => {
 
         return res.redirect(
 
-            `${process.env.FRONTEND_URL}/oauth-success?token=${encodeURIComponent(token)}`
+            `$https://marketplace.dangoimport.com/oauth-success?token=${encodeURIComponent(token)}`
 
         );
 
