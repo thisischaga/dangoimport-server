@@ -47,8 +47,35 @@ const getGoogleUser = async (code) => {
     };
 };
 
+const verifyGoogleToken = async (credential) => {
+    if (!credential) {
+        throw new Error('Jeton Google manquant');
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+
+    if (!payload?.email) {
+        throw new Error('Google n’a pas retourné d’email valide');
+    }
+
+    return {
+        googleId: payload.sub,
+        userEmail: payload.email,
+        userFirstname: payload.given_name || '',
+        userSurname: payload.family_name || '',
+        profileImage: payload.picture || '',
+        emailVerified: payload.email_verified
+    };
+};
+
 
 module.exports = {
     getGoogleAuthUrl,
-    getGoogleUser
+    getGoogleUser,
+    verifyGoogleToken
 };

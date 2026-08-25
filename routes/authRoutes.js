@@ -20,6 +20,7 @@ router.post('/signup', signup);
 router.post('/send-otp', sendSignupOTP);
 
 // Connexion Google
+router.get('/google', googleLogin);
 router.post('/google', googleLogin);
 
 
