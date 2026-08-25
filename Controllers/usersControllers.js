@@ -15,11 +15,6 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 const { google } = require('googleapis');
 
-const googleOAuth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_CALLBACK_URL
-);
 
 // Store OTPs in memory (Note: In production, use Redis or a DB)
 const signupOtpStore = new Map();
