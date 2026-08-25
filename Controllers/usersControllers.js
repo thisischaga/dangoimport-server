@@ -1,15 +1,19 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
-const User = require('../Models/User');
 const { OAuth2Client } = require('google-auth-library');
+
+const User = require('../Models/User');
 
 dotenv.config();
 
-const googleClient = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID
-);
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+/**
+ * Génère le JWT DangoImport
+ */
 const generateToken = (user) => {
     return jwt.sign(
         {
@@ -23,22 +27,55 @@ const generateToken = (user) => {
     );
 };
 
+/**
+ * Connexion / inscription avec Google
+ *
+ * Le frontend envoie :
+ * {
+ *   token: response.credential
+ * }
+ */
 const googleLogin = async (req, res) => {
     try {
+
         const { token } = req.body;
+
+        // -------------------------------------------------
+        // Vérification du token reçu
+        // -------------------------------------------------
 
         if (!token) {
             return res.status(400).json({
-                message: 'Token Google manquant'
+                message: 'Token Google manquant.'
             });
         }
 
+        if (!GOOGLE_CLIENT_ID) {
+            console.error(
+                'GOOGLE_CLIENT_ID est manquant dans les variables Render.'
+            );
+
+            return res.status(500).json({
+                message: 'Configuration Google du serveur manquante.'
+            });
+        }
+
+        // -------------------------------------------------
+        // Vérification auprès de Google
+        // -------------------------------------------------
+
         const ticket = await googleClient.verifyIdToken({
             idToken: token,
-            audience: process.env.GOOGLE_CLIENT_ID
+            audience: GOOGLE_CLIENT_ID
         });
 
         const payload = ticket.getPayload();
+
+        if (!payload) {
+            return res.status(401).json({
+                message: 'Informations Google invalides.'
+            });
+        }
 
         const {
             sub: googleId,
@@ -50,15 +87,35 @@ const googleLogin = async (req, res) => {
             email_verified
         } = payload;
 
-        if (!email || !email_verified) {
+        // -------------------------------------------------
+        // Vérification du compte Google
+        // -------------------------------------------------
+
+        if (!email) {
             return res.status(401).json({
-                message: 'Compte Google non vérifié'
+                message: 'Google n’a fourni aucune adresse email.'
             });
         }
 
+        if (!email_verified) {
+            return res.status(401).json({
+                message: 'Votre adresse email Google n’est pas vérifiée.'
+            });
+        }
+
+        const normalizedEmail = email.toLowerCase().trim();
+
+        // -------------------------------------------------
+        // Recherche de l'utilisateur
+        // -------------------------------------------------
+
         let user = await User.findOne({
-            userEmail: email.toLowerCase()
+            userEmail: normalizedEmail
         });
+
+        // -------------------------------------------------
+        // Création du compte si inexistant
+        // -------------------------------------------------
 
         if (!user) {
 
@@ -67,46 +124,60 @@ const googleLogin = async (req, res) => {
                 10
             );
 
+            const firstname =
+                given_name ||
+                name?.split(' ')[0] ||
+                'Utilisateur';
+
+            const surname =
+                family_name ||
+                name?.split(' ').slice(1).join(' ') ||
+                '';
+
             user = new User({
-                userFirstname: given_name || name?.split(' ')[0] || 'Utilisateur',
-
-                userSurname:
-                    family_name ||
-                    name?.split(' ').slice(1).join(' ') ||
-                    '',
-
-                userEmail: email.toLowerCase(),
-
+                userFirstname: firstname,
+                userSurname: surname,
+                userEmail: normalizedEmail,
                 userPassword: randomPassword,
-
                 profileImage: picture || '',
-
                 isVerified: true,
-
                 role: 'customer',
-
                 isVendor: false
             });
 
             await user.save();
 
             console.log(
-                `Compte Google créé : ${user.userEmail}`
+                `Compte Google créé : ${normalizedEmail}`
             );
 
         } else {
 
-            // Si l'utilisateur avait déjà un compte classique,
-            // Google peut maintenant être utilisé pour se connecter.
+            // -------------------------------------------------
+            // Compte existant
+            // -------------------------------------------------
+
             if (!user.isVerified) {
+
                 user.isVerified = true;
+
                 await user.save();
             }
+
         }
+
+        // -------------------------------------------------
+        // Génération du JWT DangoImport
+        // -------------------------------------------------
 
         const authToken = generateToken(user);
 
+        // -------------------------------------------------
+        // Réponse frontend
+        // -------------------------------------------------
+
         return res.status(200).json({
+
             message: 'Connexion Google réussie',
 
             token: authToken,
@@ -115,16 +186,23 @@ const googleLogin = async (req, res) => {
                 id: user._id,
                 userId: user._id,
 
-                userFirstname: user.userFirstname,
-                userSurname: user.userSurname,
+                userFirstname:
+                    user.userFirstname,
 
-                userEmail: user.userEmail,
+                userSurname:
+                    user.userSurname,
 
-                userPhone: user.userPhone || '',
+                userEmail:
+                    user.userEmail,
 
-                profileImage: user.profileImage || '',
+                userPhone:
+                    user.userPhone || '',
 
-                role: user.role || 'customer',
+                profileImage:
+                    user.profileImage || '',
+
+                role:
+                    user.role || 'customer',
 
                 isVendor:
                     user.isVendor ||
@@ -150,7 +228,12 @@ const googleLogin = async (req, res) => {
 
         return res.status(401).json({
             message:
-                "Échec de l'authentification avec Google"
+                "Échec de l'authentification avec Google."
         });
     }
+};
+
+module.exports = {
+    googleLogin,
+    generateToken
 };

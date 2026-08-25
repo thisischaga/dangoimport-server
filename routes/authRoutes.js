@@ -10,14 +10,16 @@ const {
 } = require('../Controllers/usersController');
 
 
+// Connexion classique
 router.post('/login', login);
 
+// Inscription classique
 router.post('/signup', signup);
 
+// Vérification email
 router.post('/send-otp', sendSignupOTP);
 
-
-// Google
+// Connexion Google
 router.post('/google', googleLogin);
 
 
