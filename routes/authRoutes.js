@@ -13,6 +13,18 @@ const {
 } = require('../Controllers/usersControllers');
 
 
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'OK' : 'MANQUANT');
+
+console.log(
+    'GOOGLE_CLIENT_SECRET:',
+    process.env.GOOGLE_CLIENT_SECRET ? 'OK' : 'MANQUANT'
+);
+
+console.log(
+    'GOOGLE_CALLBACK_URL:',
+    process.env.GOOGLE_CALLBACK_URL || 'MANQUANT'
+);
+
 // Auth classique
 router.post('/login', login);
 

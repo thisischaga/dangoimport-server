@@ -13,6 +13,14 @@ const {
 dotenv.config();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+const { google } = require('googleapis');
+
+const googleOAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CALLBACK_URL
+);
+
 // Store OTPs in memory (Note: In production, use Redis or a DB)
 const signupOtpStore = new Map();
 
@@ -167,27 +175,21 @@ const signup = async (req, res) => {
     }
 };
 
-const googleLogin = async (req, res) => {
+const googleLogin = (req, res) => {
+    const authUrl = googleOAuth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: [
+            'openid',
+            'profile',
+            'email'
+        ],
+        prompt: 'select_account'
+    });
 
-    try {
+    console.log('Google OAuth URL:', authUrl);
 
-        const authUrl = getGoogleAuthUrl();
-
-        return res.redirect(authUrl);
-
-    } catch (error) {
-
-        console.error(
-            'Erreur démarrage Google OAuth:',
-            error
-        );
-
-        return res.status(500).json({
-            message: 'Impossible de démarrer la connexion avec Google'
-        });
-    }
+    res.redirect(authUrl);
 };
-
 const googleCallback = async (req, res) => {
 
     try {
@@ -199,7 +201,7 @@ const googleCallback = async (req, res) => {
         if (error) {
 
             return res.redirect(
-                `$https://marketplace.dangoimport.com/login?error=google_cancelled`
+                `${process.env.FRONTEND_URL}/login?error=google_cancelled`
             );
         }
 
@@ -207,7 +209,7 @@ const googleCallback = async (req, res) => {
         if (!code) {
 
             return res.redirect(
-                `$https://marketplace.dangoimport.com/login?error=google_no_code`
+                `${process.env.FRONTEND_URL}/login?error=google_no_code`
             );
         }
 
@@ -350,7 +352,7 @@ const googleCallback = async (req, res) => {
 
         return res.redirect(
 
-            `$https://marketplace.dangoimport.com/oauth-success?token=${encodeURIComponent(token)}`
+            `${process.env.FRONTEND_URL}/oauth-success?token=${encodeURIComponent(token)}`
 
         );
 
