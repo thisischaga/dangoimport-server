@@ -45,6 +45,11 @@ const initSocket = (server) => {
       // console.log(`[Socket] Client ${socket.id} a rejoint la salle: ${room}`);
     });
 
+    socket.on('join_user', (userId) => {
+      if (!userId) return;
+      socket.join(`user_${userId}`);
+    });
+
     socket.on('disconnect', () => {
       // console.log(`[Socket] Client déconnecté: ${socket.id}`);
     });

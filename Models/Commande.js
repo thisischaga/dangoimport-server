@@ -97,6 +97,19 @@ const orderSchema = new mongoose.Schema({
         enum: ['standard', 'express', 'pickup'],
         default: 'standard'
     },
+    selectedDeliveryZoneId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'VendorDeliveryZone',
+        default: null
+    },
+    deliveryZone: {
+        country: String,
+        zoneName: String,
+        region: String,
+        city: String,
+        fee: Number,
+        estimatedDelivery: String
+    },
     estimatedDelivery: Date,
 
     // Statut

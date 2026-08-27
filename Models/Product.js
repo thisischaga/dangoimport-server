@@ -94,9 +94,11 @@ const productSchema = new mongoose.Schema({
     shippingInfo: String,
     deliveryZones: [
       {
+        _id: false,
         country: String,
         area: String,
         locality: String,
+        zoneName: String,
         price: { type: Number, min: 0, default: 0 },
         deliveryTime: String,
         freeShipping: { type: Boolean, default: false },
