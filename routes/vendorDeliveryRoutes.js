@@ -24,6 +24,25 @@ const ensureVendor = async (req, res, next) => {
   }
 };
 
+router.get('/public/:vendorId', async (req, res) => {
+  try {
+    const vendorId = req.params.vendorId;
+    if (!vendorId) {
+      return res.status(400).json({ message: 'Identifiant vendeur requis' });
+    }
+
+    const zones = await VendorDeliveryZone.find({
+      vendorId,
+      isActive: true,
+    }).sort({ country: 1, city: 1, zoneName: 1 });
+
+    return res.status(200).json({ success: true, data: zones });
+  } catch (error) {
+    console.error('[vendorDeliveryRoutes] public get zones error:', error);
+    return res.status(500).json({ message: 'Erreur récupération zones vendeur' });
+  }
+});
+
 router.use(verifyToken);
 router.use(ensureVendor);
 
