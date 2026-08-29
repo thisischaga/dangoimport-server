@@ -9,7 +9,7 @@ const router = express.Router();
 const LIST_FIELDS = [
   'name', 'salePrice', 'price', 'category', 'subcategory', 'images', 'image',
   'rating', 'totalReviews', 'shippingInfo', 'deliveryZones', 'isFeatured', 'isNewArrival', 'isPromo', 'vendorName', 'vendorId', 'isVendorCertified', 'stock',
-  'createdAt', 'isPublished', 'brand', 'shortDescription', 'totalSales', 'date',
+  'createdAt', 'isPublished', 'brand', 'shortDescription', 'totalSales', 'date', 'isBestSeller',
 ].join(' ');
 
 const CACHE_TTL = 5 * 60 * 1000;
@@ -40,6 +40,77 @@ function escapeRegex(value) {
 function setPublicCache(res, maxAge = 300) {
   res.set('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=60`);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// GET /sections — Renvoie toutes les sections en une seule requête
+// Meilleures ventes, Nouveautés, Promotions, Recommandés
+// ─────────────────────────────────────────────────────────────────
+router.get('/sections', async (req, res) => {
+  try {
+    const cacheKey = 'products:sections';
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      setPublicCache(res, 300);
+      return res.json(cached);
+    }
+
+    const BASE_FILTER = { isPublished: true, validationStatus: 'approved' };
+    const SECTION_LIMIT = 20;
+
+    const [bestsellers, newArrivals, promos, recommended] = await Promise.all([
+      // Meilleures ventes : isBestSeller flag OU tri par totalSales
+      Product.find({ ...BASE_FILTER, $or: [{ isBestSeller: true }, { totalSales: { $gt: 0 } }] })
+        .sort({ isBestSeller: -1, totalSales: -1 })
+        .limit(SECTION_LIMIT)
+        .select(LIST_FIELDS)
+        .lean(),
+
+      // Nouveautés : isNewArrival ou createdAt récent
+      Product.find({ ...BASE_FILTER })
+        .sort({ createdAt: -1 })
+        .limit(SECTION_LIMIT)
+        .select(LIST_FIELDS)
+        .lean(),
+
+      // Promotions : salePrice valide et < price
+      Product.find({
+        ...BASE_FILTER,
+        $or: [
+          { isPromo: true },
+          { $and: [{ salePrice: { $gt: 0 } }, { $expr: { $lt: ['$salePrice', '$price'] } }] },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .limit(SECTION_LIMIT)
+        .select(LIST_FIELDS)
+        .lean(),
+
+      // Recommandés : isFeatured ou top rating
+      Product.find({ ...BASE_FILTER, $or: [{ isFeatured: true }, { rating: { $gte: 4 } }] })
+        .sort({ isFeatured: -1, rating: -1 })
+        .limit(SECTION_LIMIT)
+        .select(LIST_FIELDS)
+        .lean(),
+    ]);
+
+    const payload = {
+      success: true,
+      data: {
+        bestsellers,
+        newArrivals,
+        promos,
+        recommended,
+      },
+    };
+
+    cache.set(cacheKey, payload, CACHE_TTL);
+    setPublicCache(res, 300);
+    res.json(payload);
+  } catch (error) {
+    console.error('[productRoutes.js] Erreur /sections :', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // GET - Catalogue paginé
 router.get('/', async (req, res) => {
@@ -202,7 +273,6 @@ router.get('/:id', async (req, res) => {
         setPublicCache(res, 120);
         return res.json(cached);
       }
-      // cached payload is not public-safe (might be draft/pending) — remove it and continue
       cache.del(cacheKey);
     }
 
@@ -215,13 +285,11 @@ router.get('/:id', async (req, res) => {
     const isApproved = String(product.validationStatus || '').toLowerCase() === 'approved';
     const isPublished = product.isPublished === true;
 
-    // Do not expose non-published or non-approved products publicly
     if (!isPublished || !isApproved) {
       return res.status(404).json({ success: false, message: 'Produit non trouvé' });
     }
 
     const payload = { success: true, data: product };
-    // cache only public-safe product details
     cache.set(cacheKey, payload, 2 * 60 * 1000);
     setPublicCache(res, 120);
     res.json(payload);
