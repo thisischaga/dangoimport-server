@@ -277,30 +277,10 @@ router.post('/', verifyToken, async (req, res) => {
 
 // GET - Mes commandes
 router.get('/my-orders', verifyToken, async (req, res) => {
-    try {
-        const { page = 1, limit = 10 } = req.query;
-        const skip = (page - 1) * limit;
-
-        const orders = await Order.find({ customerId: req.user.id })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(parseInt(limit));
-
-        const total = await Order.countDocuments({ customerId: req.user.id });
-
-        res.json({
-            success: true,
-            data: orders,
-            pagination: {
-                currentPage: parseInt(page),
-                totalPages: Math.ceil(total / limit),
-                totalItems: total
-            }
-        });
-    } catch (error) {
-      console.error("[orderRoutes.js] Erreur capturée :", error);
-        res.status(500).json({ success: false, message: error.message });
-    }
+    return res.status(403).json({
+        success: false,
+        message: "L'accès à l'historique des commandes via l'application est suspendu. Vos codes QR et détails de commande vous ont été envoyés par email."
+    });
 });
 
 // GET - Détails de la commande

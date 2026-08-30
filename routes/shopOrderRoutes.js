@@ -9,20 +9,10 @@ const router = express.Router();
 
 // GET - mes commandes (ShopOrder)
 router.get('/my-orders', verifyToken, async (req, res) => {
-  try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (page - 1) * limit;
-    const filter = { $or: [{ customerId: req.user.id }] };
-    if (req.user.userEmail) {
-      filter.$or.push({ customerEmail: new RegExp(`^${escapeRegExp(req.user.userEmail.trim())}$`, 'i') });
-    }
-    const orders = await ShopOrder.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)).populate('qrCodeIds');
-    const total = await ShopOrder.countDocuments(filter);
-    return res.json({ success: true, data: orders, pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / limit), totalItems: total } });
-  } catch (err) {
-    console.error('[shopOrderRoutes] my-orders error:', err);
-    return res.status(500).json({ success: false, message: err.message });
-  }
+  return res.status(403).json({
+    success: false,
+    message: "L'accès à l'historique des commandes via l'application est suspendu. Vos codes QR et détails de commande vous ont été envoyés par email."
+  });
 });
 
 // GET - details ShopOrder

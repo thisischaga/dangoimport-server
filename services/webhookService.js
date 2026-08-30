@@ -89,7 +89,15 @@ const handleWebhook = async ({ req, res }) => {
         await sendNotification({ recipient: vendorId, type: 'order', title: 'Nouvelle commande', message: `Une commande (${createdOrder.orderNumber}) a été payée.`, link: `/vendor/commandes/${createdOrder._id}` });
       }
 
-      await emailService.sendOrderConfirmedEmail({ customerEmail: createdOrder.customerEmail, customerName: createdOrder.customerName, orderNumber: createdOrder.orderNumber, total: createdOrder.total, qrCode: qrDocs[0]?.code });
+      await emailService.sendOrderConfirmedEmail({
+        customerEmail: createdOrder.customerEmail,
+        customerName: createdOrder.customerName,
+        orderNumber: createdOrder.orderNumber,
+        total: createdOrder.total,
+        qrCode: qrDocs[0]?.code,
+        items: createdOrder.items,
+        qrCodes: qrDocs,
+      });
       await webhookLog.save({ session });
       await session.commitTransaction();
       session.endSession();
