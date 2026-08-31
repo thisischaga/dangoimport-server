@@ -356,6 +356,72 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// POST /api/vendor/google — OAuth Google Vendeur
+router.post('/google', async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    if (!token) {
+      return res.status(400).json({ message: 'Jeton Google manquant.' });
+    }
+
+    const { verifyGoogleToken } = require('../utils/googleAuth');
+    const googleUser = await verifyGoogleToken(token);
+    const email = googleUser.userEmail.toLowerCase();
+
+    let user = await User.findOne({ googleId: googleUser.googleId });
+    if (!user) {
+      user = await User.findOne({ userEmail: email });
+    }
+
+    if (user) {
+      user.googleId = googleUser.googleId;
+      if (!user.authProviders.includes('google')) {
+        user.authProviders.push('google');
+      }
+      user.role = 'vendor';
+      user.isVendor = true;
+      if (!user.vendorName) {
+        user.vendorName = `${googleUser.userFirstname} ${googleUser.userSurname}`.trim() || 'Ma boutique';
+      }
+      user.isVerified = true;
+      user.updatedAt = new Date();
+      await user.save();
+    } else {
+      user = new User({
+        userFirstname: googleUser.userFirstname || 'Vendeur',
+        userSurname: googleUser.userSurname || '',
+        userEmail: email,
+        googleId: googleUser.googleId,
+        authProviders: ['google'],
+        profileImage: googleUser.profileImage || '',
+        isVerified: true,
+        role: 'vendor',
+        isVendor: true,
+        vendorName: `${googleUser.userFirstname || ''} ${googleUser.userSurname || ''}`.trim() || 'Ma boutique',
+      });
+      await user.save();
+    }
+
+    const store = await ensureVendorStore(user);
+    const jwtToken = signVendorToken(user);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Connexion Google vendeur réussie.',
+      token: jwtToken,
+      user: {
+        ...buildVendorPayload(user),
+        storeId: store ? store._id : null,
+        vendorName: store ? store.name : user.vendorName,
+        slug: store ? store.slug : '',
+      },
+    });
+  } catch (error) {
+    console.error('[vendorRoutes.js] google login:', error);
+    return res.status(500).json({ message: error.message || 'Erreur lors de la connexion Google vendeur.' });
+  }
+});
+
 // GET /api/vendor/store (Get current store settings)
 router.get('/store', verifyToken, getStore, async (req, res) => {
   try {
