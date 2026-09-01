@@ -7,6 +7,7 @@ const Store = require('../Models/Store');
 const Product = require('../Models/Product');
 const VendorProduct = require('../Models/VendorProduct');
 const VendorOrder = require('../Models/VendorOrder');
+const Review = require('../Models/Review');
 const QRCode = require('../Models/QRCode');
 const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
@@ -510,18 +511,69 @@ router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
     const lowStockCount = await Product.countDocuments({ vendorId, stock: { $lte: 5 }, isPublished: true });
 
     const stats = monthlyStats[0] || { ventes_mois: 0, ca_total: 0 };
+    const nb_commandes = stats.ventes_mois || 0;
+    const panier_moyen = nb_commandes > 0 ? Math.round(stats.ca_total / nb_commandes) : 0;
+
+    const totalOrdersAll = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
+    const deliveredOrders = statusCounts.delivered || 0;
+    const taux_livraison = totalOrdersAll > 0
+      ? Math.round((deliveredOrders / totalOrdersAll) * 100)
+      : 0;
+
+    const vendorUser = await User.findById(vendorId).select('balance').lean();
+    const balance = vendorUser?.balance ?? 0;
+
+    // Ventes par catégorie (mois en cours)
+    const soldByProduct = await VendorOrder.aggregate([
+      { $match: { storeId, createdAt: { $gte: startOfMonth } } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.productId',
+          revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
+        },
+      },
+    ]);
+
+    const productIds = soldByProduct.map((row) => row._id).filter(Boolean);
+    const productsMeta = productIds.length
+      ? await Product.find({ _id: { $in: productIds } }).select('category').lean()
+      : [];
+    const categoryByProductId = Object.fromEntries(
+      productsMeta.map((p) => [String(p._id), p.category || 'Autre'])
+    );
+
+    const categoryTotals = {};
+    soldByProduct.forEach((row) => {
+      const cat = categoryByProductId[String(row._id)] || 'Autre';
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + (row.revenue || 0);
+    });
+    const categoryRevenueSum = Object.values(categoryTotals).reduce((s, v) => s + v, 0);
+    const categories = categoryRevenueSum > 0
+      ? Object.entries(categoryTotals)
+        .map(([name, revenue]) => ({
+          name,
+          value: Math.round((revenue / categoryRevenueSum) * 100),
+        }))
+        .sort((a, b) => b.value - a.value)
+      : [];
 
     return res.status(200).json({
       success: true,
       data: {
         nb_produits,
         ventes_mois: stats.ventes_mois,
+        nb_commandes,
         ca_total: stats.ca_total,
+        panier_moyen,
+        taux_livraison,
+        balance,
         pendingOrders: statusCounts.pending || 0,
         paidOrders: statusCounts.paid || 0,
         shippedOrders: statusCounts.shipped || 0,
-        deliveredOrders: statusCounts.delivered || 0,
+        deliveredOrders,
         lowStockCount,
+        categories,
       },
     });
   } catch (error) {
@@ -533,14 +585,17 @@ router.get('/dashboard/stats', verifyToken, getStore, async (req, res) => {
 // GET /api/vendor/dashboard/graph
 router.get('/dashboard/graph', verifyToken, getStore, async (req, res) => {
   try {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const range = String(req.query.range || '7d');
+    const dayCount = range === '90d' ? 90 : range === '30d' ? 30 : 7;
+
+    const rangeStart = new Date();
+    rangeStart.setDate(rangeStart.getDate() - dayCount);
 
     const graphStats = await VendorOrder.aggregate([
       {
         $match: {
           storeId: req.storeId,
-          createdAt: { $gte: sevenDaysAgo },
+          createdAt: { $gte: rangeStart },
         },
       },
       {
@@ -553,19 +608,21 @@ router.get('/dashboard/graph', verifyToken, getStore, async (req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
-    // Pre-fill last 7 days array
     const graphData = [];
     const now = new Date();
-    for (let i = 6; i >= 0; i--) {
+    for (let i = dayCount - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(now.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      graphData.push({ date: dateStr, ventes: 0, ca: 0 });
+      const label = dayCount <= 7
+        ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' })
+        : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      graphData.push({ date: label, dateKey: dateStr, ventes: 0, ca: 0 });
     }
 
     // Merge aggregate results into prefilled array
     graphStats.forEach((item) => {
-      const day = graphData.find((d) => d.date === item._id);
+      const day = graphData.find((d) => d.dateKey === item._id);
       if (day) {
         day.ventes = item.ventes;
         day.ca = item.ca;
@@ -574,11 +631,45 @@ router.get('/dashboard/graph', verifyToken, getStore, async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: graphData,
+      data: graphData.map(({ date, ventes, ca }) => ({ date, ventes, ca })),
     });
   } catch (error) {
     console.error('[vendorRoutes.js] get dashboard graph:', error);
     return res.status(500).json({ message: 'Erreur serveur lors du chargement du graphique.' });
+  }
+});
+
+// GET /api/vendor/reviews — avis clients sur les produits du vendeur
+router.get('/reviews', verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const vendorId = req.vendorUser._id;
+    const products = await Product.find({ vendorId }).select('_id name').lean();
+    const productIds = products.map((p) => p._id);
+    const productNameById = Object.fromEntries(products.map((p) => [String(p._id), p.name]));
+
+    if (!productIds.length) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const reviews = await Review.find({ productId: { $in: productIds } })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    const data = reviews.map((review) => ({
+      id: review._id,
+      product: productNameById[String(review.productId)] || 'Produit',
+      client: review.userName || 'Client',
+      rating: review.rating,
+      comment: review.comment,
+      title: review.title,
+      createdAt: review.createdAt,
+    }));
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error('[vendorRoutes.js] get vendor reviews:', error);
+    return res.status(500).json({ message: 'Erreur serveur lors du chargement des avis.' });
   }
 });
 
