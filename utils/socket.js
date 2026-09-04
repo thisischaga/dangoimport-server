@@ -1,4 +1,7 @@
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+const Admin = require('../Models/Admin');
+const User = require('../Models/User');
 const Notification = require('../Models/Notification');
 
 let io;
@@ -39,6 +42,81 @@ const initSocket = (server) => {
   io.on('connection', (socket) => {
     // console.log(`[Socket] Nouveau client connecté: ${socket.id}`);
 
+    // Si le client fournit un token via handshake.auth.token, vérifier et auto-join
+    try {
+      const token = socket.handshake?.auth?.token;
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded.userId || decoded.id;
+
+        // Chercher dans Admin si rôle admin-like
+        if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
+          Admin.findById(userId).select('-adminPassword').then((admin) => {
+            if (admin) {
+              socket.user = { ...decoded, id: admin._id, role: admin.role || decoded.role };
+              socket.join(`user_${admin._id}`);
+              socket.join('admin');
+            }
+          }).catch(() => {});
+        } else {
+          // Chercher dans User
+          User.findById(userId).select('userFirstname userSurname userEmail userPhone role').then((user) => {
+            if (user) {
+              socket.user = { ...decoded, id: user._id, role: user.role || decoded.role || 'user' };
+              socket.join(`user_${user._id}`);
+              if (user.role === 'driver') {
+                socket.join(`driver_${user._id}`);
+              }
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch (err) {
+      // Si token invalide, on n'empêche pas la connexion mais on logue
+      // console.warn('[Socket] Token socket invalide ou expiré:', err?.message || err);
+    }
+
+    // Endpoint d'authentification post-connexion (fallback si token non fourni en handshake)
+    socket.on('authenticate', async (payload) => {
+      const token = (payload && payload.token) || null;
+      if (!token) {
+        socket.emit('unauthorized', { message: 'Aucun token fourni' });
+        if (process.env.SOCKET_STRICT_AUTH === 'true') return socket.disconnect(true);
+        return;
+      }
+
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded.userId || decoded.id;
+
+        if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
+          const admin = await Admin.findById(userId).select('-adminPassword');
+          if (admin) {
+            socket.user = { ...decoded, id: admin._id, role: admin.role || decoded.role };
+            socket.join(`user_${admin._id}`);
+            socket.join('admin');
+            socket.emit('authenticated', { id: admin._id, role: socket.user.role });
+            return;
+          }
+        }
+
+        const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone role');
+        if (user) {
+          socket.user = { ...decoded, id: user._id, role: user.role || decoded.role || 'user' };
+          socket.join(`user_${user._id}`);
+          if (user.role === 'driver') socket.join(`driver_${user._id}`);
+          socket.emit('authenticated', { id: user._id, role: socket.user.role });
+          return;
+        }
+
+        socket.emit('unauthorized', { message: 'Utilisateur introuvable' });
+        if (process.env.SOCKET_STRICT_AUTH === 'true') socket.disconnect(true);
+      } catch (error) {
+        socket.emit('unauthorized', { message: error?.message || 'Token invalide' });
+        if (process.env.SOCKET_STRICT_AUTH === 'true') socket.disconnect(true);
+      }
+    });
+
     // Rejoindre une salle spécifique
     socket.on('join', (room) => {
       socket.join(room);
@@ -48,6 +126,18 @@ const initSocket = (server) => {
     socket.on('join_user', (userId) => {
       if (!userId) return;
       socket.join(`user_${userId}`);
+    });
+
+    // Join driver-specific room
+    socket.on('join_driver', (driverId) => {
+      if (!driverId) return;
+      socket.join(`driver_${driverId}`);
+    });
+
+    // Join order-specific room
+    socket.on('join_order', (orderId) => {
+      if (!orderId) return;
+      socket.join(`order_${orderId}`);
     });
 
     socket.on('disconnect', () => {

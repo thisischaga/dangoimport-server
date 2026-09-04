@@ -60,10 +60,47 @@ const storeSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  delivery: {
+    mode: {
+      type: String,
+      enum: ['DANGOIMPORT', 'SELLER', 'HYBRID'],
+      default: 'DANGOIMPORT'
+    },
+    sellerDelivery: {
+      enabled: { type: Boolean, default: false },
+      radiusKm: { type: Number, default: 0 },
+      location: {
+        type: { type: String, enum: ['Point'], default: 'Point' },
+        coordinates: { type: [Number], default: [0, 0] }
+      }
+    },
+    dangoImportFallback: { type: Boolean, default: true }
+  },
+  location: {
+    type: { type: String, enum: ['Point'], default: 'Point' },
+    coordinates: { type: [Number], default: [0, 0] }
+  },
+  onboarding: {
+    profileCompleted: { type: Boolean, default: false },
+    storeCompleted: { type: Boolean, default: false },
+    deliveryCompleted: { type: Boolean, default: false },
+    paymentCompleted: { type: Boolean, default: false }
+  },
+  verification: {
+    status: {
+      type: String,
+      enum: ['PENDING', 'VERIFIED', 'UNVERIFIED', 'REJECTED'],
+      default: 'UNVERIFIED'
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
+
+// Indexes for geospatial queries
+storeSchema.index({ 'delivery.sellerDelivery.location': '2dsphere' });
+storeSchema.index({ 'location': '2dsphere' });
 
 module.exports = mongoose.model('Store', storeSchema);

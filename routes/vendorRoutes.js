@@ -436,26 +436,54 @@ router.get('/store', verifyToken, getStore, async (req, res) => {
 // PUT /api/vendor/store (Update store settings)
 router.put('/store', verifyToken, getStore, async (req, res) => {
   try {
-    const { name, description, whatsapp, fedaPayLink } = req.body;
-    if (!name) {
-      return res.status(400).json({ message: 'Le nom de la boutique est requis.' });
+    const { 
+      name, description, whatsapp, fedaPayLink, 
+      country, city, address, 
+      delivery, location, onboarding 
+    } = req.body;
+    
+    if (name) {
+      req.store.name = name.trim();
     }
 
-    const newVendorName = name.trim();
-    req.store.name = newVendorName;
-    req.store.description = description ? description.trim() : '';
-    req.store.whatsapp = whatsapp ? whatsapp.trim() : '';
-    req.store.fedaPayLink = fedaPayLink ? fedaPayLink.trim() : '';
+    if (description !== undefined) req.store.description = description.trim();
+    if (whatsapp !== undefined) req.store.whatsapp = whatsapp.trim();
+    if (fedaPayLink !== undefined) req.store.fedaPayLink = fedaPayLink.trim();
+    if (country !== undefined) req.store.country = country.trim();
+    if (city !== undefined) req.store.city = city.trim();
+    if (address !== undefined) req.store.address = address.trim();
+
+    if (delivery) {
+      if (delivery.mode) req.store.delivery.mode = delivery.mode;
+      if (delivery.sellerDelivery) {
+        if (delivery.sellerDelivery.enabled !== undefined) req.store.delivery.sellerDelivery.enabled = delivery.sellerDelivery.enabled;
+        if (delivery.sellerDelivery.radiusKm !== undefined) req.store.delivery.sellerDelivery.radiusKm = delivery.sellerDelivery.radiusKm;
+        if (delivery.sellerDelivery.location) req.store.delivery.sellerDelivery.location = delivery.sellerDelivery.location;
+      }
+      if (delivery.dangoImportFallback !== undefined) req.store.delivery.dangoImportFallback = delivery.dangoImportFallback;
+    }
+
+    if (location) {
+      req.store.location = location;
+    }
+
+    if (onboarding) {
+      if (onboarding.profileCompleted !== undefined) req.store.onboarding.profileCompleted = onboarding.profileCompleted;
+      if (onboarding.storeCompleted !== undefined) req.store.onboarding.storeCompleted = onboarding.storeCompleted;
+      if (onboarding.deliveryCompleted !== undefined) req.store.onboarding.deliveryCompleted = onboarding.deliveryCompleted;
+      if (onboarding.paymentCompleted !== undefined) req.store.onboarding.paymentCompleted = onboarding.paymentCompleted;
+    }
 
     await req.store.save();
 
     // Synchroniser le nom de vendeur sur l'utilisateur et tous ses produits
+
     const vendorId = req.vendorUser?._id || req.user?.userId || req.user?.id;
-    if (vendorId) {
-      await User.findByIdAndUpdate(vendorId, { vendorName: newVendorName });
+    if (vendorId && name) {
+      await User.findByIdAndUpdate(vendorId, { vendorName: req.store.name });
       await Product.updateMany(
         { vendorId },
-        { $set: { vendorName: newVendorName } }
+        { $set: { vendorName: req.store.name } }
       );
       const cache = require('../utils/cache');
       if (cache && cache.delPrefix) cache.delPrefix('products:');

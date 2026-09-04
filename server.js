@@ -1778,6 +1778,12 @@ const startServer = async () => {
 
     // Routes QR code
     app.use('/api/qr', qrRoutes);
+    // Delivery routes for drivers (DPay)
+    const deliveryRoutes = require('./routes/deliveryRoutes');
+    app.use('/api/deliveries', deliveryRoutes);
+    // Driver-specific endpoints (profile, status, location)
+    const driverRoutes = require('./routes/driverRoutes');
+    app.use('/api/driver', driverRoutes);
 
     // Gestion des erreurs 404
     app.use((req, res) => {

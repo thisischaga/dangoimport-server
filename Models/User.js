@@ -91,9 +91,26 @@ const userSchema = new mongoose.Schema({
     // Rôle et vendeur
     role: {
         type: String,
-        enum: ['customer', 'vendor', 'admin'],
+        enum: ['customer', 'vendor', 'admin', 'driver'],
         default: 'customer',
         index: true
+    },
+
+    // Driver runtime state (if role === 'driver')
+    driverStatus: {
+        type: String,
+        enum: ['available', 'unavailable', 'on_delivery'],
+        default: 'unavailable',
+        index: true
+    },
+
+    currentLocation: {
+        latitude: Number,
+        longitude: Number,
+        accuracy: Number,
+        heading: Number,
+        speed: Number,
+        updatedAt: Date,
     },
 
     isVendor: {
