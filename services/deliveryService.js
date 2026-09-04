@@ -11,6 +11,65 @@ const allowedTransitions = {
   ARRIVED: ['DELIVERED','FAILED'],
 };
 
+// Determine delivery provider based on store settings and client location
+// clientLocation: { lat, lng } or [lng, lat]
+function toLngLat(coords) {
+  if (!coords) return null;
+  if (Array.isArray(coords) && coords.length >= 2) return { lng: Number(coords[0]), lat: Number(coords[1]) };
+  if (coords.lng !== undefined && coords.lat !== undefined) return { lng: Number(coords.lng), lat: Number(coords.lat) };
+  return null;
+}
+
+function haversineKm(a, b) {
+  const R = 6371; // km
+  const toRad = (v) => (v * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+
+  const sinDlat = Math.sin(dLat / 2) * Math.sin(dLat / 2);
+  const sinDlon = Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(sinDlat + Math.cos(lat1) * Math.cos(lat2) * sinDlon), Math.sqrt(1 - (sinDlat + Math.cos(lat1) * Math.cos(lat2) * sinDlon)));
+  return R * c;
+}
+
+async function determineDeliveryProvider({ store, clientLocation }) {
+  if (!store) return { provider: 'DANGOIMPORT', reason: 'no_store' };
+
+  const mode = store.delivery?.mode || 'DANGOIMPORT';
+  const sellerDelivery = store.delivery?.sellerDelivery || {};
+
+  // Normalize client location
+  const client = toLngLat(clientLocation);
+  const sellerLoc = toLngLat((sellerDelivery.location && sellerDelivery.location.coordinates) || (store.location && store.location.coordinates));
+
+  if (mode === 'SELLER') {
+    // If seller mode, prefer seller if within radius and enabled
+    if (sellerDelivery.enabled && sellerLoc && client) {
+      const dist = haversineKm(sellerLoc, client);
+      if (dist <= (Number(sellerDelivery.radiusKm) || 0)) return { provider: 'SELLER', reason: 'within_radius', distanceKm: dist };
+      // out of radius -> fallback depends on dangoImportFallback
+      if (store.delivery?.dangoImportFallback) return { provider: 'DANGOIMPORT', reason: 'out_of_radius_fallback', distanceKm: dist };
+      return { provider: 'SELLER', reason: 'out_of_radius_no_fallback', distanceKm: dist };
+    }
+    // no seller location configured
+    return { provider: 'DANGOIMPORT', reason: 'seller_not_configured' };
+  }
+
+  if (mode === 'HYBRID') {
+    if (sellerDelivery.enabled && sellerLoc && client) {
+      const dist = haversineKm(sellerLoc, client);
+      if (dist <= (Number(sellerDelivery.radiusKm) || 0)) return { provider: 'SELLER', reason: 'hybrid_within_radius', distanceKm: dist };
+      return { provider: 'DANGOIMPORT', reason: 'hybrid_outside_radius', distanceKm: dist };
+    }
+    return { provider: 'DANGOIMPORT', reason: 'hybrid_no_seller' };
+  }
+
+  // default DANGOIMPORT
+  return { provider: 'DANGOIMPORT', reason: 'default' };
+}
+
 async function createDelivery(payload) {
   const d = new Delivery(payload);
   await d.save();
@@ -68,4 +127,5 @@ async function changeStatus(deliveryId, newStatus, actorId, actorRole, opts = {}
   return delivery;
 }
 
-module.exports = { createDelivery, changeStatus, pushEvent };
+module.exports = { createDelivery, changeStatus, pushEvent, determineDeliveryProvider };
+

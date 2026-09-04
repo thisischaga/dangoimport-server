@@ -1419,6 +1419,10 @@ const startServer = async () => {
     const storeRoutes = require('./routes/storeRoutes');
     app.use('/api/stores', storeRoutes);
 
+    // Onboarding Routes
+    const onboardingRoutes = require('./routes/onboardingRoutes');
+    app.use('/api/onboarding', onboardingRoutes);
+
     // Category Routes
     const categoryRoutes = require('./routes/categoryRoutes');
     app.use('/api/categories', categoryRoutes);

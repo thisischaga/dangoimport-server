@@ -120,6 +120,15 @@ const orderSchema = new mongoose.Schema({
         index: true
     },
 
+    // Décision fournisseur de livraison (calculée côté serveur)
+    deliveryProvider: {
+        type: String,
+        enum: ['DANGOIMPORT', 'SELLER', 'HYBRID'],
+        default: 'DANGOIMPORT'
+    },
+    deliveryProviderReason: String,
+    deliveryDistanceKm: Number,
+
     // Paiement
     paymentMethod: {
         type: String,
