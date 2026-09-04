@@ -120,13 +120,56 @@ async function saveDeliveryConfig(req, res) {
     const store = await Store.findOne({ userId });
     if (!store) return res.status(404).json({ success: false, message: 'Boutique introuvable.' });
 
+    // ensure delivery object exists
+    store.delivery = store.delivery || {};
+
     if (mode) store.delivery.mode = mode;
+
     if (sellerDelivery) {
       store.delivery.sellerDelivery = store.delivery.sellerDelivery || {};
-      store.delivery.sellerDelivery.enabled = !!sellerDelivery.enabled;
-      store.delivery.sellerDelivery.radiusKm = Number(sellerDelivery.radiusKm) || 0;
-      const geo = sanitizeCoords(sellerDelivery.location || sellerDelivery.coords || sellerDelivery.coordinates);
-      if (geo) store.delivery.sellerDelivery.location = { type: 'Point', coordinates: geo };
+
+      // enabled
+      const enabled = !!sellerDelivery.enabled;
+      store.delivery.sellerDelivery.enabled = enabled;
+
+      // radius validation
+      const radiusKm = Number(sellerDelivery.radiusKm);
+      if (sellerDelivery.radiusKm !== undefined) {
+        if (!Number.isFinite(radiusKm) || radiusKm < 0) {
+          return res.status(400).json({ success: false, message: 'radiusKm invalide.' });
+        }
+        // impose une limite raisonnable pour éviter abus (200 km)
+        if (radiusKm > 200) return res.status(400).json({ success: false, message: 'radiusKm trop grand (max 200 km).' });
+        store.delivery.sellerDelivery.radiusKm = radiusKm;
+      } else {
+        store.delivery.sellerDelivery.radiusKm = store.delivery.sellerDelivery.radiusKm || 0;
+      }
+
+      // location validation and sanitization
+      const rawCoords = sellerDelivery.location || sellerDelivery.coords || sellerDelivery.coordinates || sellerDelivery.latlng;
+      const geo = sanitizeCoords(rawCoords);
+      if (enabled) {
+        if (!geo) return res.status(400).json({ success: false, message: 'location requise lorsque sellerDelivery.enabled = true.' });
+        // validate ranges: [lng, lat]
+        const [lng, lat] = geo;
+        if (Number.isNaN(lat) || Number.isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          return res.status(400).json({ success: false, message: 'coordonnées géographiques invalides.' });
+        }
+        store.delivery.sellerDelivery.location = { type: 'Point', coordinates: geo };
+      } else {
+        // if provided but disabled, accept sanitized coords (optional)
+        if (geo) {
+          const [lng, lat] = geo;
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            store.delivery.sellerDelivery.location = { type: 'Point', coordinates: geo };
+          }
+        }
+      }
+
+      // If mode is SELLER but sellerDelivery disabled -> invalid
+      if (store.delivery.mode === 'SELLER' && !store.delivery.sellerDelivery.enabled) {
+        return res.status(400).json({ success: false, message: 'mode SELLER nécessite sellerDelivery.enabled = true.' });
+      }
     }
 
     store.onboarding = store.onboarding || {};
