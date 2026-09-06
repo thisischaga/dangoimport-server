@@ -219,6 +219,33 @@ const emailService = {
       console.warn('⚠️ [Resend Email] Order delivered email skipped or failed:', err.message);
     }
   },
+
+  // 4. Email de vérification d'email (lien)
+  sendVerificationEmail: async ({ to, verifyUrl, firstName }) => {
+    try {
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border-radius: 12px; background: #fff; color: #0f172a;">
+          <div style="text-align: center; margin-bottom: 18px;">
+            <h1 style="color: #FF6B00; margin: 0;">Vérification de votre adresse email</h1>
+            <p style="color: #64748b; margin-top: 6px;">Bonjour ${firstName || ''}, confirmez votre adresse email pour sécuriser votre compte.</p>
+          </div>
+          <div style="text-align: center; margin: 22px 0;">
+            <a href="${verifyUrl}" style="background: #ff6b00; color: #ffffff; padding: 12px 22px; font-weight: 700; border-radius: 8px; text-decoration: none; display: inline-block;">Vérifier mon email</a>
+          </div>
+          <p style="color: #94a3b8; font-size: 13px;">Si vous n'avez pas demandé cette vérification, ignorez simplement cet email.</p>
+        </div>
+      `;
+
+      await resend.emails.send({
+        from: 'Dango Import <no-reply@dangoimport.com>',
+        to,
+        subject: 'Vérifiez votre adresse email — Dango Import',
+        html,
+      });
+    } catch (err) {
+      console.warn('⚠️ [Resend Email] Verification email skipped or failed:', err?.message || err);
+    }
+  },
 };
 
 module.exports = emailService;

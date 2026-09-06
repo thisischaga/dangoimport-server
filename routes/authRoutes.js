@@ -8,6 +8,8 @@ const {
     sendSignupOTP,
     googleLogin
 } = require('../Controllers/usersControllers');
+const verifyToken = require('../Middlewares/verifyTokens');
+const { sendVerificationLink, verifyEmail } = require('../Controllers/usersControllers');
 
 
 // Connexion classique
@@ -18,6 +20,12 @@ router.post('/signup', signup);
 
 // Vérification email
 router.post('/send-otp', sendSignupOTP);
+
+// Send verification link (authenticated preferred)
+router.post('/send-verification-link', verifyToken, sendVerificationLink);
+
+// Verify token via link
+router.get('/verify-email', verifyEmail);
 
 // Connexion Google
 router.get('/google', googleLogin);

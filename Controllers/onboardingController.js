@@ -4,9 +4,14 @@ const User = require('../Models/User');
 
 const sanitizeCoords = (coords) => {
   if (!coords) return null;
-  // accept { lat, lng } or [lng, lat]
+  // accept [lng, lat], { lat, lng }, or GeoJSON-like { type: 'Point', coordinates: [lng, lat] }
   if (Array.isArray(coords) && coords.length >= 2) return [Number(coords[0]), Number(coords[1])];
-  if (typeof coords === 'object' && coords.lat !== undefined && coords.lng !== undefined) return [Number(coords.lng), Number(coords.lat)];
+  if (typeof coords === 'object') {
+    if (coords.lat !== undefined && coords.lng !== undefined) return [Number(coords.lng), Number(coords.lat)];
+    if (Array.isArray(coords.coordinates) && coords.coordinates.length >= 2) {
+      return [Number(coords.coordinates[0]), Number(coords.coordinates[1])];
+    }
+  }
   return null;
 };
 

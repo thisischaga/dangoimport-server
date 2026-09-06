@@ -92,6 +92,12 @@ const storeSchema = new mongoose.Schema({
       enum: ['PENDING', 'VERIFIED', 'UNVERIFIED', 'REJECTED'],
       default: 'UNVERIFIED'
     }
+    ,
+    documents: [{
+      url: { type: String },
+      type: { type: String },
+      uploadedAt: { type: Date, default: Date.now }
+    }]
   },
   createdAt: {
     type: Date,

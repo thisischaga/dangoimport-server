@@ -53,8 +53,9 @@ const conversationRoutes = require('./routes/conversationRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const slugify = require('slugify');
-const fedapayRouter = require('./routes/fedapayRoutes');
-const fedapayWebhook = fedapayRouter.handleWebhook;
+const _fedapayMod = require('./routes/fedapayRoutes');
+const fedapayRouter = _fedapayMod.router || _fedapayMod;
+const fedapayWebhook = _fedapayMod.handleWebhook || (fedapayRouter && fedapayRouter.handleWebhook) || null;
 
 const app = express();
 app.set('trust proxy', 1);

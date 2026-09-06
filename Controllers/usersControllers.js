@@ -34,8 +34,7 @@ const login = async (req, res) => {
             return res.status(401).json({ message: "Utilisateur non trouvé !" });
         }
 
-        // Vérifier si le compte est vérifié (si on décide d'utiliser isVerified)
-        if (!user.isVerified) return res.status(403).json({ message: "Veuillez vérifier votre compte avant de vous connecter." });
+        // NOTE: Do not block login for unverified users — show banner instead.
 
         const isMatch = await bcrypt.compare(userPassword, user.userPassword);
         if (!isMatch) {
@@ -65,6 +64,81 @@ const login = async (req, res) => {
     } catch (error) {
         res.status(500).json({ message: 'Erreur interne du serveur' });
         console.log('Erreur', error);
+    }
+};
+
+const crypto = require('crypto');
+const emailService = require('../utils/emailService');
+
+/**
+ * POST /api/auth/send-verification-link
+ * If authenticated (verifyToken), use req.userId, otherwise accept { email } in body.
+ */
+const sendVerificationLink = async (req, res) => {
+    try {
+        const User = require('../Models/User');
+        let user;
+        if (req.user && (req.user.userId || req.user.id)) {
+            user = await User.findById(req.user.userId || req.user.id);
+        } else {
+            const { email } = req.body || {};
+            if (!email) return res.status(400).json({ message: 'Email requis' });
+            user = await User.findOne({ userEmail: String(email).toLowerCase() });
+        }
+
+        if (!user) return res.status(404).json({ message: 'Utilisateur introuvable.' });
+
+        // Generate token and expiry
+        const token = crypto.randomBytes(24).toString('hex');
+        user.emailVerificationToken = token;
+        user.emailVerificationTokenExpires = Date.now() + 24 * 3600 * 1000; // 24h
+        await user.save();
+
+        // Build verification URL that points to backend verify endpoint
+        const backendBase = process.env.BACKEND_URL || (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null) || `http://localhost:${process.env.PORT || 8000}`;
+        const verifyUrl = `${backendBase.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+
+        // Send email
+        await emailService.sendVerificationEmail({ to: user.userEmail, verifyUrl, firstName: user.userFirstname });
+
+        return res.status(200).json({ success: true, message: 'Email de vérification envoyé.' });
+    } catch (error) {
+        console.error('sendVerificationLink error:', error);
+        return res.status(500).json({ message: 'Erreur lors de l envoi du lien de vérification.' });
+    }
+};
+
+/**
+ * GET /api/auth/verify-email?token=...
+ * Verifies token and activates user
+ */
+const verifyEmail = async (req, res) => {
+    try {
+        const { token } = req.query || {};
+        if (!token) return res.status(400).json({ message: 'Token requis' });
+
+        const User = require('../Models/User');
+        const user = await User.findOne({ emailVerificationToken: String(token) });
+        if (!user) return res.status(400).json({ message: 'Token invalide ou expiré.' });
+
+        if (user.emailVerificationTokenExpires && user.emailVerificationTokenExpires < Date.now()) {
+            user.emailVerificationToken = undefined;
+            user.emailVerificationTokenExpires = undefined;
+            await user.save();
+            return res.status(400).json({ message: 'Token expiré.' });
+        }
+
+        user.isVerified = true;
+        user.emailVerificationToken = undefined;
+        user.emailVerificationTokenExpires = undefined;
+        await user.save();
+
+        // Redirect to frontend success page if configured
+        const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
+        return res.redirect(`${frontend.replace(/\/$/, '')}/verification-success?verified=1`);
+    } catch (error) {
+        console.error('verifyEmail error:', error);
+        return res.status(500).json({ message: 'Erreur lors de la vérification du token.' });
     }
 };
 
@@ -559,5 +633,7 @@ module.exports = {
     sendSignupOTP,
     googleLogin,
     googleCallback,
-    getCurrentUser
+    getCurrentUser,
+    sendVerificationLink,
+    verifyEmail
 };

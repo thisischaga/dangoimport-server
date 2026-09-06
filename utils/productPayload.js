@@ -37,7 +37,7 @@ const normalizeDeliveryZones = (zones) => {
           const locality = String(quartier?.name ?? quartier?.locality ?? quartier?.city ?? '').trim();
           const price = toNumber(quartier?.price ?? zone?.price, Boolean(zone?.freeShipping || quartier?.freeShipping) ? 0 : 0) ?? 0;
           const freeShipping = Boolean(zone?.freeShipping || quartier?.freeShipping || price === 0);
-          const zoneName = String(quartier?.zoneName ?? locality || region || country || 'Zone').trim();
+          const zoneName = String((quartier?.zoneName ?? locality) || region || country || 'Zone').trim();
           const deliveryTime = String(quartier?.deliveryTime ?? zone?.deliveryTime ?? zone?.estimatedDelivery ?? fallbackDeliveryTime).trim() || fallbackDeliveryTime;
 
           return {
@@ -56,7 +56,7 @@ const normalizeDeliveryZones = (zones) => {
 
     const locality = String(zone?.locality ?? zone?.city ?? '').trim();
     const area = String(zone?.area ?? region).trim();
-    const zoneName = String(zone?.zoneName ?? locality || area || country || 'Zone').trim();
+    const zoneName = String((zone?.zoneName ?? locality) || area || country || 'Zone').trim();
     const price = toNumber(zone?.price, Boolean(zone?.freeShipping) ? 0 : 0) ?? 0;
     const deliveryTime = String(zone?.deliveryTime ?? zone?.estimatedDelivery ?? fallbackDeliveryTime).trim() || fallbackDeliveryTime;
     const freeShipping = Boolean(zone?.freeShipping || price === 0);

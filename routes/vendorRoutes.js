@@ -28,6 +28,7 @@ const buildVendorPayload = (user) => ({
   userPhone: user.userPhone || '',
   role: user.role,
   isVendor: true,
+  isVerified: Boolean(user.isVerified),
   vendorName: user.vendorName || `${user.userFirstname || ''} ${user.userSurname || ''}`.trim(),
 });
 
@@ -57,6 +58,16 @@ const verifyVendor = async (req, res, next) => {
   } catch (error) {
     return res.status(500).json({ message: 'Erreur de vérification vendeur.' });
   }
+};
+
+const requireVerifiedVendor = (req, res, next) => {
+  if (!req.vendorUser || req.vendorUser.isVerified === false) {
+    return res.status(403).json({
+      success: false,
+      message: 'Veuillez vérifier votre email avant de publier ou modifier des produits.'
+    });
+  }
+  next();
 };
 
 async function ensureVendorStore(user) {
@@ -220,7 +231,7 @@ router.post('/verify-otp', async (req, res) => {
       role: 'vendor',
       isVendor: true,
       vendorName: storeName,
-      isVerified: true
+      isVerified: false
     });
 
     await newUser.save();
@@ -282,7 +293,7 @@ router.post('/register', async (req, res) => {
       role: 'vendor',
       isVendor: true,
       vendorName,
-      isVerified: true,
+      isVerified: false,
     });
 
     await newUser.save();
@@ -300,13 +311,14 @@ router.post('/register', async (req, res) => {
 
     const token = signVendorToken(newUser);
     return res.status(201).json({
-      message: 'Compte vendeur et boutique créés avec succès.',
+      message: 'Compte vendeur et boutique créés avec succès. Vérifiez votre email pour activer votre compte.',
       token,
       user: {
         ...buildVendorPayload(newUser),
         storeId: newStore._id,
         vendorName: newStore.name,
         slug: newStore.slug,
+        isVerified: false,
       },
     });
   } catch (error) {
@@ -349,6 +361,7 @@ router.post('/login', async (req, res) => {
         storeId: store ? store._id : null,
         vendorName: store ? store.name : user.vendorName,
         slug: store ? store.slug : '',
+        isVerified: Boolean(user.isVerified),
       },
     });
   } catch (error) {
@@ -430,6 +443,41 @@ router.get('/store', verifyToken, getStore, async (req, res) => {
   } catch (error) {
     console.error('[vendorRoutes.js] get store settings:', error);
     return res.status(500).json({ message: 'Erreur serveur lors de la récupération des paramètres de la boutique.' });
+  }
+});
+
+// GET /api/vendor/verification - get current verification status
+router.get('/verification', verifyToken, getStore, async (req, res) => {
+  try {
+    const verification = (req.store && req.store.verification) || { status: 'UNVERIFIED', documents: [] };
+    return res.status(200).json({ success: true, data: verification });
+  } catch (error) {
+    console.error('[vendorRoutes.js] get verification:', error);
+    return res.status(500).json({ message: 'Erreur lors de la récupération du statut de vérification.' });
+  }
+});
+
+// POST /api/vendor/verification - submit verification documents (array of urls)
+router.post('/verification', verifyToken, getStore, async (req, res) => {
+  try {
+    const { documents } = req.body;
+    if (!Array.isArray(documents) || documents.length === 0) {
+      return res.status(400).json({ success: false, message: 'Aucun document fourni.' });
+    }
+
+    // basic validation of urls
+    const docs = documents.map((d) => ({ url: String(d || ''), type: 'ID', uploadedAt: new Date() })).filter(d => d.url);
+    if (!docs.length) return res.status(400).json({ success: false, message: 'Documents invalides.' });
+
+    req.store.verification = req.store.verification || {};
+    req.store.verification.status = 'PENDING';
+    req.store.verification.documents = docs;
+    await req.store.save();
+
+    return res.status(200).json({ success: true, message: 'Documents soumis, en attente de validation.', data: req.store.verification });
+  } catch (error) {
+    console.error('[vendorRoutes.js] post verification:', error);
+    return res.status(500).json({ message: 'Erreur lors de la soumission des documents de vérification.' });
   }
 });
 
@@ -713,7 +761,7 @@ router.get('/products', verifyToken, verifyVendor, async (req, res) => {
 });
 
 // POST /api/vendor/products — publier un produit sur la marketplace
-router.post('/products', verifyToken, verifyVendor, async (req, res) => {
+router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async (req, res) => {
   try {
     const { name, description, price, stock, category, images, image, imageBase64, country } = req.body;
 
@@ -785,7 +833,7 @@ router.post('/products', verifyToken, verifyVendor, async (req, res) => {
 });
 
 // PUT /api/vendor/products/:id — Ré-édition et resoumission par le vendeur
-router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
+router.put('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor, async (req, res) => {
   try {
     const existing = await Product.findOne({ _id: req.params.id, vendorId: req.vendorUser._id });
     if (!existing) {
@@ -831,7 +879,7 @@ router.put('/products/:id', verifyToken, verifyVendor, async (req, res) => {
 });
 
 // DELETE /api/vendor/products/:id
-router.delete('/products/:id', verifyToken, verifyVendor, async (req, res) => {
+router.delete('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor, async (req, res) => {
   try {
     const productId = req.params.id;
     const vendorId = req.vendorUser?._id;

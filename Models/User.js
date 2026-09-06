@@ -86,6 +86,7 @@ const userSchema = new mongoose.Schema({
     },
 
     emailVerificationToken: String,
+    emailVerificationTokenExpires: Date,
     phoneVerificationToken: String,
 
     // Rôle et vendeur
