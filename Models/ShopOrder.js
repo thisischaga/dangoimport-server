@@ -39,7 +39,6 @@ const orderSchema = new mongoose.Schema({
     type: String,
     unique: true,
     required: true,
-    index: true,
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -130,7 +129,6 @@ const orderSchema = new mongoose.Schema({
 
 orderSchema.index({ customerId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, paymentStatus: 1, createdAt: -1 });
-orderSchema.index({ orderNumber: 1 });
 
 orderSchema.pre('save', function (next) {
   this.updatedAt = new Date();

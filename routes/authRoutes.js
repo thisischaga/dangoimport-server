@@ -9,11 +9,14 @@ const {
     googleLogin
 } = require('../Controllers/usersControllers');
 const verifyToken = require('../Middlewares/verifyTokens');
-const { sendVerificationLink, verifyEmail } = require('../Controllers/usersControllers');
+const { sendVerificationLink, verifyEmail, getCurrentUser } = require('../Controllers/usersControllers');
 
 
 // Connexion classique
 router.post('/login', login);
+
+// Profil utilisateur courant
+router.get('/me', verifyToken, getCurrentUser);
 
 // Inscription classique
 router.post('/signup', signup);

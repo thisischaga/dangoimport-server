@@ -102,7 +102,6 @@ const promotionSchema = new mongoose.Schema({
   },
 });
 
-promotionSchema.index({ code: 1 });
 promotionSchema.index({ status: 1 });
 promotionSchema.index({ createdBy: 1 });
 

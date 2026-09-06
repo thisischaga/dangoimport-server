@@ -96,7 +96,9 @@ const sendVerificationLink = async (req, res) => {
 
         // Build verification URL that points to backend verify endpoint
         const backendBase = process.env.BACKEND_URL || (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null) || `http://localhost:${process.env.PORT || 8000}`;
-        const verifyUrl = `${backendBase.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+        const clientRedirect = req.body?.redirectUrl || req.headers?.origin || '';
+        const redirectParam = clientRedirect ? `&redirect=${encodeURIComponent(clientRedirect)}` : '';
+        const verifyUrl = `${backendBase.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}${redirectParam}`;
 
         // Send email
         await emailService.sendVerificationEmail({ to: user.userEmail, verifyUrl, firstName: user.userFirstname });
@@ -114,18 +116,25 @@ const sendVerificationLink = async (req, res) => {
  */
 const verifyEmail = async (req, res) => {
     try {
-        const { token } = req.query || {};
-        if (!token) return res.status(400).json({ message: 'Token requis' });
+        const { token, redirect } = req.query || {};
+        let targetFrontend = redirect || process.env.FRONTEND_URL || 'http://localhost:5173';
+        targetFrontend = targetFrontend.replace(/\/$/, '');
+
+        if (!token) {
+            return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token requis')}`);
+        }
 
         const User = require('../Models/User');
         const user = await User.findOne({ emailVerificationToken: String(token) });
-        if (!user) return res.status(400).json({ message: 'Token invalide ou expiré.' });
+        if (!user) {
+            return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token invalide ou introuvable')}`);
+        }
 
         if (user.emailVerificationTokenExpires && user.emailVerificationTokenExpires < Date.now()) {
             user.emailVerificationToken = undefined;
             user.emailVerificationTokenExpires = undefined;
             await user.save();
-            return res.status(400).json({ message: 'Token expiré.' });
+            return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token expiré. Veuillez demander un nouveau lien.')}`);
         }
 
         user.isVerified = true;
@@ -133,12 +142,11 @@ const verifyEmail = async (req, res) => {
         user.emailVerificationTokenExpires = undefined;
         await user.save();
 
-        // Redirect to frontend success page if configured
-        const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
-        return res.redirect(`${frontend.replace(/\/$/, '')}/verification-success?verified=1`);
+        return res.redirect(`${targetFrontend}/verification-success?verified=1`);
     } catch (error) {
         console.error('verifyEmail error:', error);
-        return res.status(500).json({ message: 'Erreur lors de la vérification du token.' });
+        const targetFrontend = (req.query?.redirect || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+        return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Erreur serveur lors de la vérification.')}`);
     }
 };
 
@@ -551,67 +559,33 @@ const googleCallback = async (req, res) => {
 };
 
 const getCurrentUser = async (req, res) => {
-
     try {
-
-        const user =
-            await User.findById(
-                req.userId
-            );
-
+        const userId = req.userId || req.user?.userId || req.user?.id;
+        const user = await User.findById(userId);
 
         if (!user) {
-
             return res.status(404).json({
-                message:
-                    'Utilisateur non trouvé'
+                message: 'Utilisateur non trouvé'
             });
         }
 
-
         return res.status(200).json({
-
             user: {
-
                 id: user._id,
-
                 userId: user._id,
-
-                userFirstname:
-                    user.userFirstname,
-
-                userSurname:
-                    user.userSurname,
-
-                userEmail:
-                    user.userEmail,
-
-                userPhone:
-                    user.userPhone || '',
-
-                profileImage:
-                    user.profileImage || '',
-
-                role:
-                    user.role || 'customer',
-
-                isVendor:
-                    user.isVendor ||
-                    user.role === 'vendor',
-
-                vendorName:
-                    user.vendorName || '',
-
-                balance:
-                    user.balance || 0,
-
-                bankDetails:
-                    user.bankDetails || {}
-
+                userFirstname: user.userFirstname,
+                userSurname: user.userSurname,
+                userEmail: user.userEmail,
+                userPhone: user.userPhone || '',
+                profileImage: user.profileImage || '',
+                role: user.role || 'customer',
+                isVendor: user.isVendor || user.role === 'vendor',
+                isVerified: Boolean(user.isVerified),
+                vendorName: user.vendorName || '',
+                balance: user.balance || 0,
+                bankDetails: user.bankDetails || {}
             }
-
         });
-
     } catch (error) {
 
         console.error(
