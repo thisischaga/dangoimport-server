@@ -54,6 +54,7 @@ const login = async (req, res) => {
                 userPhone: user.userPhone || '',
                 role: user.role || 'customer',
                 isVendor: user.isVendor || (user.role === 'vendor'),
+                isVerified: Boolean(user.isVerified),
                 vendorName: user.vendorName || '',
                 balance: user.balance || 0,
                 bankDetails: user.bankDetails || {}
@@ -110,10 +111,6 @@ const sendVerificationLink = async (req, res) => {
     }
 };
 
-/**
- * GET /api/auth/verify-email?token=...
- * Verifies token and activates user
- */
 const verifyEmail = async (req, res) => {
     try {
         const { token, redirect } = req.query || {};
