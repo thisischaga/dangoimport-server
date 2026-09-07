@@ -25,8 +25,9 @@ const login = async (req, res) => {
     const { userEmail, userPhone, phone, userPassword, driverCode, userIdentifier } = req.body || {};
     const rawIdentifier = (userPhone || phone || userEmail || driverCode || userIdentifier || '').toString().trim();
     const identifier = rawIdentifier.replace(/\s+/g, '');
+    const cleanPassword = typeof userPassword === 'string' ? userPassword.trim() : userPassword;
 
-    if (!identifier || !userPassword) {
+    if (!identifier || !cleanPassword || !String(cleanPassword).trim()) {
         return res.status(400).json({ message: "Veuillez fournir un numéro et un mot de passe." });
     }
 

@@ -172,7 +172,15 @@ router.get('/drivers', verifyToken, adminOnly, async (req, res) => {
 
 router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
     try {
-        const drivers = await Driver.find({}).populate('userId', 'userFirstname userSurname userEmail userPhone role').lean();
+        const { driverId } = req.query;
+
+        const filter = driverId ? { _id: driverId } : {};
+        const drivers = await Driver.find(filter).populate('userId', 'userFirstname userSurname userEmail userPhone role').lean();
+
+        if (driverId && drivers.length === 0) {
+            return res.status(404).json({ success: false, message: 'Livreur introuvable.' });
+        }
+
         const rows = drivers.map((driver) => ({
             driverId: String(driver._id),
             userId: driver.userId ? String(driver.userId._id) : '',
@@ -197,8 +205,10 @@ router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
             return `"${escaped}"`;
         }).join(','))).join('\n');
 
+        const fileName = driverId ? `driver-${String(driverId).slice(0, 12)}-export.csv` : 'drivers-export.csv';
+
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', 'attachment; filename="drivers-export.csv"');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
         return res.send(csv);
     } catch (error) {
         console.error('[adminRoutes] GET /drivers/export error:', error);
