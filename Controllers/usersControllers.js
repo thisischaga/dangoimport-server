@@ -75,13 +75,39 @@ const login = async (req, res) => {
             return res.status(401).json({ message: "Utilisateur non trouvé !" });
         }
 
-        const isMatch = await bcrypt.compare(String(cleanPassword), user.userPassword);
+        const driver = await Driver.findOne({ userId: user._id }).lean();
+        const storedUserPassword = typeof user.userPassword === 'string' ? user.userPassword : '';
+        const storedDriverPassword = typeof driver?.driverPassword === 'string' ? driver.driverPassword : '';
+
+        let isMatch = false;
+
+        try {
+            if (storedUserPassword) {
+                isMatch = await bcrypt.compare(String(cleanPassword), storedUserPassword);
+            }
+        } catch (error) {
+            isMatch = false;
+        }
+
+        if (!isMatch && storedUserPassword && storedUserPassword === String(cleanPassword)) {
+            isMatch = true;
+        }
+
+        if (!isMatch && storedDriverPassword && storedDriverPassword === String(cleanPassword)) {
+            isMatch = true;
+        }
+
         if (!isMatch) {
+            console.log('[login] password mismatch', {
+                userId: String(user._id),
+                inputPassword: String(cleanPassword),
+                userPasswordLength: storedUserPassword.length,
+                driverPasswordLength: storedDriverPassword.length,
+            });
             return res.status(401).json({ message: "Mot de passe incorrect" });
         }
 
         const token = jwt.sign({ userId: user._id, role: user.role || 'customer' }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        const driver = await Driver.findOne({ userId: user._id }).lean();
 
         res.status(200).json({
             message: 'connexion réussie',
