@@ -21,6 +21,43 @@ const { google } = require('googleapis');
 // Store OTPs in memory (Note: In production, use Redis or a DB)
 const signupOtpStore = new Map();
 
+const getPhoneVariants = (value = '') => {
+    const digits = String(value).replace(/\D/g, '');
+    if (!digits) return [];
+
+    const variants = new Set();
+    variants.add(digits);
+    variants.add(`+${digits}`);
+
+    if (digits.startsWith('229') && digits.length > 3) {
+        variants.add(digits.slice(3));
+        variants.add(`+${digits}`);
+        variants.add(`+229${digits.slice(3)}`);
+    }
+
+    if (!digits.startsWith('229') && digits.length === 8) {
+        variants.add(`229${digits}`);
+        variants.add(`+229${digits}`);
+    }
+
+    if (digits.startsWith('0') && digits.length > 1) {
+        variants.add(digits.slice(1));
+        variants.add(`+${digits.slice(1)}`);
+    }
+
+    return [...variants];
+};
+
+const matchesPassword = async (candidatePassword, inputPassword) => {
+    if (!candidatePassword) return false;
+    if (String(candidatePassword) === String(inputPassword)) return true;
+    try {
+        return await bcrypt.compare(String(inputPassword), String(candidatePassword));
+    } catch (error) {
+        return false;
+    }
+};
+
 const login = async (req, res) => {
     const {
         userEmail,
@@ -57,18 +94,50 @@ const login = async (req, res) => {
         let user = null;
         let resolvedDriverCode = null;
 
-        const normalizedPhone = normalizedIdentifier.replace(/[^0-9+]/g, '');
-
-        user = await User.findOne({ userPhone: normalizedPhone });
-
-        if (!user && normalizedIdentifier.includes('@')) {
+        if (normalizedIdentifier.includes('@')) {
             user = await User.findOne({ userEmail: normalizedIdentifier.toLowerCase() });
+        }
+
+        if (!user) {
+            const phoneVariants = getPhoneVariants(normalizedIdentifier);
+            const allPhoneVariants = [...new Set(phoneVariants.flatMap((value) => [
+                value,
+                value.replace(/^\+/, ''),
+                value.startsWith('229') ? value.slice(3) : value,
+                value.startsWith('0') ? value.replace(/^0/, '') : value,
+            ]))];
+
+            const candidateUsers = await User.find({ userPhone: { $in: allPhoneVariants } }).lean();
+
+            for (const candidate of candidateUsers) {
+                const driver = await Driver.findOne({ userId: candidate._id }).select('driverPassword').lean();
+                const passwordsToCheck = [candidate.userPassword, driver?.driverPassword].filter(Boolean);
+
+                for (const candidatePassword of passwordsToCheck) {
+                    if (await matchesPassword(candidatePassword, cleanPassword)) {
+                        user = candidate;
+                        break;
+                    }
+                }
+
+                if (user) break;
+            }
         }
 
         if (!user && !normalizedIdentifier.includes('@')) {
             const driver = await Driver.findOne({ driverCode: normalizedIdentifier.toUpperCase() }).populate('userId');
-            user = driver?.userId || null;
-            resolvedDriverCode = driver?.driverCode || null;
+            const candidateUser = driver?.userId;
+            if (candidateUser) {
+                const driverPassword = driver?.driverPassword;
+                const passwordsToCheck = [candidateUser.userPassword, driverPassword].filter(Boolean);
+                for (const candidatePassword of passwordsToCheck) {
+                    if (await matchesPassword(candidatePassword, cleanPassword)) {
+                        user = candidateUser;
+                        resolvedDriverCode = driver.driverCode;
+                        break;
+                    }
+                }
+            }
         }
 
         if (!user) {
@@ -76,37 +145,6 @@ const login = async (req, res) => {
         }
 
         const driver = await Driver.findOne({ userId: user._id }).lean();
-        const storedUserPassword = typeof user.userPassword === 'string' ? user.userPassword : '';
-        const storedDriverPassword = typeof driver?.driverPassword === 'string' ? driver.driverPassword : '';
-
-        let isMatch = false;
-
-        try {
-            if (storedUserPassword) {
-                isMatch = await bcrypt.compare(String(cleanPassword), storedUserPassword);
-            }
-        } catch (error) {
-            isMatch = false;
-        }
-
-        if (!isMatch && storedUserPassword && storedUserPassword === String(cleanPassword)) {
-            isMatch = true;
-        }
-
-        if (!isMatch && storedDriverPassword && storedDriverPassword === String(cleanPassword)) {
-            isMatch = true;
-        }
-
-        if (!isMatch) {
-            console.log('[login] password mismatch', {
-                userId: String(user._id),
-                inputPassword: String(cleanPassword),
-                userPasswordLength: storedUserPassword.length,
-                driverPasswordLength: storedDriverPassword.length,
-            });
-            return res.status(401).json({ message: "Mot de passe incorrect" });
-        }
-
         const token = jwt.sign({ userId: user._id, role: user.role || 'customer' }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
         res.status(200).json({
