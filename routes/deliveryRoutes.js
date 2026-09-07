@@ -122,6 +122,94 @@ router.post('/:id/decline', verifyToken, requireDeliveryDriver, async (req, res)
   }
 });
 
+router.post('/deliveries/:id/pickup', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'PICKED_UP', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'pickup' } });
+    res.json({ success: true, data: updated, message: 'Retrait confirmé.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/:id/pickup', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'PICKED_UP', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'pickup' } });
+    res.json({ success: true, data: updated, message: 'Retrait confirmé.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/deliveries/:id/start', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'IN_TRANSIT', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'start' } });
+    res.json({ success: true, data: updated, message: 'Livraison en cours.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/:id/start', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'IN_TRANSIT', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'start' } });
+    res.json({ success: true, data: updated, message: 'Livraison en cours.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/deliveries/:id/arrive', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'ARRIVED', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'arrive' } });
+    res.json({ success: true, data: updated, message: 'Arrivée enregistrée.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/:id/arrive', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'ARRIVED', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'arrive' } });
+    res.json({ success: true, data: updated, message: 'Arrivée enregistrée.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/deliveries/:id/confirm', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'DELIVERED', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'confirm' } });
+    res.json({ success: true, data: updated, message: 'Livraison confirmée.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/:id/confirm', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id });
+    if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
+    const updated = await changeStatus(delivery._id, 'DELIVERED', req.user.id, req.user.role, { metadata: { driverId: req.user.id, action: 'confirm' } });
+    res.json({ success: true, data: updated, message: 'Livraison confirmée.' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
 router.patch('/deliveries/:id/status', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
     const { status } = req.body || {};
