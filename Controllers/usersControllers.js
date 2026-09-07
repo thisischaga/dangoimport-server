@@ -22,29 +22,51 @@ const { google } = require('googleapis');
 const signupOtpStore = new Map();
 
 const login = async (req, res) => {
-    const { userEmail, userPhone, phone, userPassword, driverCode, userIdentifier } = req.body || {};
-    const rawIdentifier = (userPhone || phone || userEmail || driverCode || userIdentifier || '').toString().trim();
-    const identifier = rawIdentifier.replace(/\s+/g, '');
-    const cleanPassword = typeof userPassword === 'string' ? userPassword.trim() : userPassword;
+    const {
+        userEmail,
+        userPhone,
+        phone,
+        userPassword,
+        password,
+        driverCode,
+        userIdentifier,
+        identifier,
+    } = req.body || {};
 
-    if (!identifier || !cleanPassword || !String(cleanPassword).trim()) {
+    const rawIdentifier = (
+        identifier ||
+        userPhone ||
+        phone ||
+        userEmail ||
+        driverCode ||
+        userIdentifier ||
+        ''
+    ).toString().trim();
+    const identifierValue = rawIdentifier.replace(/\s+/g, '');
+    const cleanPassword = typeof (userPassword ?? password) === 'string'
+        ? String(userPassword ?? password).trim()
+        : (userPassword ?? password);
+
+    if (!identifierValue || !cleanPassword || !String(cleanPassword).trim()) {
         return res.status(400).json({ message: "Veuillez fournir un numéro et un mot de passe." });
     }
+
+    const normalizedIdentifier = identifierValue;
 
     try {
         let user = null;
         let resolvedDriverCode = null;
 
-        const normalizedPhone = identifier.replace(/[^0-9+]/g, '');
+        const normalizedPhone = normalizedIdentifier.replace(/[^0-9+]/g, '');
 
         user = await User.findOne({ userPhone: normalizedPhone });
 
-        if (!user && identifier.includes('@')) {
-            user = await User.findOne({ userEmail: identifier.toLowerCase() });
+        if (!user && normalizedIdentifier.includes('@')) {
+            user = await User.findOne({ userEmail: normalizedIdentifier.toLowerCase() });
         }
 
-        if (!user && !identifier.includes('@')) {
-            const driver = await Driver.findOne({ driverCode: identifier.toUpperCase() }).populate('userId');
+        if (!user && !normalizedIdentifier.includes('@')) {
+            const driver = await Driver.findOne({ driverCode: normalizedIdentifier.toUpperCase() }).populate('userId');
             user = driver?.userId || null;
             resolvedDriverCode = driver?.driverCode || null;
         }
@@ -53,7 +75,7 @@ const login = async (req, res) => {
             return res.status(401).json({ message: "Utilisateur non trouvé !" });
         }
 
-        const isMatch = await bcrypt.compare(userPassword, user.userPassword);
+        const isMatch = await bcrypt.compare(String(cleanPassword), user.userPassword);
         if (!isMatch) {
             return res.status(401).json({ message: "Mot de passe incorrect" });
         }
@@ -81,7 +103,7 @@ const login = async (req, res) => {
                 bankDetails: user.bankDetails || {}
             }
         });
-        console.log('Un utilisateur vient de se connecter ', identifier);
+        console.log('Un utilisateur vient de se connecter ', normalizedIdentifier);
 
     } catch (error) {
         res.status(500).json({ message: 'Erreur interne du serveur' });
