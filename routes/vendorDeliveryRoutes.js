@@ -43,6 +43,25 @@ router.get('/public/:vendorId', async (req, res) => {
   }
 });
 
+// Endpoint public pour calculer la livraison acheteur (vendeur vs dangoimport)
+router.post('/calculate-option', async (req, res) => {
+  try {
+    const { calculateDeliveryForItems } = require('../services/deliveryService');
+    const { items = [], clientLocation = null, sellerId = null } = req.body || {};
+
+    let calculateItems = items;
+    if ((!calculateItems || calculateItems.length === 0) && sellerId) {
+      calculateItems = [{ vendorId: sellerId }];
+    }
+
+    const result = await calculateDeliveryForItems({ items: calculateItems, clientLocation });
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error('[vendorDeliveryRoutes] calculate-option error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 router.use(verifyToken);
 router.use(ensureVendor);
 

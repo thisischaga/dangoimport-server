@@ -246,24 +246,18 @@ router.post('/', verifyToken, async (req, res) => {
             paymentDate: paymentStatus === 'completed' ? new Date() : null,
         });
 
-        // Determine delivery provider when possible
+        // Determine delivery provider via central service
         try {
-            const vendorIds = [...new Set(orderItems.map(i => i.vendorId).filter(Boolean).map(String))];
-            let providerResult = null;
-            if (vendorIds.length === 1) {
-                const store = await Store.findOne({ userId: vendorIds[0] });
-                // shippingAddress may contain location coordinates
-                const clientLoc = shippingAddress?.location?.coordinates || (shippingAddress?.lat && shippingAddress?.lng ? { lat: shippingAddress.lat, lng: shippingAddress.lng } : null);
-                providerResult = await determineDeliveryProvider({ store, clientLocation: clientLoc });
-            } else {
-                // multiple vendors => default to DANGOIMPORT
-                providerResult = { provider: 'DANGOIMPORT', reason: 'multiple_vendors' };
-            }
+            const { calculateDeliveryForItems } = require('../services/deliveryService');
+            const clientLoc = shippingAddress?.location?.coordinates || (shippingAddress?.lat && shippingAddress?.lng ? { lat: shippingAddress.lat, lng: shippingAddress.lng } : null);
+            const deliveryCalc = await calculateDeliveryForItems({ items: orderItems, clientLocation: clientLoc });
 
-            if (providerResult) {
-                order.deliveryProvider = providerResult.provider;
-                order.deliveryProviderReason = providerResult.reason;
-                if (providerResult.distanceKm !== undefined) order.deliveryDistanceKm = providerResult.distanceKm;
+            if (deliveryCalc) {
+                order.deliveryProvider = deliveryCalc.provider;
+                order.deliveryProviderReason = deliveryCalc.reason;
+                if (deliveryCalc.groups && deliveryCalc.groups.length === 1 && deliveryCalc.groups[0].distanceKm !== undefined) {
+                    order.deliveryDistanceKm = deliveryCalc.groups[0].distanceKm;
+                }
             }
         } catch (e) {
             console.error('[orderRoutes] determineDeliveryProvider error:', e);
