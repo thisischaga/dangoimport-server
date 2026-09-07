@@ -12,6 +12,9 @@ const WithdrawalRequest = require('../Models/WithdrawalRequest');
 const Notification = require('../Models/Notification');
 const User = require('../Models/User');
 const Driver = require('../Models/Driver');
+const Delivery = require('../Models/Delivery');
+const DeliveryList = require('../Models/DeliveryList');
+const { isOrderEligibleForDelivery, createDeliveryListFromOrders, getEligibleDeliveryOrders } = require('../services/deliveryDispatchService');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -754,6 +757,82 @@ router.get('/refunds', verifyToken, adminOnly, async (req, res) => {
 });
 
 // GET /api/admin/deliveries — suivi des livraisons
+router.get('/delivery/orders', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const orders = await getEligibleDeliveryOrders(req.query || {});
+        return res.json({ success: true, data: orders });
+    } catch (error) {
+        console.error('[adminRoutes] GET /delivery/orders error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/delivery/drivers', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const drivers = await Driver.find({ isActive: true }).populate('userId', 'userFirstname userSurname userEmail userPhone role').lean();
+        return res.json({ success: true, data: drivers.map((driver) => ({
+            id: driver.userId?._id || driver._id,
+            driverId: driver._id,
+            name: driver.userId ? `${driver.userId.userFirstname || ''} ${driver.userId.userSurname || ''}`.trim() : 'Livreur',
+            email: driver.userId?.userEmail || '',
+            phone: driver.userId?.userPhone || driver.phone || '',
+            driverCode: driver.driverCode,
+            vehicleType: driver.vehicleType,
+            zone: driver.zone,
+            status: driver.status,
+        })) });
+    } catch (error) {
+        console.error('[adminRoutes] GET /delivery/drivers error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.post('/delivery/lists', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { name, driverId, selectedOrderIds, scheduledDate, zone, priority, notes } = req.body || {};
+        const result = await createDeliveryListFromOrders({
+            name,
+            driverId,
+            selectedOrderIds,
+            scheduledDate,
+            zone,
+            priority,
+            notes,
+            createdBy: req.user?.id || req.user?.userId || null,
+        });
+        return res.status(201).json(result);
+    } catch (error) {
+        console.error('[adminRoutes] POST /delivery/lists error:', error);
+        return res.status(400).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/delivery/lists', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const lists = await DeliveryList.find({}).populate('driverId', 'userFirstname userSurname userEmail userPhone role').sort({ createdAt: -1 }).lean();
+        return res.json({ success: true, data: lists.map((list) => ({
+            ...list,
+            driverName: list.driverId ? `${list.driverId.userFirstname || ''} ${list.driverId.userSurname || ''}`.trim() : 'Livreur',
+            deliveriesCount: Array.isArray(list.deliveryIds) ? list.deliveryIds.length : 0,
+        })) });
+    } catch (error) {
+        console.error('[adminRoutes] GET /delivery/lists error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/delivery/lists/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const list = await DeliveryList.findById(req.params.id).populate('driverId', 'userFirstname userSurname userEmail userPhone role').lean();
+        if (!list) return res.status(404).json({ success: false, message: 'Liste introuvable.' });
+        const deliveries = await Delivery.find({ _id: { $in: list.deliveryIds || [] } }).sort({ createdAt: -1 }).lean();
+        return res.json({ success: true, data: { ...list, deliveries } });
+    } catch (error) {
+        console.error('[adminRoutes] GET /delivery/lists/:id error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 router.get('/deliveries', verifyToken, adminOnly, async (req, res) => {
     try {
         const rows = await ShopOrder.find({

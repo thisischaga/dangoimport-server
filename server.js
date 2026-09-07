@@ -1554,21 +1554,75 @@ const startServer = async () => {
       try {
         const admin = await Admin.findById(req.user.userId);
         if (!admin) return res.status(401).json({ message: "Non autorisé" });
+
+        const ShopOrder = require('./Models/ShopOrder');
+        const TransactionModel = require('./Models/Transaction');
         const UserModel = require('./Models/User');
-        const [products, commandes, achats, users, allCommandes, allAchats] = await Promise.all([
+
+        const [
+          products,
+          commandes,
+          users,
+          transactions,
+          completedTransactions,
+          completedOrders,
+          recentOrders,
+          recentTransactions,
+        ] = await Promise.all([
           Product.countDocuments(),
-          Commande.countDocuments(),
-          Achat.countDocuments(),
+          ShopOrder.countDocuments(),
           UserModel.countDocuments(),
-          Commande.find({ status: { $in: ['Payé', 'Validée', 'Achevée'] } }, 'totalPrice'),
-          Achat.find({ status: { $in: ['Payé', 'Validée', 'Achevée'] } }, 'totalPrice'),
+          TransactionModel.countDocuments(),
+          TransactionModel.countDocuments({ status: 'approved' }),
+          ShopOrder.countDocuments({ paymentStatus: 'completed' }),
+          ShopOrder.find({}).sort({ createdAt: -1 }).limit(5).lean(),
+          TransactionModel.find({}).sort({ createdAt: -1 }).limit(5).lean(),
         ]);
-        const recentCommandes = await Commande.find().sort({ date: -1 }).limit(5);
-        const recentAchats = await Achat.find().sort({ date: -1 }).limit(5);
 
-        const revenue = [...allCommandes, ...allAchats].reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
+        const completedOrderTotal = await ShopOrder.aggregate([
+          { $match: { paymentStatus: 'completed' } },
+          { $group: { _id: null, total: { $sum: '$total' } } },
+        ]);
 
-        res.status(200).json({ products, commandes, achats, users, recentCommandes, recentAchats, revenue });
+        const approvedTransactionTotal = await TransactionModel.aggregate([
+          { $match: { status: 'approved' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]);
+
+        const revenue = (completedOrderTotal[0]?.total || 0) + (approvedTransactionTotal[0]?.total || 0);
+
+        const recentCommandes = recentOrders.map((order) => ({
+          _id: order._id,
+          userName: order.customerName || 'Client',
+          userEmail: order.customerEmail || '',
+          categorie: (order.items || []).map((item) => item.category || item.productName).filter(Boolean).slice(0, 2).join(', ') || 'Commande',
+          totalPrice: Number(order.total || 0),
+          status: order.paymentStatus === 'completed' ? 'Payé' : (order.status || 'pending'),
+        }));
+
+        const recentAchats = recentTransactions.map((tx) => ({
+          _id: tx._id,
+          userName: tx.customer?.firstname && tx.customer?.lastname
+            ? `${tx.customer.firstname} ${tx.customer.lastname}`
+            : tx.customer?.email || 'Client',
+          userEmail: tx.customer?.email || '',
+          productQuantity: Number(tx.metadata?.itemsCount || 1),
+          totalPrice: Number(tx.amount || 0),
+          status: tx.status === 'approved' ? 'Payé' : (tx.status || 'pending'),
+        }));
+
+        res.status(200).json({
+          products,
+          commandes,
+          achats: transactions,
+          users,
+          completedOrders,
+          completedTransactions,
+          recentCommandes,
+          recentAchats,
+          recentTransactions,
+          revenue,
+        });
       } catch (error) {
         console.error("Erreur GET /api/admin/stats :", error);
         res.status(500).json({ message: "Erreur serveur" });
@@ -1786,6 +1840,7 @@ const startServer = async () => {
     // Delivery routes for drivers (DPay)
     const deliveryRoutes = require('./routes/deliveryRoutes');
     app.use('/api/deliveries', deliveryRoutes);
+    app.use('/api/delivery', deliveryRoutes);
     // Driver-specific endpoints (profile, status, location)
     const driverRoutes = require('./routes/driverRoutes');
     app.use('/api/driver', driverRoutes);

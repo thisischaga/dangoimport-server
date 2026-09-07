@@ -17,6 +17,7 @@ const currentLocationSchema = new mongoose.Schema({
 
 const deliverySchema = new mongoose.Schema({
   deliveryId: { type: String, index: true, unique: true, sparse: true },
+  deliveryListId: { type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryList', index: true },
   orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'ShopOrder', required: true, index: true },
   driverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
@@ -34,6 +35,7 @@ const deliverySchema = new mongoose.Schema({
   zone: String,
 
   qrToken: { type: String, index: true },
+  qrHash: { type: String, index: true },
   qrExpiresAt: Date,
   qrUsedAt: Date,
 
