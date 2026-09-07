@@ -388,24 +388,13 @@ router.post('/checkout', verifyToken, async (req, res) => {
       ? payload.cartItems
       : [];
 
-  const incomingShippingAddress = payload.shippingAddress || {};
-  const latitude = payload.latitude ?? payload.lat ?? incomingShippingAddress.latitude ?? incomingShippingAddress.lat ?? null;
-  const longitude = payload.longitude ?? payload.lng ?? incomingShippingAddress.longitude ?? incomingShippingAddress.lng ?? null;
-  const shippingAddress = {
-    ...incomingShippingAddress,
-    country: incomingShippingAddress.country || payload.selectedCountry || payload.country || 'Togo',
-    city: incomingShippingAddress.city || payload.city || '',
-    neighborhood: incomingShippingAddress.neighborhood || payload.neighborhood || '',
-    fullAddress: incomingShippingAddress.fullAddress || payload.address || payload.fullAddress || '',
-    postalCode: incomingShippingAddress.postalCode || payload.postalCode || '',
-    instructions: incomingShippingAddress.instructions || payload.instructions || '',
-    latitude: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
-    longitude: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
-    lat: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
-    lng: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
-    location: (Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude)))
-      ? { type: 'Point', coordinates: [Number(longitude), Number(latitude)] }
-      : (incomingShippingAddress.location || null),
+  const shippingAddress = payload.shippingAddress || {
+    country: payload.selectedCountry || payload.country || 'Togo',
+    city: payload.city || '',
+    neighborhood: payload.neighborhood || '',
+    fullAddress: payload.address || payload.fullAddress || '',
+    postalCode: payload.postalCode || payload.postalCode || '',
+    instructions: payload.instructions || '',
   };
 
   if (!userName || !userEmail || !userNumber || !items.length) {
@@ -532,7 +521,6 @@ const handleFedapayWebhook = async (req, res) => {
 
   const signature = req.headers['x-fedapay-signature'];
   const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
-  const allowUnsigned = String(process.env.ALLOW_UNSIGNED_FEDAPAY_WEBHOOKS || '').toLowerCase() === 'true' || process.env.NODE_ENV !== 'production';
   const event = req.body;
   const eventName = event?.name || event?.event || 'unknown.event';
   const entityId = event?.entity?.id || event?.entity?.transaction_id || null;
@@ -547,11 +535,6 @@ const handleFedapayWebhook = async (req, res) => {
         await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
         console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret), eventName, entityId });
         return res.status(403).send('Signature invalide');
-      }
-    } else if (!secret || !signature) {
-      if (!allowUnsigned) {
-        await logWebhookEvent({ eventId, payload: event, signature: signature || null, status: 'failed', error: 'Signature webhook absente' });
-        console.warn('[fedapayRoutes] webhook missing signature; unsigned hook accepted only in non-production/test mode', { eventName, entityId, allowUnsigned, secretConfigured: Boolean(secret) });
       }
     }
 
