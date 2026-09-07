@@ -136,6 +136,7 @@ const corsOptions = {
       'http://127.0.0.1:5173',
       'http://127.0.0.1:5174',
       'https://dangoimport.com',
+      'https://www.dangoimport.com',
       'https://dangoimport-admin-eiim.vercel.app',
       'https://business.dangoimport.com',
     ];

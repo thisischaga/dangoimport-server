@@ -388,13 +388,24 @@ router.post('/checkout', verifyToken, async (req, res) => {
       ? payload.cartItems
       : [];
 
-  const shippingAddress = payload.shippingAddress || {
-    country: payload.selectedCountry || payload.country || 'Togo',
-    city: payload.city || '',
-    neighborhood: payload.neighborhood || '',
-    fullAddress: payload.address || payload.fullAddress || '',
-    postalCode: payload.postalCode || payload.postalCode || '',
-    instructions: payload.instructions || '',
+  const incomingShippingAddress = payload.shippingAddress || {};
+  const latitude = payload.latitude ?? payload.lat ?? incomingShippingAddress.latitude ?? incomingShippingAddress.lat ?? null;
+  const longitude = payload.longitude ?? payload.lng ?? incomingShippingAddress.longitude ?? incomingShippingAddress.lng ?? null;
+  const shippingAddress = {
+    ...incomingShippingAddress,
+    country: incomingShippingAddress.country || payload.selectedCountry || payload.country || 'Togo',
+    city: incomingShippingAddress.city || payload.city || '',
+    neighborhood: incomingShippingAddress.neighborhood || payload.neighborhood || '',
+    fullAddress: incomingShippingAddress.fullAddress || payload.address || payload.fullAddress || '',
+    postalCode: incomingShippingAddress.postalCode || payload.postalCode || '',
+    instructions: incomingShippingAddress.instructions || payload.instructions || '',
+    latitude: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
+    longitude: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
+    lat: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
+    lng: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
+    location: (Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude)))
+      ? { type: 'Point', coordinates: [Number(longitude), Number(latitude)] }
+      : (incomingShippingAddress.location || null),
   };
 
   if (!userName || !userEmail || !userNumber || !items.length) {
