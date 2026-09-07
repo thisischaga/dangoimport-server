@@ -23,6 +23,31 @@ const getShippingCost = (subtotal, shippingMethod) => {
     return Math.round(subtotal * 0.05);
 };
 
+const normalizeGeoPoint = (value) => {
+    if (!value || typeof value !== 'object') return null;
+
+    const coords = Array.isArray(value.coordinates) && value.coordinates.length >= 2
+        ? value.coordinates
+        : null;
+
+    const latFromCoords = coords ? Number(coords[1]) : null;
+    const lngFromCoords = coords ? Number(coords[0]) : null;
+
+    const lat = Number(value.latitude ?? value.lat ?? latFromCoords ?? NaN);
+    const lng = Number(value.longitude ?? value.lng ?? lngFromCoords ?? NaN);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    return {
+        latitude: lat,
+        longitude: lng,
+        location: {
+            type: 'Point',
+            coordinates: [lng, lat],
+        },
+    };
+};
+
 const validatePromotion = async (promoCode, subtotal, userId, cartItems = []) => {
     if (!promoCode) {
         return { discount: 0 };
@@ -166,6 +191,14 @@ router.post('/', verifyToken, async (req, res) => {
             return res.status(400).json({ success: false, message: 'Aucun article dans la commande' });
         }
 
+        const parsedAddress = shippingAddress || {};
+        const normalizedCoords = normalizeGeoPoint(parsedAddress);
+        if (normalizedCoords) {
+            parsedAddress.latitude = normalizedCoords.latitude;
+            parsedAddress.longitude = normalizedCoords.longitude;
+            parsedAddress.location = normalizedCoords.location;
+        }
+
         let subtotal = 0;
         const orderItems = [];
 
@@ -231,7 +264,7 @@ router.post('/', verifyToken, async (req, res) => {
             customerName: `${req.user.userFirstname} ${req.user.userSurname}`,
             customerEmail: req.body.customerEmail || req.user.userEmail,
             customerPhone: req.body.customerPhone || req.user.userPhone || '',
-            shippingAddress,
+            shippingAddress: parsedAddress,
             items: orderItems,
             subtotal,
             shippingCost,

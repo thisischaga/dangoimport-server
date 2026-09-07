@@ -56,6 +56,12 @@ const orderSchema = new mongoose.Schema({
     fullAddress: String,
     postalCode: String,
     instructions: String,
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null },
+    location: {
+      type: { type: String, enum: ['Point'], default: 'Point' },
+      coordinates: { type: [Number], default: [0, 0] },
+    },
   },
   items: [orderItemSchema],
   subtotal: {
@@ -129,6 +135,7 @@ const orderSchema = new mongoose.Schema({
 
 orderSchema.index({ customerId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, paymentStatus: 1, createdAt: -1 });
+orderSchema.index({ 'shippingAddress.location': '2dsphere' });
 
 orderSchema.pre('save', function (next) {
   this.updatedAt = new Date();

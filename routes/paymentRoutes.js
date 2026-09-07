@@ -72,7 +72,7 @@ router.post('/create', verifyToken, async (req, res) => {
       description: description || 'Paiement Dango Import',
       amount: Math.round(Number(amount)),
       currency: String(currency).toUpperCase(),
-      callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || `${process.env.BASE_URL || 'https://www.dangoimport.com'}/checkout`,
+      callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || `${process.env.BASE_URL || 'https://dangoimport.com'}/checkout`,
       custom_metadata: {
         cartSource: 'frontend',
         shippingMethod: shippingMethod || 'standard',

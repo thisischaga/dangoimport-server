@@ -135,11 +135,9 @@ const corsOptions = {
       'http://localhost:5174',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:5174',
-      'https://www.dangoimport.com',
       'https://dangoimport.com',
       'https://dangoimport-admin-eiim.vercel.app',
       'https://business.dangoimport.com',
-      'https://marketplace.dangoimport.com',
     ];
 
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -415,7 +413,7 @@ const startServer = async () => {
         const nameParts = name.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
         const lastname = nameParts.slice(1).join(' ') || 'Dango';
-        const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://www.dangoimport.com/';
+        const returnUrl = process.env.PAYDUNYA_RETURN_URL || 'https://dangoimport.com/';
 
         const transaction = await Transaction.create({
           description: `Frais d'étude de devis - ${name}`,
@@ -729,7 +727,7 @@ const startServer = async () => {
           description: description || 'Paiement Dango Import',
           amount: Math.round(Number(amount)),
           currency: { iso: String(currency).toUpperCase() },
-          callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/checkout',
+          callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
           customer: {
             firstname: customer.firstname || 'Client',
             lastname: customer.lastname || 'Dango',
@@ -852,7 +850,7 @@ const startServer = async () => {
 
         const phoneDigits = String(userNumber).replace(/\D/g, '');
         const phoneAsNumber = parseInt(phoneDigits.slice(-8), 10) || 97000000;
-        const safePicture = picture && String(picture).trim() ? picture : 'https://www.dangoimport.com/logo.png';
+        const safePicture = picture && String(picture).trim() ? picture : 'https://dangoimport.com/logo.png';
         const orderDate = date instanceof Date ? date.toISOString() : String(date);
 
         const achatPayload = {
@@ -882,7 +880,7 @@ const startServer = async () => {
         const nameParts = userName.trim().split(' ');
         const firstname = nameParts[0] || 'Client';
         const lastname = nameParts.slice(1).join(' ') || 'Dango';
-        const returnUrl = process.env.FEDAPAY_RETURN_URL || 'https://www.dangoimport.com/';
+        const returnUrl = process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/';
 
         // Nettoyage du numéro
         let phoneNumber = String(userNumber).replace(/\D/g, '');

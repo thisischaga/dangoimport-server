@@ -4,6 +4,7 @@ const Delivery = require('../Models/Delivery');
 const DeliveryList = require('../Models/DeliveryList');
 const Driver = require('../Models/Driver');
 const ShopOrder = require('../Models/ShopOrder');
+const Store = require('../Models/Store');
 const User = require('../Models/User');
 
 const DELIVERY_STATUSES = ['ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'DELIVERED', 'CANCELLED'];
@@ -94,6 +95,22 @@ async function validateDriverForAssignment(driverId) {
   return { driverUser, driverProfile };
 }
 
+function normalizeLocationCoords(rawLocation) {
+  if (!rawLocation || typeof rawLocation !== 'object') return { latitude: null, longitude: null };
+
+  const coords = Array.isArray(rawLocation.coordinates) && rawLocation.coordinates.length >= 2
+    ? rawLocation.coordinates
+    : null;
+
+  const latitude = Number(rawLocation.latitude ?? rawLocation.lat ?? (coords ? coords[1] : null));
+  const longitude = Number(rawLocation.longitude ?? rawLocation.lng ?? (coords ? coords[0] : null));
+
+  return {
+    latitude: Number.isFinite(latitude) ? latitude : null,
+    longitude: Number.isFinite(longitude) ? longitude : null,
+  };
+}
+
 async function createDeliveryListFromOrders({
   name,
   driverId,
@@ -132,20 +149,25 @@ async function createDeliveryListFromOrders({
       const normalizedPriority = normalizeDeliveryPriority(priority);
       const deliveryIds = [];
       for (const order of orders) {
+        const vendorId = order.items?.[0]?.vendorId || null;
+        const store = vendorId ? await Store.findOne({ userId: vendorId }).lean() : null;
+        const customerGeo = normalizeLocationCoords(order.shippingAddress || {});
+        const vendorGeo = normalizeLocationCoords(store?.location || {});
+
         const delivery = await Delivery.create([{
           orderId: order._id,
           driverId: driverUser._id,
-          vendorId: order.items?.[0]?.vendorId || null,
+          vendorId,
           customerId: order.customerId || null,
           pickupLocation: {
-            address: order.shippingAddress?.fullAddress || order.shippingAddress?.city || '',
-            latitude: null,
-            longitude: null,
+            address: store?.address || store?.name || order.shippingAddress?.fullAddress || order.shippingAddress?.city || '',
+            latitude: vendorGeo.latitude,
+            longitude: vendorGeo.longitude,
           },
           deliveryLocation: {
-            address: order.shippingAddress?.fullAddress || '',
-            latitude: null,
-            longitude: null,
+            address: order.shippingAddress?.fullAddress || order.shippingAddress?.city || '',
+            latitude: customerGeo.latitude,
+            longitude: customerGeo.longitude,
           },
           zone: zone || order.shippingAddress?.city || '',
           status: 'ASSIGNED',

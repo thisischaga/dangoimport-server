@@ -206,29 +206,6 @@ const orderDeliveryDate = (shippingMethod) => {
   return date;
 };
 
-const resolveCustomerId = async ({ transaction, session }) => {
-  const metadata = transaction.metadata || {};
-  const userId = metadata.userId;
-  if (mongoose.isValidObjectId(userId)) {
-    const existingUser = await User.findById(userId).select('_id').session(session);
-    if (existingUser) return existingUser._id;
-  }
-
-  const customerEmail = String(transaction.customer?.email || '').trim().toLowerCase();
-  if (customerEmail) {
-    const existingUser = await User.findOne({ userEmail: new RegExp(`^${customerEmail}$`, 'i') }).select('_id').session(session);
-    if (existingUser) return existingUser._id;
-  }
-
-  const customerPhone = String(transaction.customer?.phone_number?.number || transaction.customer?.phone || '').replace(/\D/g, '');
-  if (customerPhone) {
-    const existingUser = await User.findOne({ userPhone: customerPhone }).select('_id').session(session);
-    if (existingUser) return existingUser._id;
-  }
-
-  return null;
-};
-
 const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippingCost, tax, discount, total, shippingMethod }) => ({
   orderNumber: generateOrderNumber(),
   customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
@@ -248,7 +225,7 @@ const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippi
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
   const metadata = transaction.metadata || {};
-  const userId = await resolveCustomerId({ transaction, session });
+  const userId = metadata.userId;
   const customer = transaction.customer;
   const shippingAddress = metadata.shippingAddress || {};
   const items = metadata.items || [];
@@ -365,7 +342,7 @@ const createQRCodeRecords = async ({ order, transactionId, session }) => {
   });
 
   if (qrDocsPayload.length === 0) return [];
-  const created = await QRCode.create(qrDocsPayload, { session, ordered: true });
+  const created = await QRCode.create(qrDocsPayload, { session });
   return created;
 };
 
@@ -473,7 +450,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
       description: `Paiement Dango Import - ${customer.firstname} ${customer.lastname}`,
       amount: Math.round(total),
       currency: { iso: 'XOF' },
-      callback_url: process.env.FEDAPAY_RETURN_URL || 'https://marketplace.dangoimport.com/checkout',
+      callback_url: process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
       custom_metadata: {
         cartSource: 'frontend',
         shippingMethod,
@@ -641,14 +618,11 @@ const handleFedapayWebhook = async (req, res) => {
         }
 
         // Vider le panier du client
-        const userIdToClear = localTransaction.metadata?.userId;
-        if (mongoose.isValidObjectId(userIdToClear)) {
-          await Cart.findOneAndUpdate({ userId: new mongoose.Types.ObjectId(userIdToClear) }, {
-            items: [],
-            totalItems: 0,
-            totalPrice: 0,
-          }, { session });
-        }
+        await Cart.findOneAndUpdate({ userId: mongoose.Types.ObjectId(localTransaction.metadata.userId) }, {
+          items: [],
+          totalItems: 0,
+          totalPrice: 0,
+        }, { session });
 
         const qrCode = (qrDocs || [])[0];
 
@@ -660,8 +634,6 @@ const handleFedapayWebhook = async (req, res) => {
           orderNumber: createdOrder.orderNumber,
           total: createdOrder.total,
           qrCode: qrCode?.code,
-          items: createdOrder.items,
-          qrCodes: qrDocs,
         });
 
         await OrderHistory.create([{
@@ -743,5 +715,4 @@ router.get('/transaction/:id', async (req, res) => {
   }
 });
 
-router.handleWebhook = handleFedapayWebhook;
-module.exports = router;
+module.exports = { router, handleWebhook: handleFedapayWebhook };

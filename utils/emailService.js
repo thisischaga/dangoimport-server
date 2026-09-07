@@ -60,7 +60,7 @@ const emailService = {
             </p>
           </div>
           <div style="text-align: center; margin: 32px 0;">
-            <a href="${editUrl || 'https://seller.dangoimport.com'}" style="background: #475569; color: #ffffff; padding: 12px 28px; font-weight: 700; font-size: 14px; border-radius: 8px; text-decoration: none; display: inline-block;">
+            <a href="${editUrl || 'https://business.dangoimport.com'}" style="background: #475569; color: #ffffff; padding: 12px 28px; font-weight: 700; font-size: 14px; border-radius: 8px; text-decoration: none; display: inline-block;">
               Accéder à Dango Seller
             </a>
           </div>
@@ -100,7 +100,7 @@ const emailService = {
             </p>
           </div>
           <div style="text-align: center; margin: 32px 0;">
-            <a href="${editUrl || 'https://seller.dangoimport.com'}" style="background: #ea580c; color: #ffffff; padding: 12px 28px; font-weight: 700; font-size: 14px; border-radius: 8px; text-decoration: none; display: inline-block;">
+            <a href="${editUrl || 'https://business.dangoimport.com'}" style="background: #ea580c; color: #ffffff; padding: 12px 28px; font-weight: 700; font-size: 14px; border-radius: 8px; text-decoration: none; display: inline-block;">
               Modifier le produit
             </a>
           </div>

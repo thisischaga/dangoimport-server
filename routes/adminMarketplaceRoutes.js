@@ -230,7 +230,7 @@ router.put('/products/:id/reject', verifyAdmin, async (req, res) => {
         vendorName: product.vendorName,
         productName: product.name,
         rejectionReason: reason.trim(),
-        editUrl: 'https://seller.dangoimport.com/products',
+        editUrl: 'https://business.dangoimport.com/products',
       });
     }
 
@@ -299,7 +299,7 @@ router.put('/products/:id/request-changes', verifyAdmin, async (req, res) => {
         vendorName: product.vendorName,
         productName: product.name,
         comment: comment.trim(),
-        editUrl: 'https://seller.dangoimport.com/products',
+        editUrl: 'https://business.dangoimport.com/products',
       });
     }
 
