@@ -122,14 +122,25 @@ router.post('/validate', verifyToken, async (req, res) => {
     }
 
     const vendorUser = await User.findById(req.user.id || req.user.userId);
-    if (!vendorUser || (vendorUser.role !== 'vendor' && vendorUser.role !== 'admin')) {
-      return res.status(403).json({ success: false, message: 'Accès vendeur requis' });
+    if (!vendorUser || !['vendor', 'admin', 'driver'].includes(vendorUser.role)) {
+      return res.status(403).json({ success: false, message: 'Accès refusé. Rôle non autorisé.' });
     }
 
-    const vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.user.id || req.user.userId);
-    const vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
-    if (vendorItems.length === 0 && vendorUser.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande' });
+    let vendorIdToUse = null;
+    let vendorItems = [];
+
+    if (vendorUser.role === 'vendor') {
+      vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : String(req.user.id || req.user.userId);
+      vendorItems = order.items.filter((item) => String(item.vendorId) === vendorIdToUse);
+      if (vendorItems.length === 0) {
+        return res.status(403).json({ success: false, message: 'Vous n’êtes pas autorisé à valider cette commande' });
+      }
+    } else {
+      // Admin ou Driver valident le QR entier
+      vendorIdToUse = qrDoc.vendorId ? String(qrDoc.vendorId) : null;
+      vendorItems = vendorIdToUse
+        ? order.items.filter((item) => String(item.vendorId) === vendorIdToUse)
+        : order.items; // S'il n'y a pas de vendorId sur le QR, on valide tous les articles.
     }
 
     const validatedItems = vendorItems.map((item) => ({
@@ -140,9 +151,10 @@ router.post('/validate', verifyToken, async (req, res) => {
       subtotal: item.subtotal,
     }));
 
-    // Mark items delivered for this vendor
+    // Mark items delivered for this vendor/QR
     order.items = order.items.map((item) => {
-      if (String(item.vendorId) === vendorIdToUse) {
+      const matchesVendor = vendorIdToUse ? String(item.vendorId) === vendorIdToUse : true;
+      if (matchesVendor) {
         return { ...item, delivered: true, deliveredAt: new Date() };
       }
       return item;

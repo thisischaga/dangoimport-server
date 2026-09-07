@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
 const User = require('../Models/User');
+const Driver = require('../Models/Driver');
 const { Resend } = require('resend');
 const { generateOTP } = require('../utils/otp');
 
@@ -21,20 +22,35 @@ const { google } = require('googleapis');
 const signupOtpStore = new Map();
 
 const login = async (req, res) => {
-    const { userEmail, userPassword } = req.body;
+    const { userEmail, userPhone, phone, userPassword, driverCode, userIdentifier } = req.body || {};
+    const rawIdentifier = (userPhone || phone || userEmail || driverCode || userIdentifier || '').toString().trim();
+    const identifier = rawIdentifier.replace(/\s+/g, '');
 
-    if (!userEmail || !userPassword) {
-        return res.status(400).json({ message: "Veuillez fournir un email et un mot de passe." });
+    if (!identifier || !userPassword) {
+        return res.status(400).json({ message: "Veuillez fournir un numéro et un mot de passe." });
     }
 
     try {
-        const user = await User.findOne({ userEmail });
+        let user = null;
+        let resolvedDriverCode = null;
+
+        const normalizedPhone = identifier.replace(/[^0-9+]/g, '');
+
+        user = await User.findOne({ userPhone: normalizedPhone });
+
+        if (!user && identifier.includes('@')) {
+            user = await User.findOne({ userEmail: identifier.toLowerCase() });
+        }
+
+        if (!user && !identifier.includes('@')) {
+            const driver = await Driver.findOne({ driverCode: identifier.toUpperCase() }).populate('userId');
+            user = driver?.userId || null;
+            resolvedDriverCode = driver?.driverCode || null;
+        }
 
         if (!user) {
             return res.status(401).json({ message: "Utilisateur non trouvé !" });
         }
-
-        // NOTE: Do not block login for unverified users — show banner instead.
 
         const isMatch = await bcrypt.compare(userPassword, user.userPassword);
         if (!isMatch) {
@@ -42,9 +58,12 @@ const login = async (req, res) => {
         }
 
         const token = jwt.sign({ userId: user._id, role: user.role || 'customer' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        const driver = await Driver.findOne({ userId: user._id }).lean();
+
         res.status(200).json({
             message: 'connexion réussie',
             token,
+            driverCode: driver?.driverCode || resolvedDriverCode || null,
             user: {
                 id: user._id,
                 userId: user._id,
@@ -53,6 +72,7 @@ const login = async (req, res) => {
                 userEmail: user.userEmail,
                 userPhone: user.userPhone || '',
                 role: user.role || 'customer',
+                driverStatus: user.driverStatus || 'unavailable',
                 isVendor: user.isVendor || (user.role === 'vendor'),
                 isVerified: Boolean(user.isVerified),
                 vendorName: user.vendorName || '',
@@ -60,7 +80,7 @@ const login = async (req, res) => {
                 bankDetails: user.bankDetails || {}
             }
         });
-        console.log('Un utilisateur vient de se connecter ', userEmail);
+        console.log('Un utilisateur vient de se connecter ', identifier);
 
     } catch (error) {
         res.status(500).json({ message: 'Erreur interne du serveur' });

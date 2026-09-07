@@ -1,4 +1,5 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const Product = require('../Models/Product');
 const Promotion = require('../Models/Promotion');
 const ShopOrder = require('../Models/ShopOrder');
@@ -9,6 +10,8 @@ const Review = require('../Models/Review');
 const AuditLog = require('../Models/AuditLog');
 const WithdrawalRequest = require('../Models/WithdrawalRequest');
 const Notification = require('../Models/Notification');
+const User = require('../Models/User');
+const Driver = require('../Models/Driver');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
@@ -111,6 +114,344 @@ router.get('/products', verifyToken, adminOnly, async (req, res) => {
     } catch (error) {
       console.error("[adminRoutes.js] Erreur capturée :", error);
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =============================
+// DRIVERS MANAGEMENT
+// =============================
+
+const generateDriverCode = () => {
+    const prefix = 'DRV';
+    const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+    return `${prefix}-${random}`;
+};
+
+const generateDriverPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#';
+    let password = 'Drv@';
+    while (password.length < 10) {
+        password += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return password;
+};
+
+router.get('/drivers', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const drivers = await Driver.find({}).populate('userId', 'userFirstname userSurname userEmail userPhone role driverStatus isVerified').sort({ createdAt: -1 }).lean();
+
+        const payload = drivers.map((driver) => ({
+            id: driver._id,
+            driverCode: driver.driverCode,
+            driverPassword: driver.driverPassword || '',
+            status: driver.status,
+            isActive: driver.isActive,
+            vehicleType: driver.vehicleType,
+            vehiclePlate: driver.vehiclePlate,
+            zone: driver.zone,
+            phone: driver.phone,
+            createdAt: driver.createdAt,
+            user: driver.userId ? {
+                id: driver.userId._id,
+                userFirstname: driver.userId.userFirstname,
+                userSurname: driver.userId.userSurname,
+                userEmail: driver.userId.userEmail,
+                userPhone: driver.userId.userPhone,
+                role: driver.userId.role,
+                driverStatus: driver.userId.driverStatus,
+                isVerified: driver.userId.isVerified,
+            } : null,
+        }));
+
+        return res.json({ success: true, data: payload });
+    } catch (error) {
+        console.error('[adminRoutes] GET /drivers error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const drivers = await Driver.find({}).populate('userId', 'userFirstname userSurname userEmail userPhone role').lean();
+        const rows = drivers.map((driver) => ({
+            driverId: String(driver._id),
+            userId: driver.userId ? String(driver.userId._id) : '',
+            firstName: driver.userId?.userFirstname || '',
+            lastName: driver.userId?.userSurname || '',
+            email: driver.userId?.userEmail || '',
+            phone: driver.userId?.userPhone || driver.phone || '',
+            driverCode: driver.driverCode || '',
+            driverPassword: driver.driverPassword || '',
+            vehicleType: driver.vehicleType || '',
+            vehiclePlate: driver.vehiclePlate || '',
+            zone: driver.zone || '',
+            status: driver.status || 'unavailable',
+            isActive: driver.isActive !== false,
+            createdAt: driver.createdAt ? new Date(driver.createdAt).toISOString() : '',
+        }));
+
+        const headers = ['driverId', 'userId', 'firstName', 'lastName', 'email', 'phone', 'driverCode', 'driverPassword', 'vehicleType', 'vehiclePlate', 'zone', 'status', 'isActive', 'createdAt'];
+        const csv = [headers.join(',')].concat(rows.map((row) => headers.map((header) => {
+            const value = row[header] ?? '';
+            const escaped = String(value).replace(/"/g, '""');
+            return `"${escaped}"`;
+        }).join(','))).join('\n');
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="drivers-export.csv"');
+        return res.send(csv);
+    } catch (error) {
+        console.error('[adminRoutes] GET /drivers/export error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.post('/drivers', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const {
+            userFirstname,
+            userSurname,
+            userEmail,
+            userPhone,
+            driverCode,
+            vehicleType,
+            vehiclePlate,
+            zone,
+            status,
+            userPassword,
+        } = req.body || {};
+
+        if (!userFirstname || !userSurname || !userEmail || !userPhone) {
+            return res.status(400).json({ success: false, message: 'Nom, prénom, email et numéro requis.' });
+        }
+
+        const normalizedPhone = String(userPhone).trim();
+        const normalizedEmail = String(userEmail).trim().toLowerCase();
+        const generatedPassword = userPassword || generateDriverPassword();
+
+        const requestedDriverCode = (driverCode || '').toString().trim().toUpperCase();
+        let driverIdentifier = requestedDriverCode || generateDriverCode();
+        let attempts = 0;
+        while (attempts < 10) {
+            const existingDriverCode = await Driver.findOne({ driverCode: driverIdentifier });
+            if (!existingDriverCode) break;
+            driverIdentifier = generateDriverCode();
+            attempts += 1;
+        }
+
+        let savedUser = await User.findOne({ userPhone: normalizedPhone }) || await User.findOne({ userEmail: normalizedEmail });
+
+        if (!savedUser) {
+            const newUser = new User({
+                userFirstname,
+                userSurname,
+                userEmail: normalizedEmail,
+                userPassword: await bcrypt.hash(generatedPassword, 10),
+                userPhone: normalizedPhone,
+                role: 'driver',
+                isVerified: true,
+                driverStatus: ['available', 'unavailable', 'on_delivery'].includes(status) ? status : 'available',
+            });
+            savedUser = await newUser.save();
+        } else {
+            savedUser.userFirstname = userFirstname;
+            savedUser.userSurname = userSurname;
+            savedUser.userEmail = normalizedEmail;
+            savedUser.userPhone = normalizedPhone;
+            savedUser.role = 'driver';
+            savedUser.isVerified = true;
+            savedUser.driverStatus = ['available', 'unavailable', 'on_delivery'].includes(status) ? status : 'available';
+            savedUser.userPassword = await bcrypt.hash(generatedPassword, 10);
+            await savedUser.save();
+        }
+
+        let existingDriver = await Driver.findOne({ userId: savedUser._id });
+        if (!existingDriver) {
+            existingDriver = new Driver({
+                userId: savedUser._id,
+                driverCode: driverIdentifier,
+                phone: normalizedPhone,
+                driverPassword: generatedPassword,
+                vehicleType: vehicleType || '',
+                vehiclePlate: vehiclePlate || '',
+                zone: zone || '',
+                status: ['available', 'unavailable', 'on_delivery'].includes(status) ? status : 'available',
+                isActive: true,
+                createdBy: req.user?.userId || req.user?.id || null,
+            });
+        } else {
+            existingDriver.driverCode = driverIdentifier;
+            existingDriver.phone = normalizedPhone;
+            existingDriver.driverPassword = generatedPassword;
+            existingDriver.vehicleType = vehicleType || existingDriver.vehicleType || '';
+            existingDriver.vehiclePlate = vehiclePlate || existingDriver.vehiclePlate || '';
+            existingDriver.zone = zone || existingDriver.zone || '';
+            existingDriver.status = ['available', 'unavailable', 'on_delivery'].includes(status) ? status : existingDriver.status;
+            existingDriver.isActive = true;
+            if (!existingDriver.createdBy) {
+                existingDriver.createdBy = req.user?.userId || req.user?.id || null;
+            }
+        }
+
+        const savedDriver = await existingDriver.save();
+
+        return res.status(201).json({
+            success: true,
+            message: 'Livreur créé avec succès.',
+            data: {
+                id: savedDriver._id,
+                userId: savedUser._id,
+                driverCode: savedDriver.driverCode,
+                driverPassword: savedDriver.driverPassword,
+                userPhone: savedUser.userPhone,
+                userEmail: savedUser.userEmail,
+                generatedPassword,
+                role: savedUser.role,
+                status: savedDriver.status,
+            }
+        });
+    } catch (error) {
+        console.error('[adminRoutes] POST /drivers error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/drivers/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const driver = await Driver.findById(req.params.id).populate('userId', 'userFirstname userSurname userEmail userPhone role driverStatus isVerified').lean();
+        if (!driver) {
+            return res.status(404).json({ success: false, message: 'Livreur introuvable.' });
+        }
+
+        return res.json({
+            success: true,
+            data: {
+                id: driver._id,
+                driverCode: driver.driverCode,
+                status: driver.status,
+                isActive: driver.isActive,
+                vehicleType: driver.vehicleType,
+                vehiclePlate: driver.vehiclePlate,
+                zone: driver.zone,
+                phone: driver.phone,
+                createdAt: driver.createdAt,
+                user: driver.userId ? {
+                    id: driver.userId._id,
+                    userFirstname: driver.userId.userFirstname,
+                    userSurname: driver.userId.userSurname,
+                    userEmail: driver.userId.userEmail,
+                    userPhone: driver.userId.userPhone,
+                    role: driver.userId.role,
+                    driverStatus: driver.userId.driverStatus,
+                    isVerified: driver.userId.isVerified,
+                } : null,
+            }
+        });
+    } catch (error) {
+        console.error('[adminRoutes] GET /drivers/:id error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.patch('/drivers/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const {
+            userFirstname,
+            userSurname,
+            userEmail,
+            userPhone,
+            driverCode,
+            vehicleType,
+            vehiclePlate,
+            zone,
+            status,
+            isActive,
+            userPassword,
+            driverPassword,
+        } = req.body || {};
+
+        const driver = await Driver.findById(req.params.id);
+        if (!driver) {
+            return res.status(404).json({ success: false, message: 'Livreur introuvable.' });
+        }
+
+        const user = await User.findById(driver.userId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'Compte utilisateur du livreur introuvable.' });
+        }
+
+        if (userFirstname) user.userFirstname = userFirstname;
+        if (userSurname) user.userSurname = userSurname;
+        if (userEmail) user.userEmail = String(userEmail).trim().toLowerCase();
+        if (userPhone) user.userPhone = String(userPhone).trim();
+        if (userPassword) {
+            user.userPassword = await bcrypt.hash(String(userPassword), 10);
+        }
+        if (driverPassword) {
+            driver.driverPassword = String(driverPassword);
+        }
+        if (driverCode) driver.driverCode = String(driverCode).trim().toUpperCase();
+        if (vehicleType !== undefined) driver.vehicleType = vehicleType;
+        if (vehiclePlate !== undefined) driver.vehiclePlate = vehiclePlate;
+        if (zone !== undefined) driver.zone = zone;
+        if (status && ['available', 'unavailable', 'on_delivery'].includes(status)) {
+            driver.status = status;
+            user.driverStatus = status;
+        }
+        if (isActive !== undefined) driver.isActive = Boolean(isActive);
+
+        await user.save();
+        await driver.save();
+
+        return res.json({ success: true, message: 'Livreur mis à jour.', data: driver });
+    } catch (error) {
+        console.error('[adminRoutes] PATCH /drivers/:id error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.patch('/drivers/:id/status', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { status } = req.body || {};
+        if (!['available', 'unavailable', 'on_delivery'].includes(status)) {
+            return res.status(400).json({ success: false, message: 'Statut de livreur invalide.' });
+        }
+
+        const driver = await Driver.findById(req.params.id);
+        if (!driver) {
+            return res.status(404).json({ success: false, message: 'Livreur introuvable.' });
+        }
+
+        driver.status = status;
+        await driver.save();
+
+        const user = await User.findById(driver.userId);
+        if (user) {
+            user.driverStatus = status;
+            await user.save();
+        }
+
+        return res.json({ success: true, message: 'Statut livreur mis à jour.', data: driver });
+    } catch (error) {
+        console.error('[adminRoutes] PATCH /drivers/:id/status error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.delete('/drivers/:id', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const driver = await Driver.findById(req.params.id);
+        if (!driver) {
+            return res.status(404).json({ success: false, message: 'Livreur introuvable.' });
+        }
+
+        await User.findByIdAndDelete(driver.userId);
+        await Driver.findByIdAndDelete(driver._id);
+
+        return res.json({ success: true, message: 'Livreur supprimé.' });
+    } catch (error) {
+        console.error('[adminRoutes] DELETE /drivers/:id error:', error);
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 
