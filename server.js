@@ -772,50 +772,7 @@ const startServer = async () => {
       app.use('/api/upload', uploadRoutesEarly);
     }
 
-    const handleFedapayWebhook = async (req, res) => {
-      try {
-        const signature = req.headers['x-fedapay-signature'];
-        const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
-
-        if (secret && signature) {
-          const hash = crypto.createHmac('sha256', secret)
-            .update(JSON.stringify(req.body))
-            .digest('hex');
-          if (hash !== signature) {
-            console.error('Signature FedaPay invalide !');
-            return res.status(403).send('Signature invalide');
-          }
-        }
-
-        const event = req.body;
-        if (event?.name === 'transaction.approved') {
-          const transaction = event.entity;
-          const meta = transaction?.custom_metadata || {};
-          const { orderId, type } = meta;
-
-          if (orderId) {
-            if (type === 'cart') {
-              await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-            } else if (type === 'devis') {
-              await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-            } else if (type === 'sourcing') {
-              const SourcingRequest = require('./Models/SourcingRequest');
-              await SourcingRequest.findByIdAndUpdate(orderId, {
-                status: 'paid',
-                paymentTransactionId: String(transaction.id || ''),
-              });
-            } else {
-              await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
-            }
-          }
-        }
-
-        return res.status(200).send('Webhook traité avec succès');
-      } catch (err) {
-        console.error('Erreur Webhook FedaPay :', err);
-        return res.status(500).send('Erreur webhook paiement');
-      }
-    };
+    
 
     app.use('/api/fedapay', fedapayRouter);
     app.post('/webhook/paiement', async (req, res, next) => {

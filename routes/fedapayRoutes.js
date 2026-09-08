@@ -1,3 +1,4 @@
+// routes/fedapayRoutes.js
 const express = require('express');
 const crypto = require('crypto');
 const slugify = require('slugify');
@@ -146,9 +147,7 @@ const createVendorOrdersForShopOrder = async ({ order, session }) => {
 
   const createdOrders = [];
   for (const vendorGroup of Object.values(byVendor)) {
-    // Find store by vendor user id (do not force ObjectId conversion)
     let store = await Store.findOne({ userId: vendorGroup.vendorId }).session(session);
-    // If no store exists for this vendor, try to create a minimal one so vendor can see orders
     if (!store) {
       try {
         const vendorUser = await User.findById(vendorGroup.vendorId).session(session);
@@ -157,7 +156,6 @@ const createVendorOrdersForShopOrder = async ({ order, session }) => {
         store = await Store.create([{ userId: vendorGroup.vendorId, slug: storeSlug, name: baseName, whatsapp: vendorUser ? vendorUser.userPhone : '' }], { session });
         store = Array.isArray(store) ? store[0] : store;
       } catch (e) {
-        // If creation fails, skip vendor order creation for this vendor
         console.error('[fedapayRoutes] failed to ensure vendor store:', e.message || e);
         continue;
       }
@@ -317,7 +315,6 @@ const createPaymentRecord = async ({ orderId, transaction }) => {
 };
 
 const createQRCodeRecords = async ({ order, transactionId, session }) => {
-  // Group items by vendorId (null vendor -> platform)
   const byVendor = (order.items || []).reduce((acc, item) => {
     const vid = item.vendorId ? String(item.vendorId) : 'platform';
     if (!acc[vid]) acc[vid] = { vendorId: item.vendorId || null, vendorName: item.vendorName || 'Dango Import', items: [] };
@@ -595,7 +592,6 @@ const handleFedapayWebhook = async (req, res) => {
       return res.status(200).send('Webhook déjà traité');
     }
 
-    const eventName = event?.name;
     const entity = event?.entity || {};
     if (eventName === 'transaction.approved' || entity.status === 'approved') {
       const session = await mongoose.startSession();
@@ -615,12 +611,10 @@ const handleFedapayWebhook = async (req, res) => {
         const qrDocs = await createQRCodeRecords({ order: createdOrder, transactionId, session });
         const vendorOrders = await createVendorOrdersForShopOrder({ order: createdOrder, session });
 
-        // DEBUG: log created resources for webhook processing verification
         console.debug('[fedapayRoutes] webhook debug - createdOrder:', createdOrder?._id || createdOrder);
         console.debug('[fedapayRoutes] webhook debug - qrDocs count:', Array.isArray(qrDocs) ? qrDocs.length : 0);
         console.debug('[fedapayRoutes] webhook debug - vendorOrders count:', Array.isArray(vendorOrders) ? vendorOrders.length : 0);
 
-        // attach QR ids to order
         createdOrder.qrCodeIds = (qrDocs || []).map((q) => q._id);
         await createdOrder.save({ session });
 
@@ -632,11 +626,17 @@ const handleFedapayWebhook = async (req, res) => {
         }
 
         // Vider le panier du client
-        await Cart.findOneAndUpdate({ userId: mongoose.Types.ObjectId(localTransaction.metadata.userId) }, {
-          items: [],
-          totalItems: 0,
-          totalPrice: 0,
-        }, { session });
+        // FIX: mongoose.Types.ObjectId doit être appelé avec `new` depuis Mongoose 6+/driver bson récent,
+        // sinon: "Class constructor ObjectId cannot be invoked without 'new'".
+        // On laisse Mongoose caster automatiquement la string userId — plus simple et robuste.
+        // Vider le panier du client
+        if (localTransaction.metadata?.userId) {
+          await Cart.findOneAndUpdate({ userId: localTransaction.metadata.userId }, {
+            items: [],
+            totalItems: 0,
+            totalPrice: 0,
+          }, { session });
+        }
 
         const qrCode = (qrDocs || [])[0];
 
@@ -711,10 +711,8 @@ router.get('/transaction/:id', async (req, res) => {
     const id = req.params.id;
     let transaction = null;
 
-    // Try lookup by provider transaction ID stored in `transactionId` field first (e.g. "481454")
     transaction = await TransactionModel.findOne({ transactionId: String(id) });
 
-    // If not found by transactionId and id is a valid 24-hex Mongo ObjectId, try findById
     if (!transaction && /^[0-9a-fA-F]{24}$/.test(String(id))) {
       transaction = await TransactionModel.findById(id);
     }
