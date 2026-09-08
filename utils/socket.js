@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const Admin = require('../Models/Admin');
 const User = require('../Models/User');
 const Notification = require('../Models/Notification');
+const { calculateDeliveryForItems } = require('../services/deliveryService');
 
 let io;
 
@@ -136,6 +137,29 @@ const initSocket = (server) => {
     socket.on('join_order', (orderId) => {
       if (!orderId) return;
       socket.join(`order_${orderId}`);
+    });
+
+    // Calculate delivery on demand (client -> server)
+    socket.on('calculate_delivery_for_user', async (payload) => {
+      try {
+        const { lat, lng, items } = payload || {};
+        const clientLocation = (lat !== undefined && lng !== undefined)
+          ? { lat: Number(lat), lng: Number(lng) }
+          : null;
+
+        const result = await calculateDeliveryForItems({ items: items || [], clientLocation });
+
+        // Reply to the requesting socket
+        socket.emit('delivery_price_update', { data: result });
+
+        // Also broadcast to the user's room if authenticated
+        if (socket.user && socket.user.id && io) {
+          io.to(`user_${socket.user.id}`).emit('delivery_price_update', { data: result });
+        }
+      } catch (err) {
+        // Send a simple error response back to client
+        socket.emit('delivery_price_update_error', { message: err?.message || 'Erreur calcul livraison' });
+      }
     });
 
     socket.on('disconnect', () => {
