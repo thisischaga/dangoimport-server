@@ -280,7 +280,9 @@ const createQRCodeRecords = async ({ order, transactionId, session }) => {
   });
 
   if (qrDocsPayload.length === 0) return [];
-  const created = await QRCode.create(qrDocsPayload, { session });
+  // Use insertMany with ordered:true when running inside a session/transaction
+  // to avoid Mongoose limitation on Model.create with multiple docs + session
+  const created = await QRCode.insertMany(qrDocsPayload, { session, ordered: true });
   return created;
 };
 
