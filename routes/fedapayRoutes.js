@@ -390,7 +390,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
       currency: { iso: 'XOF' },
       callback_url: process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
       custom_metadata: {
-        cartSource: FRONTEND_URL || "dangoimport.com",
+        cartSource: process.env.FRONTEND_URL || "dangoimport.com",
         promoCode: payload.promoCode || 'Pas de code promo',
       },
       customer,
