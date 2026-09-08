@@ -45,41 +45,49 @@ const normalizeShippingMethod = (value) => {
 };
 
 const createVendorOrdersForShopOrder = async ({ order, session }) => {
+  // Regrouper les items par vendorId
+  const byVendor = (order.items || []).reduce((acc, item) => {
+    const vid = item.vendorId ? String(item.vendorId) : 'platform';
+    if (!acc[vid]) acc[vid] = { vendorId: item.vendorId || null, vendorName: item.vendorName || 'Dango Import', items: [], subtotal: 0 };
+    acc[vid].items.push(item);
+    acc[vid].subtotal += Number(item.subtotal || item.price * item.quantity || 0);
+    return acc;
+  }, {});
+
   const createdOrders = [];
   for (const vendorGroup of Object.values(byVendor)) {
     let store = await Store.findOne({ userId: vendorGroup.vendorId }).session(session);
     if (!store) {
       try {
-        const vendorUser = await User.findById(vendorGroup.vendorId).session(session);
+        const vendorUser = vendorGroup.vendorId ? await User.findById(vendorGroup.vendorId).session(session) : null;
         const baseName = vendorGroup.vendorName || (vendorUser ? (vendorUser.vendorName || `${vendorUser.userFirstname || ''} ${vendorUser.userSurname || ''}`.trim()) : 'Ma boutique');
         const storeSlug = `${slugify(baseName || 'ma-boutique', { lower: true, strict: true })}-${crypto.randomBytes(3).toString('hex')}`;
-        store = await Store.create([{ userId: vendorGroup.vendorId, slug: storeSlug, name: baseName, whatsapp: vendorUser ? vendorUser.userPhone : '' }], { session });
-        store = Array.isArray(store) ? store[0] : store;
+        const createdStores = await Store.create([{ userId: vendorGroup.vendorId, slug: storeSlug, name: baseName, whatsapp: vendorUser ? vendorUser.userPhone : '' }], { session });
+        store = Array.isArray(createdStores) ? createdStores[0] : createdStores;
       } catch (e) {
         console.error('[fedapayRoutes] failed to ensure vendor store:', e.message || e);
         continue;
       }
     }
 
-    const shippingShare = order.subtotal ? Math.round(order.shippingCost * (vendorGroup.subtotal / order.subtotal)) : 0;
-    const vendorTotal = vendorGroup.subtotal + shippingShare;
+    const shippingShare = order.subtotal ? Math.round((order.shippingCost || 0) * (vendorGroup.subtotal / (order.subtotal || 1))) : 0;
+    const vendorTotal = (vendorGroup.subtotal || 0) + shippingShare;
 
-    const [vendorOrder] = await VendorOrder.create([
-      {
-        storeId: store._id,
-        shopOrderId: order._id,
-        customerName: order.customerName,
-        customerPhone: order.customerPhone,
-        total: vendorTotal,
-        status: 'pending',
-        items: vendorGroup.items.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          price: item.price,
-        })),
-      }
-    ], { session });
+    const vendorOrderDoc = {
+      storeId: store._id,
+      shopOrderId: order._id,
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      total: vendorTotal,
+      status: 'pending',
+      items: vendorGroup.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        price: item.price,
+      })),
+    };
 
+    const [vendorOrder] = await VendorOrder.create([vendorOrderDoc], { session });
     createdOrders.push(vendorOrder);
   }
 
