@@ -201,6 +201,41 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
   return order[0];
 };
 
+const createPendingShopOrder = async ({ transaction }) => {
+  const metadata = transaction.metadata || {};
+  const userId = metadata.userId;
+  const customer = transaction.customer || {};
+  const shippingAddress = metadata.shippingAddress || {};
+  const items = metadata.items || [];
+  const subtotal = metadata.subtotal || transaction.amount || 0;
+  const shippingCost = metadata.shippingCost || 0;
+  const tax = metadata.tax || 0;
+  const discount = metadata.discount || 0;
+  const total = metadata.total || Math.max(0, subtotal + shippingCost + tax - discount);
+  const shippingMethod = normalizeShippingMethod(metadata.shippingMethod || 'standard');
+
+  const orderPayload = buildOrder({
+    userId,
+    customer,
+    shippingAddress,
+    items,
+    subtotal,
+    shippingCost,
+    tax,
+    discount,
+    total,
+    shippingMethod,
+  });
+
+  orderPayload.status = 'pending';
+  orderPayload.paymentStatus = 'pending';
+  orderPayload.paymentMethod = 'FedaPay';
+  orderPayload.history = [...(orderPayload.history || []), 'Commande en attente de paiement FedaPay'];
+
+  const created = await ShopOrder.create([orderPayload]);
+  return Array.isArray(created) ? created[0] : created;
+};
+
 const createPaymentRecord = async ({ orderId, transaction }) => {
   return Payment.create({
     orderId,
