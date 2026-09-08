@@ -135,7 +135,7 @@ const corsOptions = {
       'http://localhost:5174',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:5174',
-      "https://ddtyywq-dav228-8081.exp.direct/",
+      "https://ddtyywq-dav228-8081.exp.direct",
       'https://dangoimport.com',
       'https://www.dangoimport.com',
       'https://dangoimport-admin-eiim.vercel.app',

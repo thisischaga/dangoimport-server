@@ -3,7 +3,6 @@ const jwt = require('jsonwebtoken');
 const Admin = require('../Models/Admin');
 const User = require('../Models/User');
 const Notification = require('../Models/Notification');
-const { calculateDeliveryForItems } = require('../services/deliveryService');
 
 let io;
 
@@ -149,6 +148,9 @@ const initSocket = (server) => {
         const clientLocation = (lat !== undefined && lng !== undefined)
           ? { lat: Number(lat), lng: Number(lng) }
           : null;
+
+        // Charger la fonction dynamiquement pour éviter la dépendance circulaire
+        const { calculateDeliveryForItems } = require('../services/deliveryService');
 
         const result = await calculateDeliveryForItems({ items: items || [], clientLocation });
 
