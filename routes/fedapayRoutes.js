@@ -528,6 +528,8 @@ const handleFedapayWebhook = async (req, res) => {
   const eventId = event?.id || event?.event_id || crypto.createHash('sha256').update(payloadString).digest('hex');
 
   try {
+    const allowUnsignedWebhook = process.env.NODE_ENV !== 'production' || !secret;
+
     if (secret && signature) {
       try {
         Webhook.constructEvent(payloadString, signature, secret);
@@ -536,6 +538,18 @@ const handleFedapayWebhook = async (req, res) => {
         console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret), eventName, entityId });
         return res.status(403).send('Signature invalide');
       }
+    } else if (!allowUnsignedWebhook) {
+      await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature webhook FedaPay manquante en production' });
+      console.error('[fedapayRoutes] webhook signature missing in production', { signature, secretConfigured: Boolean(secret), eventName, entityId });
+      return res.status(403).send('Signature invalide');
+    } else {
+      console.warn('[fedapayRoutes] skipping signature validation for unsigned local/test webhook', {
+        eventName,
+        entityId,
+        signaturePresent: Boolean(signature),
+        secretConfigured: Boolean(secret),
+        nodeEnv: process.env.NODE_ENV,
+      });
     }
 
     const existingWebhook = await WebhookLog.findOne({ eventId });

@@ -22,7 +22,19 @@ const handleWebhook = async ({ req, res }) => {
   const eventId = event?.id || event?.event_id || crypto.createHash('sha256').update(payloadString).digest('hex');
 
   try {
-    verifyWebhookSignature({ payloadString, signature, secret });
+    const allowUnsignedWebhook = process.env.NODE_ENV !== 'production' || !secret;
+    if (secret && signature) {
+      verifyWebhookSignature({ payloadString, signature, secret });
+    } else if (!allowUnsignedWebhook) {
+      throw new Error('Signature webhook FedaPay manquante en production');
+    } else {
+      console.warn('[webhookService] skipping signature validation for unsigned local/test webhook', {
+        eventId,
+        signaturePresent: Boolean(signature),
+        secretConfigured: Boolean(secret),
+        nodeEnv: process.env.NODE_ENV,
+      });
+    }
   } catch (error) {
     await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: error.message });
     return res.status(403).send('Signature invalide');
