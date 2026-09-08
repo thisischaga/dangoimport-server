@@ -385,14 +385,13 @@ router.post('/checkout', verifyToken, async (req, res) => {
     };
 
     const transactionPayload = {
-      description: `Paiement Dango Import - ${customer.firstname} ${customer.lastname}`,
+      description: `Paiement Dango Import pour achat de produit(s) sur la marketplace de Dangoimport par ${customer.firstname} ${customer.lastname}`,
       amount: Math.round(total),
       currency: { iso: 'XOF' },
       callback_url: process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
       custom_metadata: {
-        cartSource: 'frontend',
-        shippingMethod,
-        promoCode: payload.promoCode || '',
+        cartSource: FRONTEND_URL || "dangoimport.com",
+        promoCode: payload.promoCode || 'Pas de code promo',
       },
       customer,
     };
@@ -434,7 +433,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
         discount,
         total,
         shippingMethod,
-        promoCode: payload.promoCode || '',
+        promoCode: payload.promoCode || 'Pas de code promo',
       },
       orderId: pendingOrder._id,
     });
@@ -457,7 +456,13 @@ const handleFedapayWebhook = async (req, res) => {
     return res.status(503).send('Paiement FedaPay non configuré.');
   }
 
-  const signature = req.headers['x-fedapay-signature'];
+  // Rechercher la signature dans plusieurs variantes d'en-têtes courantes
+  let signature = req.headers['x-fedapay-signature'] || req.headers['fedapay-signature'] || req.headers['signature'] || req.headers['x-signature'] || null;
+  if (!signature) {
+    // tenter de repérer dynamiquement une clé contenant 'fedapay' et 'signature'
+    const foundKey = Object.keys(req.headers).find(k => k.toLowerCase().includes('fedapay') && k.toLowerCase().includes('signature'));
+    if (foundKey) signature = req.headers[foundKey];
+  }
   const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
   const event = req.body;
   const eventName = event?.name || event?.event || 'unknown.event';
@@ -469,18 +474,38 @@ const handleFedapayWebhook = async (req, res) => {
     const allowUnsignedWebhook = process.env.NODE_ENV !== 'production' || !secret;
 
     if (secret && signature) {
+      // Premièrement essayer la vérification via la librairie
+      let verifiedBySdk = false;
       try {
         Webhook.constructEvent(payloadString, signature, secret);
-      } catch (err) {
-        await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
-        console.error('[fedapayRoutes] webhook signature invalid', err.message, {
-          signature,
-          secretConfigured: Boolean(secret),
-          eventName,
-          entityId,
-          payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 1000) : null,
-        });
-        return res.status(403).json({ error: 'Signature invalide', details: err.message });
+        verifiedBySdk = true;
+      } catch (sdkErr) {
+        // SDK n'a pas accepté la signature — on va essayer une vérification HMAC simple
+        console.warn('[fedapayRoutes] SDK signature validation failed, attempting HMAC fallback', { sdkErr: sdkErr.message });
+      }
+
+      if (!verifiedBySdk) {
+        try {
+          const expected = crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
+          const raw = String(signature || '').trim();
+          const ok = raw === expected || raw === `sha256=${expected}` || raw.includes(expected) || raw.split(',').some(s => s.includes(expected));
+          if (!ok) {
+            await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide (fallback HMAC): expected ${expected.slice(0,8)}...` });
+            console.error('[fedapayRoutes] webhook signature invalid after HMAC fallback', {
+              signature: raw,
+              expectedSnippet: expected.slice(0, 16) + '...',
+              secretConfigured: Boolean(secret),
+              eventName,
+              entityId,
+              payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 1000) : null,
+            });
+            return res.status(403).json({ error: 'Signature invalide', details: 'HMAC fallback mismatch' });
+          }
+        } catch (err) {
+          await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
+          console.error('[fedapayRoutes] webhook signature verification error', err.message, { eventName, entityId });
+          return res.status(403).json({ error: 'Signature verification error', details: err.message });
+        }
       }
     } else if (!allowUnsignedWebhook) {
       await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature webhook FedaPay manquante en production' });
