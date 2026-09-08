@@ -21,6 +21,7 @@ const Notification = require('../Models/Notification');
 const emailService = require('../utils/emailService');
 const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
+const { calculateDeliveryForItems } = require('../services/deliveryService');
 
 const router = express.Router();
 
@@ -378,7 +379,26 @@ router.post('/checkout', verifyToken, async (req, res) => {
       });
     }
 
-    const shippingCost = Number(payload.shippingCost || payload.deliveryFee || 0);
+    // Compute shipping cost from payload if not provided explicitly
+    let shippingCost = Number(payload.shippingCost || payload.deliveryFee || 0);
+    try {
+      if ((!shippingCost || shippingCost === 0) && (payload.lat || payload.lng || payload.clientLocation)) {
+        const clientLocation = payload.clientLocation || (payload.lat && payload.lng ? { lat: Number(payload.lat), lng: Number(payload.lng) } : null);
+        if (clientLocation) {
+          try {
+            const deliveryResult = await calculateDeliveryForItems({ items: orderItems, clientLocation });
+            // Sum fees from groups
+            if (deliveryResult && Array.isArray(deliveryResult.groups)) {
+              shippingCost = deliveryResult.groups.reduce((s, g) => s + (Number(g.fee || 0)), 0);
+            }
+          } catch (dErr) {
+            console.warn('[fedapayRoutes] delivery calculation failed, falling back to provided fee', dErr.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[fedapayRoutes] shipping cost compute error:', err.message);
+    }
     const discount = Number(payload.discount || 0);
     const tax = Number(payload.tax || 0);
     const total = Number(payload.total || payload.totalPrice || Math.max(0, subtotal + shippingCost + tax - discount));
