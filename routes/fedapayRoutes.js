@@ -473,8 +473,14 @@ const handleFedapayWebhook = async (req, res) => {
         Webhook.constructEvent(payloadString, signature, secret);
       } catch (err) {
         await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
-        console.error('[fedapayRoutes] webhook signature invalid', err.message, { signature, secretConfigured: Boolean(secret), eventName, entityId });
-        return res.status(403).send('Signature invalide');
+        console.error('[fedapayRoutes] webhook signature invalid', err.message, {
+          signature,
+          secretConfigured: Boolean(secret),
+          eventName,
+          entityId,
+          payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 1000) : null,
+        });
+        return res.status(403).json({ error: 'Signature invalide', details: err.message });
       }
     } else if (!allowUnsignedWebhook) {
       await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature webhook FedaPay manquante en production' });
@@ -513,18 +519,18 @@ const handleFedapayWebhook = async (req, res) => {
       webhookLog.status = 'failed';
       webhookLog.error = 'Transaction ID absent dans le payload';
       await webhookLog.save();
-      console.error('[fedapayRoutes] webhook missing transaction id', { event });
-      return res.status(400).send('Transaction ID absent');
+      console.error('[fedapayRoutes] webhook missing transaction id', { event, payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 1000) : null });
+      return res.status(400).json({ error: 'Transaction ID absent', payload: event });
     }
 
     const localTransaction = await TransactionModel.findOne({ transactionId });
-    console.log('[fedapayRoutes] local transaction lookup', { transactionId, localTransaction: localTransaction ? { id: localTransaction._id, status: localTransaction.status, webhookProcessed: localTransaction.webhookProcessed } : null });
+    console.log('[fedapayRoutes] local transaction lookup', { transactionId, localTransaction: localTransaction ? { id: localTransaction._id, status: localTransaction.status, webhookProcessed: localTransaction.webhookProcessed } : null, payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 500) : null });
     if (!localTransaction) {
       webhookLog.status = 'failed';
       webhookLog.error = 'Transaction locale introuvable';
       await webhookLog.save();
-      console.error('[fedapayRoutes] local transaction not found', { transactionId });
-      return res.status(404).send('Transaction introuvable');
+      console.error('[fedapayRoutes] local transaction not found', { transactionId, payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 2000) : null });
+      return res.status(404).json({ error: 'Transaction introuvable', transactionId, exampleLocalQuery: { transactionId } });
     }
 
     if (localTransaction.webhookProcessed) {
