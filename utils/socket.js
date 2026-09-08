@@ -39,11 +39,12 @@ const initSocket = (server) => {
   });
 
   io.on('connection', (socket) => {
-    // console.log(`[Socket] Nouveau client connecté: ${socket.id}`);
+    console.log(`[Socket] Nouveau client connecté: ${socket.id}`);
 
     // Si le client fournit un token via handshake.auth.token, vérifier et auto-join
     try {
       const token = socket.handshake?.auth?.token;
+      console.log(`[Socket] Handshake token present: ${Boolean(token)}`);
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const userId = decoded.userId || decoded.id;
@@ -72,11 +73,12 @@ const initSocket = (server) => {
       }
     } catch (err) {
       // Si token invalide, on n'empêche pas la connexion mais on logue
-      // console.warn('[Socket] Token socket invalide ou expiré:', err?.message || err);
+      console.warn('[Socket] Token socket invalide ou expiré:', err?.message || err);
     }
 
     // Endpoint d'authentification post-connexion (fallback si token non fourni en handshake)
     socket.on('authenticate', async (payload) => {
+      console.log(`[Socket:${socket.id}] authenticate payload:`, Boolean(payload));
       const token = (payload && payload.token) || null;
       if (!token) {
         socket.emit('unauthorized', { message: 'Aucun token fourni' });
@@ -141,6 +143,7 @@ const initSocket = (server) => {
 
     // Calculate delivery on demand (client -> server)
     socket.on('calculate_delivery_for_user', async (payload) => {
+      console.log(`[Socket:${socket.id}] calculate_delivery_for_user payload:`, payload);
       try {
         const { lat, lng, items } = payload || {};
         const clientLocation = (lat !== undefined && lng !== undefined)
@@ -149,14 +152,19 @@ const initSocket = (server) => {
 
         const result = await calculateDeliveryForItems({ items: items || [], clientLocation });
 
+        console.log(`[Socket:${socket.id}] delivery result computed, groups:`, (result && result.groups && result.groups.length) || 0);
+
         // Reply to the requesting socket
         socket.emit('delivery_price_update', { data: result });
+        console.log(`[Socket:${socket.id}] emitted delivery_price_update to socket`);
 
         // Also broadcast to the user's room if authenticated
         if (socket.user && socket.user.id && io) {
           io.to(`user_${socket.user.id}`).emit('delivery_price_update', { data: result });
+          console.log(`[Socket] broadcasted delivery_price_update to user_${socket.user.id}`);
         }
       } catch (err) {
+        console.error(`[Socket:${socket.id}] error calculating delivery:`, err);
         // Send a simple error response back to client
         socket.emit('delivery_price_update_error', { message: err?.message || 'Erreur calcul livraison' });
       }
