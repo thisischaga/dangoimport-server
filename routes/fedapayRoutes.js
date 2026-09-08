@@ -37,114 +37,13 @@ const normalizePhoneNumber = (value) => {
 const normalizeShippingMethod = (value) => {
   if (!value) return 'standard';
   const normalized = String(value).trim().toLowerCase();
-  if (['standard', 'livraison standard', 'livraison_standarde', 'livraison_standard', 'standard_delivery'].includes(normalized)) {
-    return 'standard';
-  }
-  if (['express', 'livraison express', 'livraison_express', 'express_delivery'].includes(normalized)) {
-    return 'express';
-  }
-  if (['pickup', 'retrait', 'pickup_point', 'pick-up', 'retrait_sur_place', 'retrait_en_magasin'].includes(normalized)) {
-    return 'pickup';
-  }
+  if (['standard', 'livraison standard', 'livraison_standarde', 'livraison_standard', 'standard_delivery'].includes(normalized)) return 'standard';
+  if (['express', 'livraison express', 'livraison_express', 'express_delivery'].includes(normalized)) return 'express';
+  if (['pickup', 'retrait', 'pickup_point', 'pick-up', 'retrait_sur_place', 'retrait_en_magasin'].includes(normalized)) return 'pickup';
   return 'standard';
 };
 
-const generateOrderNumber = () => {
-  const timestamp = Date.now().toString();
-  const random = crypto.randomBytes(4).toString('hex').toUpperCase();
-  return `DI-${random}-${timestamp.slice(-8)}`;
-};
-
-const createLocalTransaction = async ({ checkoutUrl, transactionId, amount, currency, user, metadata, provider = 'fedapay', orderId = null }) => {
-  return TransactionModel.create({
-    checkoutUrl,
-    transactionId,
-    amount,
-    currency,
-    customer: user,
-    metadata,
-    provider,
-    status: 'pending',
-    orderId,
-  });
-};
-
-const createPendingShopOrder = async ({ transaction }) => {
-  const metadata = transaction.metadata || {};
-  const userId = metadata.userId;
-  const customer = transaction.customer;
-  const shippingAddress = metadata.shippingAddress || {};
-  const items = metadata.items || [];
-  const subtotal = metadata.subtotal || transaction.amount;
-  const shippingCost = metadata.shippingCost || 0;
-  const tax = metadata.tax || 0;
-  const discount = metadata.discount || 0;
-  const total = metadata.total || transaction.amount;
-  const shippingMethod = normalizeShippingMethod(metadata.shippingMethod || 'standard');
-
-  const orderItems = [];
-  for (const item of items) {
-    const product = await Product.findById(item.productId);
-    if (!product) {
-      throw new Error(`Produit introuvable : ${item.productId}`);
-    }
-    const unitPrice = Number(item.price || product.salePrice || product.price || 0);
-    orderItems.push({
-      productId: product._id,
-      productName: product.name,
-      productImage: product.images?.[0]?.url || product.image || '',
-      vendorId: product.vendorId,
-      vendorName: product.vendorName || item.vendorName || 'Vendeur Indépendant',
-      price: unitPrice,
-      originalPrice: product.price,
-      salePrice: product.salePrice || 0,
-      category: product.category,
-      quantity: item.quantity,
-      selectedOptions: item.selectedOptions || {},
-      subtotal: item.subtotal || unitPrice * item.quantity,
-      delivered: false,
-    });
-  }
-
-  const orderPayload = buildOrder({
-    userId,
-    customer,
-    shippingAddress,
-    items: orderItems,
-    subtotal,
-    shippingCost,
-    tax,
-    discount,
-    total,
-    shippingMethod,
-  });
-
-  orderPayload.status = 'pending';
-  orderPayload.paymentStatus = 'pending';
-  orderPayload.paymentMethod = 'FedaPay';
-  orderPayload.history = ['Commande créée en attente de paiement'];
-
-  const [order] = await ShopOrder.create([orderPayload]);
-  return order;
-};
-
 const createVendorOrdersForShopOrder = async ({ order, session }) => {
-  const byVendor = order.items.reduce((acc, item) => {
-    if (!item.vendorId) return acc;
-    const vendorId = item.vendorId.toString();
-    if (!acc[vendorId]) {
-      acc[vendorId] = {
-        vendorId: item.vendorId,
-        vendorName: item.vendorName || 'Vendeur Indépendant',
-        items: [],
-        subtotal: 0,
-      };
-    }
-    acc[vendorId].items.push(item);
-    acc[vendorId].subtotal += Number(item.subtotal || item.price * item.quantity || 0);
-    return acc;
-  }, {});
-
   const createdOrders = [];
   for (const vendorGroup of Object.values(byVendor)) {
     let store = await Store.findOne({ userId: vendorGroup.vendorId }).session(session);
@@ -640,16 +539,7 @@ const handleFedapayWebhook = async (req, res) => {
 
         const qrCode = (qrDocs || [])[0];
 
-        // Notifications et emails
-        await notifyCustomerAndVendors({ order: createdOrder, qrCode });
-        await emailService.sendOrderConfirmedEmail({
-          customerEmail: createdOrder.customerEmail,
-          customerName: createdOrder.customerName,
-          orderNumber: createdOrder.orderNumber,
-          total: createdOrder.total,
-          qrCode: qrCode?.code,
-        });
-
+        // Create an order history entry within the transaction
         await OrderHistory.create([{
           orderId: createdOrder._id,
           event: 'payment_confirmed',
@@ -661,6 +551,7 @@ const handleFedapayWebhook = async (req, res) => {
           createdBy: 'system',
         }], { session });
 
+        // Update transaction record inside the DB transaction so the commit guarantees persistence
         localTransaction.status = 'approved';
         localTransaction.orderId = createdOrder._id;
         localTransaction.webhookProcessed = true;
@@ -668,8 +559,29 @@ const handleFedapayWebhook = async (req, res) => {
 
         webhookLog.status = 'processed';
         await webhookLog.save({ session });
+
+        // Commit the DB transaction before sending external notifications/emails
         await session.commitTransaction();
         session.endSession();
+
+        // Notifications and emails are sent after commit to avoid sending confirmations when DB commit fails
+        try {
+          await notifyCustomerAndVendors({ order: createdOrder, qrCode });
+        } catch (notifyErr) {
+          console.error('[fedapayRoutes] notifyCustomerAndVendors failed after commit', notifyErr);
+        }
+
+        try {
+          await emailService.sendOrderConfirmedEmail({
+            customerEmail: createdOrder.customerEmail,
+            customerName: createdOrder.customerName,
+            orderNumber: createdOrder.orderNumber,
+            total: createdOrder.total,
+            qrCode: qrCode?.code,
+          });
+        } catch (emailErr) {
+          console.error('[fedapayRoutes] sendOrderConfirmedEmail failed after commit', emailErr);
+        }
 
         return res.status(200).send('Webhook traité avec succès');
       } catch (error) {
@@ -678,9 +590,22 @@ const handleFedapayWebhook = async (req, res) => {
         webhookLog.status = 'failed';
         webhookLog.error = error.message;
         await webhookLog.save();
-        localTransaction.status = 'failed';
-        localTransaction.webhookProcessed = true;
-        await localTransaction.save();
+
+        // If the external entity reports failed/canceled, mark transaction failed.
+        // Otherwise leave the transaction status as-is (or pending) so it can be reconciled/retried.
+        try {
+          if (entity.status === 'failed' || entity.status === 'canceled') {
+            localTransaction.status = 'failed';
+            localTransaction.webhookProcessed = true;
+          } else {
+            // do not mark failed when external status was approved; allow retry/reconciliation
+            localTransaction.webhookProcessed = false;
+          }
+          await localTransaction.save();
+        } catch (saveErr) {
+          console.error('[fedapayRoutes] failed to update localTransaction after abort', saveErr);
+        }
+
         console.error('[fedapayRoutes] webhook processing failed:', error);
         return res.status(500).send('Erreur interne pendant le traitement du webhook');
       }
