@@ -49,12 +49,22 @@ async function determineDeliveryProvider({ store, clientLocation }) {
     if (sellerDelivery.enabled && sellerLoc && client) {
       const dist = haversineKm(sellerLoc, client);
       if (dist <= (Number(sellerDelivery.radiusKm) || 0)) {
+        // compute fee: use sellerDelivery.baseFee and ratePerKm when provided, otherwise fallback
+        const baseFee = Number(sellerDelivery.baseFee || 0);
+        const ratePerKm = Number(sellerDelivery.ratePerKm || 0);
+        let fee = 0;
+        if (ratePerKm > 0) {
+          fee = Math.max(baseFee, Math.round(ratePerKm * dist));
+        } else {
+          // sensible default: base 500 FCFA + 200 FCFA per km
+          fee = Math.max(baseFee || 500, Math.round(200 * dist) + (baseFee || 0));
+        }
         return {
           provider: 'SELLER',
           reason: 'within_radius',
           distanceKm: dist,
           sellerDeliveryAvailable: true,
-          fee: 0,
+          fee,
           estimatedDeliveryTime: '1-3 jours',
         };
       }
@@ -80,12 +90,20 @@ async function determineDeliveryProvider({ store, clientLocation }) {
     if (sellerDelivery.enabled && sellerLoc && client) {
       const dist = haversineKm(sellerLoc, client);
       if (dist <= (Number(sellerDelivery.radiusKm) || 0)) {
+        const baseFee = Number(sellerDelivery.baseFee || 0);
+        const ratePerKm = Number(sellerDelivery.ratePerKm || 0);
+        let fee = 0;
+        if (ratePerKm > 0) {
+          fee = Math.max(baseFee, Math.round(ratePerKm * dist));
+        } else {
+          fee = Math.max(baseFee || 500, Math.round(200 * dist) + (baseFee || 0));
+        }
         return {
           provider: 'SELLER',
           reason: 'hybrid_within_radius',
           distanceKm: dist,
           sellerDeliveryAvailable: true,
-          fee: 0,
+          fee,
           estimatedDeliveryTime: '1-3 jours',
         };
       }

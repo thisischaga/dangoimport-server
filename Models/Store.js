@@ -69,6 +69,9 @@ const storeSchema = new mongoose.Schema({
     sellerDelivery: {
       enabled: { type: Boolean, default: false },
       radiusKm: { type: Number, default: 0 },
+      // Tarification optionnelle pour la livraison vendeurs
+      baseFee: { type: Number, default: 0 },
+      ratePerKm: { type: Number, default: 0 },
       location: {
         type: { type: String, enum: ['Point'], default: 'Point' },
         coordinates: { type: [Number], default: [0, 0] }
