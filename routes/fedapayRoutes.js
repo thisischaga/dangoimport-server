@@ -95,6 +95,12 @@ const logWebhookEvent = async ({ eventId, payload, signature, status, error }) =
   });
 };
 
+const generateOrderNumber = () => {
+  const timestamp = Date.now().toString();
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+  return `DI-${random}-${timestamp.slice(-8)}`;
+};
+
 const orderDeliveryDate = (shippingMethod) => {
   const date = new Date();
   if (shippingMethod === 'express') date.setDate(date.getDate() + 2);
