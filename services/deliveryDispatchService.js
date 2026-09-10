@@ -85,9 +85,13 @@ async function validateDriverForAssignment(driverId) {
   if (!driverUser) {
     throw new Error('Compte utilisateur du livreur introuvable.');
   }
-  if (String(driverUser.role) !== 'driver') {
+
+  // Un même compte peut être client, vendeur et livreur.
+  // Le profil Driver est la source de vérité pour l’assignation d’une livraison.
+  if (!driverProfile.userId) {
     throw new Error('Le compte sélectionné n’est pas un compte livreur.');
   }
+
   if (!driverProfile.isActive) {
     throw new Error('Ce livreur n’est pas actif.');
   }
