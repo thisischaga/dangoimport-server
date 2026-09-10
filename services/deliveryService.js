@@ -65,15 +65,56 @@ function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 100 }) {
   };
 }
 
+/**
+ * Algorithme de détection automatique du pays à partir des coordonnées GPS ou de l'adresse.
+ * - Longitude < 1.8° E ou Mots-clés (Togo, Lomé, Agoè, Adidogomé...) => TOGO
+ * - Longitude >= 1.8° E ou Mots-clés (Bénin, Benin, Cotonou, Calavi...) => BENIN
+ */
+function detectCountryFromLocation({ coords, country = '', city = '', address = '' } = {}) {
+  const textStr = `${country || ''} ${city || ''} ${address || ''}`.toLowerCase();
+
+  if (textStr.includes('togo') || textStr.includes('lomé') || textStr.includes('lome') || textStr.includes('agoè') || textStr.includes('adidogomé')) {
+    return 'TOGO';
+  }
+
+  if (textStr.includes('bénin') || textStr.includes('benin') || textStr.includes('cotonou') || textStr.includes('calavi') || textStr.includes('akpakpa') || textStr.includes('porto-novo')) {
+    return 'BENIN';
+  }
+
+  const lng = Number(coords?.lng ?? coords?.longitude ?? (Array.isArray(coords) ? coords[0] : NaN));
+  if (Number.isFinite(lng)) {
+    if (lng < 1.8) {
+      return 'TOGO';
+    } else {
+      return 'BENIN';
+    }
+  }
+
+  return 'BENIN';
+}
+
 async function determineDeliveryProvider({ store, clientLocation }) {
   const DEFAULT_DANGO_FEE = 1000;
   const HUB_BENIN = { lat: 6.3654, lng: 2.4252 }; // Cotonou, Bénin
-  const HUB_TOGO = { lat: 6.1375, lng: 1.2228 }; // Lomé, Togo
+  const HUB_TOGO = { lat: 6.286388, lng: 1.127975 }; // Togo Hub / Point de départ (6.286388, 1.127975)
+
+  const client = toLngLat(clientLocation);
+
+  // Détecter le pays du client et du magasin
+  const detectedCountry = detectCountryFromLocation({
+    coords: client,
+    country: store?.country,
+    city: store?.city,
+    address: store?.address,
+  });
+
+  const defaultHub = detectedCountry === 'TOGO' ? HUB_TOGO : HUB_BENIN;
 
   if (!store) {
     return {
       provider: 'DANGOIMPORT',
       reason: 'no_store',
+      country: detectedCountry,
       sellerDeliveryAvailable: false,
       fee: DEFAULT_DANGO_FEE,
       estimatedDeliveryTime: '3-5 jours',
@@ -82,7 +123,6 @@ async function determineDeliveryProvider({ store, clientLocation }) {
 
   const mode = store.delivery?.mode || 'DANGOIMPORT';
   const sellerDelivery = store.delivery?.sellerDelivery || {};
-  const client = toLngLat(clientLocation);
 
   // Check seller location in sellerDelivery.location or store.location
   let rawCoords = (sellerDelivery.location && sellerDelivery.location.coordinates) || (store.location && store.location.coordinates);
@@ -92,21 +132,9 @@ async function determineDeliveryProvider({ store, clientLocation }) {
   }
   let sellerLoc = toLngLat(rawCoords);
 
-  // Déterminer le point de départ vendeur par pays/ville s'il n'a pas encore de GPS explicite
+  // Si le magasin n'a pas de coordonnées GPS explicites, utiliser le Hub du pays détecté (Togo ou Bénin)
   if (!sellerLoc) {
-    const storeCountry = String(store.country || '').toLowerCase();
-    const storeCity = String(store.city || '').toLowerCase();
-
-    if (storeCountry.includes('togo') || storeCity.includes('lomé') || storeCity.includes('lome')) {
-      sellerLoc = HUB_TOGO;
-    } else if (storeCountry.includes('bénin') || storeCountry.includes('benin') || storeCity.includes('cotonou')) {
-      sellerLoc = HUB_BENIN;
-    } else if (client && client.lng < 1.8) {
-      // Si la position du client se trouve au Togo (longitude < 1.8°)
-      sellerLoc = HUB_TOGO;
-    } else {
-      sellerLoc = HUB_BENIN;
-    }
+    sellerLoc = defaultHub;
   }
 
   if (!client) {
