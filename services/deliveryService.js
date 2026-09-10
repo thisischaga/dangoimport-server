@@ -87,12 +87,17 @@ async function determineDeliveryProvider({ store, clientLocation }) {
   if (Array.isArray(rawCoords) && (rawCoords[0] === 0 && rawCoords[1] === 0)) {
     rawCoords = null;
   }
-  const sellerLoc = toLngLat(rawCoords);
+  let sellerLoc = toLngLat(rawCoords);
 
-  if (!sellerLoc || !client) {
+  // Si le vendeur n'a pas encore configuré ses coordonnées GPS, utiliser Cotonou comme point de départ par défaut
+  if (!sellerLoc) {
+    sellerLoc = { lat: 6.3654, lng: 2.4252 };
+  }
+
+  if (!client) {
     return {
       provider: 'DANGOIMPORT',
-      reason: 'missing_geo',
+      reason: 'missing_client_geo',
       sellerDeliveryAvailable: false,
       fee: DEFAULT_DANGO_FEE,
       estimatedDeliveryTime: '3-5 jours',
