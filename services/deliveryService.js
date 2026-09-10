@@ -65,12 +65,14 @@ function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 150 }) {
 }
 
 async function determineDeliveryProvider({ store, clientLocation }) {
+  const DEFAULT_DANGO_FEE = 1000;
+
   if (!store) {
     return {
       provider: 'DANGOIMPORT',
       reason: 'no_store',
       sellerDeliveryAvailable: false,
-      fee: 0,
+      fee: DEFAULT_DANGO_FEE,
       estimatedDeliveryTime: '3-5 jours',
     };
   }
@@ -78,14 +80,21 @@ async function determineDeliveryProvider({ store, clientLocation }) {
   const mode = store.delivery?.mode || 'DANGOIMPORT';
   const sellerDelivery = store.delivery?.sellerDelivery || {};
   const client = toLngLat(clientLocation);
-  const sellerLoc = toLngLat((sellerDelivery.location && sellerDelivery.location.coordinates) || (store.location && store.location.coordinates));
+
+  // Check seller location in sellerDelivery.location or store.location
+  let rawCoords = (sellerDelivery.location && sellerDelivery.location.coordinates) || (store.location && store.location.coordinates);
+  // Avoid using [0,0] as valid coordinates
+  if (Array.isArray(rawCoords) && (rawCoords[0] === 0 && rawCoords[1] === 0)) {
+    rawCoords = null;
+  }
+  const sellerLoc = toLngLat(rawCoords);
 
   if (!sellerLoc || !client) {
     return {
       provider: 'DANGOIMPORT',
       reason: 'missing_geo',
       sellerDeliveryAvailable: false,
-      fee: 0,
+      fee: DEFAULT_DANGO_FEE,
       estimatedDeliveryTime: '3-5 jours',
     };
   }
@@ -109,14 +118,18 @@ async function determineDeliveryProvider({ store, clientLocation }) {
     };
   }
 
+  // Calcul des frais DangoImport basés sur la distance (base: 1000 FCFA + 100 FCFA/km)
+  const dangoPricing = getSellerFee({ distanceKm: dist, baseFee: 1000, ratePerKm: 100 });
+
   if (mode === 'SELLER') {
     return {
       provider: 'DANGOIMPORT',
       reason: 'out_of_radius_fallback',
       distanceKm: Number(dist.toFixed(2)),
       sellerDeliveryAvailable: false,
-      fee: 0,
+      fee: dangoPricing.fee,
       estimatedDeliveryTime: '3-5 jours',
+      breakdown: dangoPricing,
     };
   }
 
@@ -125,8 +138,9 @@ async function determineDeliveryProvider({ store, clientLocation }) {
     reason: mode === 'HYBRID' ? 'hybrid_outside_radius' : 'default',
     distanceKm: Number(dist.toFixed(2)),
     sellerDeliveryAvailable: false,
-    fee: 0,
+    fee: dangoPricing.fee,
     estimatedDeliveryTime: '3-5 jours',
+    breakdown: dangoPricing,
   };
 }
 

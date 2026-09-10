@@ -24,6 +24,7 @@ const getShippingCost = (subtotal, shippingMethod) => {
 };
 
 const resolveShippingCost = async ({ items = [], subtotal = 0, shippingMethod = 'standard', clientLocation = null }) => {
+    if (shippingMethod === 'pickup') return 0;
     if (!Array.isArray(items) || items.length === 0) {
         return getShippingCost(subtotal, shippingMethod);
     }
@@ -33,7 +34,7 @@ const resolveShippingCost = async ({ items = [], subtotal = 0, shippingMethod = 
         if (
             deliveryResult &&
             Number.isFinite(Number(deliveryResult.shippingCost)) &&
-            Number(deliveryResult.shippingCost) >= 0
+            Number(deliveryResult.shippingCost) > 0
         ) {
             return Number(deliveryResult.shippingCost);
         }
