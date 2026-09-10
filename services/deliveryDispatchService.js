@@ -153,6 +153,8 @@ async function createDeliveryListFromOrders({
         const store = vendorId ? await Store.findOne({ userId: vendorId }).lean() : null;
         const customerGeo = normalizeLocationCoords(order.shippingAddress || {});
         const vendorGeo = normalizeLocationCoords(store?.location || {});
+        const qrToken = crypto.randomBytes(24).toString('hex');
+        const qrHash = crypto.createHash('sha256').update(String(qrToken)).digest('hex');
 
         const delivery = await Delivery.create([{
           orderId: order._id,
@@ -178,7 +180,8 @@ async function createDeliveryListFromOrders({
             priority: normalizedPriority,
           },
           driverId: driverUser._id,
-          qrToken: crypto.randomBytes(24).toString('hex'),
+          qrToken,
+          qrHash,
           qrExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
         }], { session });
 

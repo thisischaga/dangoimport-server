@@ -224,13 +224,26 @@ router.patch('/deliveries/:id/status', verifyToken, requireDeliveryDriver, async
 
 router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
-    const { token, type } = req.body || {};
-    if (!token) return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide.' });
+    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
+    const { type } = req.body || {};
+    if (!rawToken || !String(rawToken).trim()) return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide.' });
 
-    const candidateHash = crypto.createHash('sha256').update(String(token)).digest('hex');
-    const delivery = await Delivery.findOne({ qrHash: candidateHash, driverId: req.user.id }).lean();
+    const token = String(rawToken).trim();
+    const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
+    const delivery = await Delivery.findOne({
+      $or: [
+        { qrToken: token },
+        { qrHash: candidateHash },
+      ],
+      driverId: req.user.id,
+    }).lean();
     if (!delivery) {
-      const anyDelivery = await Delivery.findOne({ qrHash: candidateHash }).lean();
+      const anyDelivery = await Delivery.findOne({
+        $or: [
+          { qrToken: token },
+          { qrHash: candidateHash },
+        ],
+      }).lean();
       if (anyDelivery) {
         return res.status(403).json({ success: false, message: 'Ce colis ne fait pas partie de vos livraisons.' });
       }
