@@ -35,24 +35,25 @@ function haversineKm(a, b) {
   return R * c;
 }
 
-function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 150 }) {
+function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 100 }) {
   const dist = Number(distanceKm) || 0;
   const normalizedBase = Number(baseFee) || 500;
-  const normalizedRate = Number(ratePerKm) || 150;
+  const normalizedRate = Number(ratePerKm) || 100;
 
   let zone = 'urban';
   let multiplier = 1;
 
-  if (dist > 12) {
+  if (dist > 12 && dist <= 30) {
     zone = 'suburban';
+    multiplier = 1.2;
+  } else if (dist > 30) {
+    zone = 'intercity';
     multiplier = 1.35;
   }
-  if (dist > 25) {
-    zone = 'rural';
-    multiplier = 1.75;
-  }
 
-  const raw = normalizedBase + (normalizedRate * dist);
+  // Plafonner la composante distance à 35 km max pour éviter les explosions de tarif (ex: 25 000f)
+  const cappedDistance = Math.min(dist, 35);
+  const raw = normalizedBase + (normalizedRate * cappedDistance);
   const fee = Math.round(raw * multiplier);
 
   return {
@@ -66,6 +67,8 @@ function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 150 }) {
 
 async function determineDeliveryProvider({ store, clientLocation }) {
   const DEFAULT_DANGO_FEE = 1000;
+  const HUB_BENIN = { lat: 6.3654, lng: 2.4252 }; // Cotonou, Bénin
+  const HUB_TOGO = { lat: 6.1375, lng: 1.2228 }; // Lomé, Togo
 
   if (!store) {
     return {
@@ -89,9 +92,21 @@ async function determineDeliveryProvider({ store, clientLocation }) {
   }
   let sellerLoc = toLngLat(rawCoords);
 
-  // Si le vendeur n'a pas encore configuré ses coordonnées GPS, utiliser Cotonou comme point de départ par défaut
+  // Déterminer le point de départ vendeur par pays/ville s'il n'a pas encore de GPS explicite
   if (!sellerLoc) {
-    sellerLoc = { lat: 6.3654, lng: 2.4252 };
+    const storeCountry = String(store.country || '').toLowerCase();
+    const storeCity = String(store.city || '').toLowerCase();
+
+    if (storeCountry.includes('togo') || storeCity.includes('lomé') || storeCity.includes('lome')) {
+      sellerLoc = HUB_TOGO;
+    } else if (storeCountry.includes('bénin') || storeCountry.includes('benin') || storeCity.includes('cotonou')) {
+      sellerLoc = HUB_BENIN;
+    } else if (client && client.lng < 1.8) {
+      // Si la position du client se trouve au Togo (longitude < 1.8°)
+      sellerLoc = HUB_TOGO;
+    } else {
+      sellerLoc = HUB_BENIN;
+    }
   }
 
   if (!client) {
