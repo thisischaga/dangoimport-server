@@ -7,7 +7,7 @@ const PromoUsage = require('../Models/PromoUsage');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();
-const { determineDeliveryProvider } = require('../services/deliveryService');
+const { determineDeliveryProvider, calculateDeliveryForItems } = require('../services/deliveryService');
 const Store = require('../Models/Store');
 
 // Générer numéro de commande unique
@@ -21,6 +21,27 @@ const getShippingCost = (subtotal, shippingMethod) => {
     if (shippingMethod === 'pickup') return 0;
     if (shippingMethod === 'express') return Math.round(subtotal * 0.1);
     return Math.round(subtotal * 0.05);
+};
+
+const resolveShippingCost = async ({ items = [], subtotal = 0, shippingMethod = 'standard', clientLocation = null }) => {
+    if (!Array.isArray(items) || items.length === 0) {
+        return getShippingCost(subtotal, shippingMethod);
+    }
+
+    try {
+        const deliveryResult = await calculateDeliveryForItems({ items, clientLocation });
+        if (
+            deliveryResult &&
+            Number.isFinite(Number(deliveryResult.shippingCost)) &&
+            Number(deliveryResult.shippingCost) >= 0
+        ) {
+            return Number(deliveryResult.shippingCost);
+        }
+    } catch (error) {
+        console.warn('[orderRoutes] dynamic shipping calculation failed, fallback to static pricing:', error?.message || error);
+    }
+
+    return getShippingCost(subtotal, shippingMethod);
 };
 
 const normalizeGeoPoint = (value) => {
@@ -159,7 +180,18 @@ router.post('/preview', verifyToken, async (req, res) => {
             return res.status(400).json({ success: false, message: promoResult.error });
         }
 
-        const shippingCost = getShippingCost(subtotal, shippingMethod);
+        const clientLocation =
+            req.body?.clientLocation ||
+            (req.body?.lat !== undefined && req.body?.lng !== undefined
+                ? { lat: Number(req.body.lat), lng: Number(req.body.lng) }
+                : null);
+
+        const shippingCost = await resolveShippingCost({
+            items: previewItems,
+            subtotal,
+            shippingMethod,
+            clientLocation,
+        });
         const discount = promoResult.discount || 0;
         const tax = 0;
         const total = Math.max(0, subtotal + shippingCost - discount);
@@ -240,7 +272,19 @@ router.post('/', verifyToken, async (req, res) => {
             return res.status(400).json({ success: false, message: promoResult.error });
         }
 
-        const shippingCost = getShippingCost(subtotal, shippingMethod);
+        const clientLocation =
+            parsedAddress?.location?.coordinates && parsedAddress.location.coordinates.length >= 2
+                ? { lat: Number(parsedAddress.location.coordinates[1]), lng: Number(parsedAddress.location.coordinates[0]) }
+                : (parsedAddress?.lat !== undefined && parsedAddress?.lng !== undefined
+                    ? { lat: Number(parsedAddress.lat), lng: Number(parsedAddress.lng) }
+                    : null);
+
+        const shippingCost = await resolveShippingCost({
+            items: orderItems,
+            subtotal,
+            shippingMethod,
+            clientLocation,
+        });
         const discount = promoResult.discount || 0;
         const promotion = promoResult.promotion || null;
         let estimatedDelivery = new Date();
