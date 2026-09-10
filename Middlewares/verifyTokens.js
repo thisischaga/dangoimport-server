@@ -42,6 +42,8 @@ const verifyToken = async (req, res, next) => {
     // 2. Sinon, chercher dans la collection User
     const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone role');
     if (user) {
+      const driverProfile = await require('../Models/Driver').findOne({ userId: user._id }).lean();
+      const effectiveRole = user.role === 'driver' || driverProfile ? 'driver' : (user.role || decoded.role || 'user');
       req.user = {
         ...decoded,
         id: user._id,
@@ -50,7 +52,7 @@ const verifyToken = async (req, res, next) => {
         userSurname: user.userSurname || '',
         userEmail: user.userEmail || '',
         userPhone: user.userPhone || '',
-        role: user.role || decoded.role || 'user',
+        role: effectiveRole,
       };
       return next();
     }

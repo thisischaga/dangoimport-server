@@ -145,7 +145,13 @@ const login = async (req, res) => {
         }
 
         const driver = await Driver.findOne({ userId: user._id }).lean();
-        const effectiveRole = driver ? 'driver' : (user.role || 'customer');
+        const effectiveRole = driver || user.role === 'driver' ? 'driver' : (user.role || 'customer');
+
+        if (driver && user.role !== 'driver') {
+            await User.findByIdAndUpdate(user._id, { role: 'driver' }, { new: true });
+            user.role = 'driver';
+        }
+
         const token = jwt.sign({ userId: user._id, role: effectiveRole }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
         res.status(200).json({
