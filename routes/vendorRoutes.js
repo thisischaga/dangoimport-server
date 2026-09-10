@@ -401,9 +401,12 @@ router.post('/google', async (req, res) => {
       user.updatedAt = new Date();
       await user.save();
     } else {
+      const safeFirstname = googleUser.userFirstname || 'Vendeur';
+      const safeSurname = googleUser.userSurname || 'Google';
+
       user = new User({
-        userFirstname: googleUser.userFirstname || 'Vendeur',
-        userSurname: googleUser.userSurname || '',
+        userFirstname: safeFirstname,
+        userSurname: safeSurname,
         userEmail: email,
         googleId: googleUser.googleId,
         authProviders: ['google'],
@@ -411,7 +414,7 @@ router.post('/google', async (req, res) => {
         isVerified: true,
         role: 'vendor',
         isVendor: true,
-        vendorName: `${googleUser.userFirstname || ''} ${googleUser.userSurname || ''}`.trim() || 'Ma boutique',
+        vendorName: `${safeFirstname} ${safeSurname}`.trim() || 'Ma boutique',
       });
       await user.save();
     }

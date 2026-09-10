@@ -36,12 +36,15 @@ const getGoogleUser = async (code) => {
     });
 
     const payload = ticket.getPayload();
+    const fullName = payload.name || '';
+    const firstName = payload.given_name || fullName.split(' ')[0] || 'Utilisateur';
+    const lastName = payload.family_name || fullName.split(' ').slice(1).join(' ') || 'Google';
 
     return {
         googleId: payload.sub,
         userEmail: payload.email,
-        userFirstname: payload.given_name || '',
-        userSurname: payload.family_name || '',
+        userFirstname: firstName || 'Utilisateur',
+        userSurname: lastName || 'Google',
         profileImage: payload.picture || '',
         emailVerified: payload.email_verified
     };
@@ -69,11 +72,15 @@ const verifyGoogleToken = async (credential) => {
         throw new Error('Google n’a pas retourné d’email valide');
     }
 
+    const fullName = payload.name || '';
+    const firstName = payload.given_name || fullName.split(' ')[0] || 'Utilisateur';
+    const lastName = payload.family_name || fullName.split(' ').slice(1).join(' ') || 'Google';
+
     return {
         googleId: payload.sub,
         userEmail: payload.email,
-        userFirstname: payload.given_name || payload.name || '',
-        userSurname: payload.family_name || '',
+        userFirstname: firstName || 'Utilisateur',
+        userSurname: lastName || 'Google',
         profileImage: payload.picture || '',
         emailVerified: payload.email_verified ?? true
     };
