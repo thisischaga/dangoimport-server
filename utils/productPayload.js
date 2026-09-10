@@ -98,6 +98,7 @@ const normalizeImages = (body) => {
 
 function buildProductPayload(body, { existingProduct } = {}) {
   const name = body.name?.trim();
+  const pickupAddress = body.pickupAddress?.trim() || body.sellerAddress?.trim() || existingProduct?.pickupAddress || existingProduct?.sellerAddress || '';
   const image = (!isBlobUrl(body.image) && body.image) || existingProduct?.image;
   const images = normalizeImages({ ...body, name: name || existingProduct?.name });
 
@@ -125,7 +126,9 @@ function buildProductPayload(body, { existingProduct } = {}) {
     description: body.description?.trim() || '',
     specifications: normalizeSpecifications(body.specifications),
     features: toStringList(body.features),
-    shippingInfo: body.shippingInfo?.trim() || undefined,
+    shippingInfo: body.shippingInfo?.trim() || (pickupAddress ? `Retrait: ${pickupAddress}` : undefined),
+    pickupAddress,
+    sellerAddress: pickupAddress || undefined,
     deliveryZones: normalizeDeliveryZones(body.shipping?.deliveryZones || body.deliveryZones),
     warranty: body.warranty?.trim() || undefined,
     image,

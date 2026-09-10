@@ -766,10 +766,13 @@ router.get('/products', verifyToken, verifyVendor, async (req, res) => {
 // POST /api/vendor/products — publier un produit sur la marketplace
 router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async (req, res) => {
   try {
-    const { name, description, price, stock, category, images, image, imageBase64, country } = req.body;
+    const { name, description, price, stock, category, images, image, imageBase64, country, pickupAddress, sellerAddress } = req.body;
 
     if (!name || !description || price === undefined || stock === undefined || !category) {
       return res.status(400).json({ message: 'Nom, description, prix, stock et catégorie sont requis.' });
+    }
+    if (!pickupAddress && !sellerAddress) {
+      return res.status(400).json({ message: 'L’adresse de collecte du produit est requise pour calculer la livraison.' });
     }
 
     const imageList = [];
@@ -800,6 +803,8 @@ router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async
       price,
       stock,
       category,
+      pickupAddress: pickupAddress || sellerAddress,
+      sellerAddress: sellerAddress || pickupAddress,
       image: imageList[0].url,
       images: imageList,
       isPublished: false,

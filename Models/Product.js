@@ -92,6 +92,14 @@ const productSchema = new mongoose.Schema({
 
     // Livraison et garantie
     shippingInfo: String,
+    pickupAddress: {
+        type: String,
+        default: ''
+    },
+    sellerAddress: {
+        type: String,
+        default: ''
+    },
     deliveryZones: [
       {
         _id: false,

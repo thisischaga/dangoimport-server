@@ -21,7 +21,7 @@ function toLngLat(coords) {
 }
 
 function haversineKm(a, b) {
-  const R = 6371; // km
+  const R = 6371;
   const toRad = (v) => (v * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
   const dLon = toRad(b.lng - a.lng);
@@ -30,105 +30,100 @@ function haversineKm(a, b) {
 
   const sinDlat = Math.sin(dLat / 2) * Math.sin(dLat / 2);
   const sinDlon = Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(sinDlat + Math.cos(lat1) * Math.cos(lat2) * sinDlon), Math.sqrt(1 - (sinDlat + Math.cos(lat1) * Math.cos(lat2) * sinDlon)));
+  const aTerm = Math.cos(lat1) * Math.cos(lat2) * sinDlon;
+  const c = 2 * Math.atan2(Math.sqrt(sinDlat + aTerm), Math.sqrt(1 - (sinDlat + aTerm)));
   return R * c;
 }
 
+function getSellerFee({ distanceKm = 0, baseFee = 500, ratePerKm = 150 }) {
+  const dist = Number(distanceKm) || 0;
+  const normalizedBase = Number(baseFee) || 500;
+  const normalizedRate = Number(ratePerKm) || 150;
+
+  let zone = 'urban';
+  let multiplier = 1;
+
+  if (dist > 12) {
+    zone = 'suburban';
+    multiplier = 1.35;
+  }
+  if (dist > 25) {
+    zone = 'rural';
+    multiplier = 1.75;
+  }
+
+  const raw = normalizedBase + (normalizedRate * dist);
+  const fee = Math.round(raw * multiplier);
+
+  return {
+    zone,
+    baseFee: normalizedBase,
+    ratePerKm: normalizedRate,
+    distanceKm: Number(dist.toFixed(2)),
+    fee: Math.max(normalizedBase, fee),
+  };
+}
+
 async function determineDeliveryProvider({ store, clientLocation }) {
-  if (!store) return { provider: 'DANGOIMPORT', reason: 'no_store', sellerDeliveryAvailable: false, fee: 0, estimatedDeliveryTime: '3-5 jours' };
+  if (!store) {
+    return {
+      provider: 'DANGOIMPORT',
+      reason: 'no_store',
+      sellerDeliveryAvailable: false,
+      fee: 0,
+      estimatedDeliveryTime: '3-5 jours',
+    };
+  }
 
   const mode = store.delivery?.mode || 'DANGOIMPORT';
   const sellerDelivery = store.delivery?.sellerDelivery || {};
-
-  // Normalize client location
   const client = toLngLat(clientLocation);
   const sellerLoc = toLngLat((sellerDelivery.location && sellerDelivery.location.coordinates) || (store.location && store.location.coordinates));
 
+  if (!sellerLoc || !client) {
+    return {
+      provider: 'DANGOIMPORT',
+      reason: 'missing_geo',
+      sellerDeliveryAvailable: false,
+      fee: 0,
+      estimatedDeliveryTime: '3-5 jours',
+    };
+  }
+
+  const dist = haversineKm(sellerLoc, client);
+  const baseFee = Number(sellerDelivery.baseFee || 500);
+  const ratePerKm = Number(sellerDelivery.ratePerKm || 150);
+  const radiusKm = Number(sellerDelivery.radiusKm || 0);
+  const enabled = Boolean(sellerDelivery.enabled);
+
+  if (enabled && dist <= Math.max(radiusKm || 50, 20)) {
+    const pricing = getSellerFee({ distanceKm: dist, baseFee, ratePerKm });
+    return {
+      provider: 'SELLER',
+      reason: mode === 'SELLER' ? 'within_radius' : 'hybrid_within_radius',
+      distanceKm: pricing.distanceKm,
+      sellerDeliveryAvailable: true,
+      fee: pricing.fee,
+      estimatedDeliveryTime: dist <= 8 ? '1-3 jours' : '2-5 jours',
+      breakdown: pricing,
+    };
+  }
+
   if (mode === 'SELLER') {
-    // If seller mode, prefer seller if within radius and enabled
-    if (sellerDelivery.enabled && sellerLoc && client) {
-      const dist = haversineKm(sellerLoc, client);
-      if (dist <= (Number(sellerDelivery.radiusKm) || 0)) {
-        // compute fee: use sellerDelivery.baseFee and ratePerKm when provided, otherwise fallback
-        const baseFee = Number(sellerDelivery.baseFee || 0);
-        const ratePerKm = Number(sellerDelivery.ratePerKm || 0);
-        let fee = 0;
-        if (ratePerKm > 0) {
-          fee = Math.max(baseFee, Math.round(ratePerKm * dist));
-        } else {
-          // sensible default: base 500 FCFA + 200 FCFA per km
-          fee = Math.max(baseFee || 500, Math.round(200 * dist) + (baseFee || 0));
-        }
-        return {
-          provider: 'SELLER',
-          reason: 'within_radius',
-          distanceKm: dist,
-          sellerDeliveryAvailable: true,
-          fee,
-          estimatedDeliveryTime: '1-3 jours',
-        };
-      }
-      return {
-        provider: 'DANGOIMPORT',
-        reason: 'out_of_radius_fallback',
-        distanceKm: dist,
-        sellerDeliveryAvailable: false,
-        fee: 0,
-        estimatedDeliveryTime: '3-5 jours',
-      };
-    }
     return {
       provider: 'DANGOIMPORT',
-      reason: 'seller_not_configured',
+      reason: 'out_of_radius_fallback',
+      distanceKm: Number(dist.toFixed(2)),
       sellerDeliveryAvailable: false,
       fee: 0,
       estimatedDeliveryTime: '3-5 jours',
     };
   }
 
-  if (mode === 'HYBRID') {
-    if (sellerDelivery.enabled && sellerLoc && client) {
-      const dist = haversineKm(sellerLoc, client);
-      if (dist <= (Number(sellerDelivery.radiusKm) || 0)) {
-        const baseFee = Number(sellerDelivery.baseFee || 0);
-        const ratePerKm = Number(sellerDelivery.ratePerKm || 0);
-        let fee = 0;
-        if (ratePerKm > 0) {
-          fee = Math.max(baseFee, Math.round(ratePerKm * dist));
-        } else {
-          fee = Math.max(baseFee || 500, Math.round(200 * dist) + (baseFee || 0));
-        }
-        return {
-          provider: 'SELLER',
-          reason: 'hybrid_within_radius',
-          distanceKm: dist,
-          sellerDeliveryAvailable: true,
-          fee,
-          estimatedDeliveryTime: '1-3 jours',
-        };
-      }
-      return {
-        provider: 'DANGOIMPORT',
-        reason: 'hybrid_outside_radius',
-        distanceKm: dist,
-        sellerDeliveryAvailable: false,
-        fee: 0,
-        estimatedDeliveryTime: '3-5 jours',
-      };
-    }
-    return {
-      provider: 'DANGOIMPORT',
-      reason: 'hybrid_no_seller',
-      sellerDeliveryAvailable: false,
-      fee: 0,
-      estimatedDeliveryTime: '3-5 jours',
-    };
-  }
-
-  // default DANGOIMPORT
   return {
     provider: 'DANGOIMPORT',
-    reason: 'default',
+    reason: mode === 'HYBRID' ? 'hybrid_outside_radius' : 'default',
+    distanceKm: Number(dist.toFixed(2)),
     sellerDeliveryAvailable: false,
     fee: 0,
     estimatedDeliveryTime: '3-5 jours',
@@ -144,18 +139,20 @@ async function calculateDeliveryForItems({ items = [], clientLocation = null }) 
       provider: 'DANGOIMPORT',
       reason: 'no_items',
       groups: [],
+      shippingCost: 0,
     };
   }
 
-  // Regrouper par vendorId / Store
   const vendorGroups = {};
   for (const item of items) {
     let vendorId = item.vendorId || item.sellerId;
     if (!vendorId && item.productId) {
       try {
         const prod = await Product.findById(item.productId);
-        if (prod) vendorId = prod.vendorId || prod.vendor;
-      } catch (e) {}
+        if (prod) vendorId = prod.vendorId || prod.vendor || prod.vendorName;
+      } catch (e) {
+        // ignore product lookup failure and continue with default grouping
+      }
     }
     const key = vendorId ? String(vendorId) : 'default';
     if (!vendorGroups[key]) {
@@ -164,38 +161,48 @@ async function calculateDeliveryForItems({ items = [], clientLocation = null }) 
     vendorGroups[key].items.push(item);
   }
 
-  const groupKeys = Object.keys(vendorGroups);
   const groupResults = [];
-
-  for (const key of groupKeys) {
-    const grp = vendorGroups[key];
+  for (const group of Object.values(vendorGroups)) {
     let store = null;
-    if (grp.vendorId) {
-      store = await Store.findOne({ userId: grp.vendorId });
+    const vendorKey = group.vendorId;
+
+    if (vendorKey) {
+      try {
+        const maybeObjectId = vendorKey.match(/^[0-9a-fA-F]{24}$/) ? vendorKey : null;
+        if (maybeObjectId) {
+          store = await Store.findOne({ userId: maybeObjectId });
+        }
+      } catch (e) {
+        store = null;
+      }
     }
 
     const res = await determineDeliveryProvider({ store, clientLocation });
+
     groupResults.push({
-      vendorId: grp.vendorId,
+      vendorId: vendorKey,
       storeName: store?.name || 'Vendeur',
       provider: res.provider,
       reason: res.reason,
       sellerDeliveryAvailable: res.sellerDeliveryAvailable,
       distanceKm: res.distanceKm,
-      fee: res.fee || 0,
+      fee: Number(res.fee || 0),
       estimatedDeliveryTime: res.estimatedDeliveryTime || '3-5 jours',
-      itemsCount: grp.items.length,
+      itemsCount: group.items.length,
+      breakdown: res.breakdown || null,
     });
   }
 
-  const allSeller = groupResults.every((g) => g.provider === 'SELLER');
-  const allDango = groupResults.every((g) => g.provider === 'DANGOIMPORT');
+  const allSeller = groupResults.length > 0 && groupResults.every((g) => g.provider === 'SELLER');
+  const allDango = groupResults.length > 0 && groupResults.every((g) => g.provider === 'DANGOIMPORT');
   const overallProvider = allSeller ? 'SELLER' : allDango ? 'DANGOIMPORT' : 'HYBRID';
+  const shippingCost = groupResults.reduce((sum, g) => sum + Number(g.fee || 0), 0);
 
   return {
     provider: overallProvider,
     reason: groupResults.map((g) => `${g.storeName}: ${g.reason}`).join('; '),
     groups: groupResults,
+    shippingCost,
   };
 }
 
