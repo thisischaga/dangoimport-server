@@ -145,7 +145,8 @@ const login = async (req, res) => {
         }
 
         const driver = await Driver.findOne({ userId: user._id }).lean();
-        const token = jwt.sign({ userId: user._id, role: user.role || 'customer' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        const effectiveRole = driver ? 'driver' : (user.role || 'customer');
+        const token = jwt.sign({ userId: user._id, role: effectiveRole }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
         res.status(200).json({
             message: 'connexion réussie',
@@ -158,7 +159,7 @@ const login = async (req, res) => {
                 userSurname: user.userSurname,
                 userEmail: user.userEmail,
                 userPhone: user.userPhone || '',
-                role: user.role || 'customer',
+                role: effectiveRole,
                 driverStatus: user.driverStatus || 'unavailable',
                 isVendor: user.isVendor || (user.role === 'vendor'),
                 isVerified: Boolean(user.isVerified),
