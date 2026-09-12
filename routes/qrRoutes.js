@@ -97,7 +97,8 @@ router.post('/generate/:orderId', verifyToken, async (req, res) => {
 
 router.post('/validate', verifyToken, async (req, res) => {
   try {
-    const { token } = req.body;
+    const { extractQrToken } = require('../utils/qrTokenParser');
+    const token = extractQrToken(req.body?.token ?? req.body?.code ?? req.body?.qrCode);
     if (!token) return res.status(400).json({ success: false, message: 'Token absent' });
 
     const QRModel = require('../Models/QRCode');

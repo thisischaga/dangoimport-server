@@ -4,8 +4,10 @@ const router = express.Router();
 const verifyToken = require('../Middlewares/verifyTokens');
 const Delivery = require('../Models/Delivery');
 const DeliveryList = require('../Models/DeliveryList');
+const QRCode = require('../Models/QRCode');
 const User = require('../Models/User');
 const { changeStatus, pushEvent } = require('../services/deliveryService');
+const { extractQrToken } = require('../utils/qrTokenParser');
 
 const requireDeliveryDriver = (req, res, next) => {
   if (!req.user || req.user.role !== 'driver') {
@@ -226,17 +228,32 @@ router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
     const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
     const { type } = req.body || {};
-    if (!rawToken || !String(rawToken).trim()) return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide.' });
+    const token = extractQrToken(rawToken);
+    if (!token) {
+      return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Vérifiez que le QR code est bien lisible.' });
+    }
 
-    const token = String(rawToken).trim();
     const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
-    const delivery = await Delivery.findOne({
+    const driverId = req.user.id || req.user.userId;
+
+    let delivery = await Delivery.findOne({
       $or: [
         { qrToken: token },
         { qrHash: candidateHash },
       ],
-      driverId: req.user.id,
-    }).lean();
+      driverId,
+    });
+
+    let scanSource = 'delivery_qr';
+
+    if (!delivery) {
+      const orderQr = await QRCode.findOne({ code: token }).lean();
+      if (orderQr?.orderId) {
+        delivery = await Delivery.findOne({ orderId: orderQr.orderId, driverId });
+        if (delivery) scanSource = 'order_qr';
+      }
+    }
+
     if (!delivery) {
       const anyDelivery = await Delivery.findOne({
         $or: [
@@ -244,10 +261,29 @@ router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
           { qrHash: candidateHash },
         ],
       }).lean();
+
       if (anyDelivery) {
         return res.status(403).json({ success: false, message: 'Ce colis ne fait pas partie de vos livraisons.' });
       }
-      return res.status(404).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide.' });
+
+      const orderQr = await QRCode.findOne({ code: token }).lean();
+      if (orderQr) {
+        const anyOrderDelivery = await Delivery.findOne({ orderId: orderQr.orderId }).lean();
+        if (anyOrderDelivery) {
+          return res.status(403).json({
+            success: false,
+            code: 'NOT_YOUR_DELIVERY',
+            message: 'Commande reconnue, mais cette livraison n’est pas assignée à votre compte.',
+          });
+        }
+        return res.status(404).json({
+          success: false,
+          code: 'NO_DELIVERY_PLANNED',
+          message: 'Commande reconnue, mais aucune livraison n’a encore été planifiée pour ce colis.',
+        });
+      }
+
+      return res.status(404).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Utilisez le QR de la commande ou le QR livraison assigné.' });
     }
 
     if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
@@ -259,9 +295,23 @@ router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
     }
 
     const nextStatus = delivery.status === 'ASSIGNED' ? 'ACCEPTED' : delivery.status === 'ACCEPTED' ? 'PICKED_UP' : delivery.status === 'PICKED_UP' ? 'IN_TRANSIT' : delivery.status === 'IN_TRANSIT' ? 'ARRIVED' : 'DELIVERED';
-    const updated = await changeStatus(delivery._id, nextStatus, req.user.id, req.user.role, { metadata: { driverId: req.user.id, scanType: type || 'AUTO' } });
+    const updated = await changeStatus(delivery._id, nextStatus, req.user.id, req.user.role, {
+      metadata: { driverId: req.user.id, scanType: type || 'AUTO', scanSource },
+    });
 
-    res.json({ success: true, message: 'Scan validé.', data: updated });
+    const statusLabels = {
+      ACCEPTED: 'Colis accepté.',
+      PICKED_UP: 'Colis récupéré.',
+      IN_TRANSIT: 'Colis en cours de livraison.',
+      ARRIVED: 'Colis arrivé chez le client.',
+      DELIVERED: 'Colis livré avec succès.',
+    };
+
+    res.json({
+      success: true,
+      message: statusLabels[nextStatus] || 'Scan validé.',
+      data: updated,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

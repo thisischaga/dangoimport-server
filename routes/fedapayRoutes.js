@@ -681,6 +681,8 @@ const handleFedapayWebhook = async (req, res) => {
             orderNumber: createdOrder.orderNumber,
             total: createdOrder.total,
             qrCode: qrCode?.code,
+            items: createdOrder.items,
+            qrCodes: qrDocs,
           });
         } catch (emailErr) {
           console.error('[fedapayRoutes] sendOrderConfirmedEmail failed after commit', emailErr);

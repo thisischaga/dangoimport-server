@@ -128,7 +128,8 @@ router.get('/orders/:id', verifyToken, verifySeller, getSellerStore, async (req,
 
 router.post('/scan', verifyToken, verifySeller, async (req, res) => {
   try {
-    const { token } = req.body;
+    const { extractQrToken } = require('../utils/qrTokenParser');
+    const token = extractQrToken(req.body?.token ?? req.body?.code ?? req.body?.qrCode);
     if (!token) {
       return res.status(400).json({ success: false, message: 'Le code QR est requis.' });
     }
@@ -228,7 +229,9 @@ router.post('/scan', verifyToken, verifySeller, async (req, res) => {
 router.post('/confirm-delivery', verifyToken, verifySeller, getSellerStore, async (req, res) => {
   const session = await mongoose.startSession();
   try {
-    const { token, vendorOrderId, orderId } = req.body;
+    const { extractQrToken } = require('../utils/qrTokenParser');
+    const token = extractQrToken(req.body?.token ?? req.body?.code ?? req.body?.qrCode);
+    const { vendorOrderId, orderId } = req.body;
     
     session.startTransaction();
 
