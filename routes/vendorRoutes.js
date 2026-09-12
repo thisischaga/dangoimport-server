@@ -16,6 +16,7 @@ const { buildProductPayload } = require('../utils/productPayload');
 const { normalizeProductImages } = require('../utils/imageStorage');
 const { resolveSkuForCreate } = require('../utils/productIdentifiers');
 const { userHasVendorAccess, getVendorLoginDeniedMessage } = require('../utils/vendorAccess');
+const { verifyUserPassword, getPasswordLoginErrorMessage } = require('../utils/passwordUtils');
 const { Resend } = require('resend');
 
 const router = express.Router();
@@ -383,7 +384,7 @@ router.post('/login', authLoginLimiter, async (req, res) => {
 
     const user = await User.findOne({ userEmail: String(userEmail).toLowerCase() });
     if (!user) {
-      return res.status(401).json({ message: 'Compte introuvable.' });
+      return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
     }
 
     const hasVendorAccess = await userHasVendorAccess(user);
@@ -395,9 +396,13 @@ router.post('/login', authLoginLimiter, async (req, res) => {
       });
     }
 
-    const isMatch = await bcrypt.compare(userPassword, user.userPassword);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Mot de passe incorrect.' });
+    const passwordCheck = await verifyUserPassword(user, userPassword);
+    if (!passwordCheck.ok) {
+      return res.status(401).json({
+        success: false,
+        code: passwordCheck.reason === 'google' ? 'USE_GOOGLE' : 'INVALID_CREDENTIALS',
+        message: getPasswordLoginErrorMessage(passwordCheck.reason),
+      });
     }
 
     // Find the corresponding Store

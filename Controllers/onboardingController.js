@@ -1,6 +1,7 @@
 const slugify = require('slugify');
 const Store = require('../Models/Store');
 const User = require('../Models/User');
+const { computeOnboardingComplete } = require('../utils/onboardingStatus');
 
 const sanitizeCoords = (coords) => {
   if (!coords) return null;
@@ -22,8 +23,18 @@ async function getOnboardingStatus(req, res) {
 
     const store = await Store.findOne({ userId }).lean();
     const user = await User.findById(userId).lean();
+    const complete = computeOnboardingComplete(store, user);
 
-    return res.status(200).json({ success: true, data: { store, user } });
+    return res.status(200).json({
+      success: true,
+      data: {
+        store,
+        user,
+        complete,
+        isComplete: complete,
+        onboardingComplete: complete,
+      },
+    });
   } catch (error) {
     console.error('[onboardingController] getOnboardingStatus error:', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération du statut onboarding.' });
