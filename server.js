@@ -1345,6 +1345,9 @@ const startServer = async () => {
     // Auth Routes
     app.use('/api/auth', authRoutes);
 
+    const mobileAppRoutes = require('./routes/mobileAppRoutes');
+    app.use('/api/mobile-app', mobileAppRoutes);
+
     // Admin Routes
     app.use('/api/admin', adminRoutes);
 

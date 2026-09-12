@@ -9,6 +9,9 @@ const User = require('../Models/User');
 const ShopOrder = require('../Models/ShopOrder');
 const { changeStatus, pushEvent } = require('../services/deliveryService');
 const { extractQrToken } = require('../utils/qrTokenParser');
+const requireDriverAppVersion = require('../Middlewares/requireDriverAppVersion');
+
+router.use(requireDriverAppVersion);
 
 const requireDeliveryDriver = (req, res, next) => {
   if (!req.user || req.user.role !== 'driver') {

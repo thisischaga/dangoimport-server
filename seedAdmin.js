@@ -10,8 +10,8 @@ const seedAdmin = async () => {
       useUnifiedTopology: true,
     });
 
-    const adminEmail = 'admin@dangoimport.com';
-    const adminPassword = 'dango123';
+    const adminEmail = '';
+    const adminPassword = '';
 
     const existingAdmin = await Admin.findOne({ adminName: adminEmail });
     if (existingAdmin) {

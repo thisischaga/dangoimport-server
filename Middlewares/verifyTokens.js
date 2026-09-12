@@ -77,7 +77,10 @@ const verifyToken = async (req, res, next) => {
     return res.status(401).json({ message: 'Utilisateur introuvable.' });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Session expirée, veuillez vous reconnecter.' });
+      return res.status(401).json({
+        code: 'TOKEN_EXPIRED',
+        message: 'Session expirée, veuillez vous reconnecter.',
+      });
     }
     return res.status(403).json({ message: 'Token invalide.' });
   }
@@ -112,7 +115,10 @@ const verifyAdmin = async (req, res, next) => {
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Session expirée, veuillez vous reconnecter.' });
+      return res.status(401).json({
+        code: 'TOKEN_EXPIRED',
+        message: 'Session expirée, veuillez vous reconnecter.',
+      });
     }
     return res.status(403).json({ message: 'Token invalide.' });
   }
