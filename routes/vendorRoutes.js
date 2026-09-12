@@ -15,6 +15,7 @@ const { authLoginLimiter, otpLimiter } = require('../Middlewares/rateLimiters');
 const { buildProductPayload } = require('../utils/productPayload');
 const { normalizeProductImages } = require('../utils/imageStorage');
 const { resolveSkuForCreate } = require('../utils/productIdentifiers');
+const { userHasVendorAccess, getVendorLoginDeniedMessage } = require('../utils/vendorAccess');
 const { Resend } = require('resend');
 
 const router = express.Router();
@@ -36,7 +37,7 @@ const buildVendorPayload = (user) => ({
 // Helper to sign JWT token
 const signVendorToken = (user) => signAccessToken({
   userId: user._id,
-  role: user.role,
+  role: 'vendor',
   userFirstname: user.userFirstname,
   userSurname: user.userSurname,
   userEmail: user.userEmail,
@@ -47,7 +48,8 @@ const verifyVendor = async (req, res, next) => {
   try {
     const userId = req.user?.userId || req.user?.id;
     const user = await User.findById(userId);
-    if (!user || user.role !== 'vendor') {
+    const hasVendorAccess = await userHasVendorAccess(user);
+    if (!hasVendorAccess) {
       return res.status(403).json({ message: 'Accès réservé aux vendeurs.' });
     }
     req.vendorUser = user;
@@ -384,8 +386,13 @@ router.post('/login', authLoginLimiter, async (req, res) => {
       return res.status(401).json({ message: 'Compte introuvable.' });
     }
 
-    if (user.role !== 'vendor') {
-      return res.status(403).json({ message: 'Ce compte n’est pas un compte vendeur.' });
+    const hasVendorAccess = await userHasVendorAccess(user);
+    if (!hasVendorAccess) {
+      return res.status(403).json({
+        success: false,
+        code: 'NOT_VENDOR',
+        message: getVendorLoginDeniedMessage(user),
+      });
     }
 
     const isMatch = await bcrypt.compare(userPassword, user.userPassword);
@@ -436,8 +443,10 @@ router.post('/google', async (req, res) => {
       if (!user.authProviders.includes('google')) {
         user.authProviders.push('google');
       }
-      user.role = 'vendor';
       user.isVendor = true;
+      if (user.role !== 'driver' && user.role !== 'admin') {
+        user.role = 'vendor';
+      }
       if (!user.vendorName) {
         user.vendorName = `${googleUser.userFirstname} ${googleUser.userSurname}`.trim() || 'Ma boutique';
       }

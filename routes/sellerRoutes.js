@@ -11,6 +11,7 @@ const Notification = require('../Models/Notification');
 const verifyToken = require('../Middlewares/verifyTokens');
 const emailService = require('../utils/emailService');
 const { validateVendorQr, markQrUsed } = require('../services/qrCodeService');
+const { userHasVendorAccess } = require('../utils/vendorAccess');
 
 const router = express.Router();
 
@@ -22,7 +23,8 @@ const verifySeller = async (req, res, next) => {
     }
 
     const user = await User.findById(userId);
-    if (!user || user.role !== 'vendor') {
+    const hasVendorAccess = await userHasVendorAccess(user);
+    if (!hasVendorAccess) {
       return res.status(403).json({ success: false, message: 'Accès réservé aux vendeurs.' });
     }
 

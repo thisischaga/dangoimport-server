@@ -3,6 +3,7 @@ const router = express.Router();
 const VendorDeliveryZone = require('../Models/VendorDeliveryZone');
 const User = require('../Models/User');
 const verifyToken = require('../Middlewares/verifyTokens');
+const { userHasVendorAccess } = require('../utils/vendorAccess');
 
 const ensureVendor = async (req, res, next) => {
   try {
@@ -12,7 +13,8 @@ const ensureVendor = async (req, res, next) => {
     }
 
     const user = await User.findById(userId);
-    if (!user || user.role !== 'vendor') {
+    const hasVendorAccess = await userHasVendorAccess(user);
+    if (!hasVendorAccess) {
       return res.status(403).json({ message: 'Accès vendeur requis' });
     }
 
