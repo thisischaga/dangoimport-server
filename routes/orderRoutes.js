@@ -372,12 +372,56 @@ router.post('/', verifyToken, async (req, res) => {
     }
 });
 
-// GET - Mes commandes
+// GET - Mes commandes (alias — redirige vers ShopOrder)
 router.get('/my-orders', verifyToken, async (req, res) => {
-    return res.status(403).json({
-        success: false,
-        message: "L'accès à l'historique des commandes via l'application est suspendu. Vos codes QR et détails de commande vous ont été envoyés par email."
-    });
+    try {
+        const ShopOrder = require('../Models/ShopOrder');
+        const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const userId = req.user?.id || req.user?.userId;
+        const userEmail = String(req.user?.userEmail || '').trim().toLowerCase();
+
+        const orFilters = [];
+        if (userId) orFilters.push({ customerId: userId });
+        if (userEmail) {
+            orFilters.push({ customerEmail: new RegExp(`^${escapeRegExp(userEmail)}$`, 'i') });
+        }
+
+        if (orFilters.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+
+        const orders = await ShopOrder.find({ $or: orFilters })
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .select('-qrCodeIds -adminNotes -notes -history -customerPhone')
+            .lean();
+
+        const sanitized = orders.map((doc) => ({
+            _id: doc._id,
+            orderNumber: doc.orderNumber,
+            status: doc.status,
+            paymentStatus: doc.paymentStatus,
+            createdAt: doc.createdAt,
+            paymentDate: doc.paymentDate,
+            subtotal: doc.subtotal,
+            shippingCost: doc.shippingCost,
+            discount: doc.discount,
+            total: doc.total,
+            items: (doc.items || []).map((item) => ({
+                productId: item.productId,
+                productName: item.productName,
+                productImage: item.productImage,
+                vendorName: item.vendorName,
+                quantity: item.quantity,
+                price: item.price,
+            })),
+        }));
+
+        return res.json({ success: true, data: sanitized });
+    } catch (error) {
+        console.error('[orderRoutes] my-orders error:', error);
+        return res.status(500).json({ success: false, message: 'Erreur serveur' });
+    }
 });
 
 // GET - Détails de la commande

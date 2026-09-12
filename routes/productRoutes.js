@@ -117,6 +117,8 @@ router.get('/', async (req, res) => {
       minPrice,
       maxPrice,
       promo,
+      newArrival,
+      bestSeller,
       sort,
       page = 1,
       limit = 200
@@ -144,6 +146,14 @@ router.get('/', async (req, res) => {
         { isPromo: true },
         { salePrice: { $gt: 0 } }
       ];
+    }
+
+    if (newArrival === 'true') {
+      filter.isNewArrival = true;
+    }
+
+    if (bestSeller === 'true') {
+      filter.isBestSeller = true;
     }
 
     const min = parseFloat(minPrice);
