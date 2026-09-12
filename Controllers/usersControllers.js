@@ -5,6 +5,7 @@ const User = require('../Models/User');
 const Driver = require('../Models/Driver');
 const { Resend } = require('resend');
 const { generateOTP } = require('../utils/otp');
+const { alertIntrusion } = require('../utils/securityAlerts');
 
 const {
     getGoogleAuthUrl,
@@ -131,6 +132,9 @@ const login = async (req, res) => {
         }
 
         if (!user) {
+            alertIntrusion(req, 'Échec connexion utilisateur/livreur', {
+                identifier: normalizedIdentifier.includes('@') ? 'email' : 'phone',
+            }).catch(() => {});
             return res.status(401).json({ message: 'Identifiants incorrects.' });
         }
 

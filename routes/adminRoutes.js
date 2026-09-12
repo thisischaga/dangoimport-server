@@ -19,6 +19,7 @@ const DeliveryList = require('../Models/DeliveryList');
 const { isOrderEligibleForDelivery, createDeliveryListFromOrders, getEligibleDeliveryOrders } = require('../services/deliveryDispatchService');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
+const { adminActionLogger } = require('../utils/securityAlerts');
 
 const router = express.Router();
 
@@ -213,7 +214,10 @@ router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
     }
 });
 
-router.post('/drivers', verifyToken, adminOnly, async (req, res) => {
+router.post('/drivers', verifyToken, adminOnly, adminActionLogger('Création livreur', (req) => ({
+  targetResource: 'driver',
+  summary: req.body?.userEmail || req.body?.userPhone || '',
+})), async (req, res) => {
     try {
         const {
             userFirstname,

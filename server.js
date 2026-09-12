@@ -53,6 +53,7 @@ const conversationRoutes = require('./routes/conversationRoutes');
 //const { router: fedapayRouter, handleWebhook: fedapayWebhook } = require('./routes/fedapayRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
+const { alertFailedAdminLogin, alertAdminActivity, adminActionLogger, alertRateLimit } = require('./utils/securityAlerts');
 const slugify = require('slugify');
 const _fedapayMod = require('./routes/fedapayRoutes');
 const fedapayRouter = _fedapayMod.router || _fedapayMod;
@@ -90,6 +91,10 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Trop de requêtes, réessayez dans 15 minutes.' },
+  handler: (req, res) => {
+    alertRateLimit(req, 'general-api').catch(() => {});
+    res.status(429).json({ message: 'Trop de requêtes, réessayez dans 15 minutes.' });
+  },
   skip: () => false
 });
 app.use(generalLimiter);
@@ -101,7 +106,11 @@ const adminLoginLimiter = rateLimit({
   skipSuccessfulRequests: true, // ne compte pas les succès
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Trop de tentatives de connexion. Compte temporairement bloqué (15 min).' }
+  message: { message: 'Trop de tentatives de connexion. Compte temporairement bloqué (15 min).' },
+  handler: (req, res) => {
+    alertRateLimit(req, 'admin-login-bruteforce').catch(() => {});
+    res.status(429).json({ message: 'Trop de tentatives de connexion. Compte temporairement bloqué (15 min).' });
+  },
 });
 
 const port = process.env.PORT || 8000;
@@ -238,7 +247,10 @@ const startServer = async () => {
     });
 
     // Ajouter un admin (dev-admin uniquement, sans token retourné)
-    app.post('/add_admin', verifyDevAdmin, async (req, res) => {
+    app.post('/add_admin', verifyDevAdmin, adminActionLogger('Création administrateur', (req) => ({
+      targetResource: 'admin',
+      summary: `Nouvel admin : ${req.body?.adminName || '—'}`,
+    })), async (req, res) => {
       const { adminFirstname, adminSurname, adminName, adminPassword, role } = req.body;
       try {
         if (!adminPassword || String(adminPassword).length < 8) {
@@ -466,12 +478,13 @@ const startServer = async () => {
       try {
         const admin = await Admin.findOne({ adminName: adminName.toLowerCase().trim() });
         if (!admin) {
-          // Message générique pour ne pas révéler si le compte existe
+          await alertFailedAdminLogin(req, adminName);
           return res.status(401).json({ message: "Identifiants incorrects." });
         }
 
         const isMatch = await bcrypt.compare(adminPassword, admin.adminPassword);
         if (!isMatch) {
+          await alertFailedAdminLogin(req, adminName);
           return res.status(401).json({ message: "Identifiants incorrects." });
         }
 
@@ -493,6 +506,13 @@ const startServer = async () => {
             role: admin.role,
           }
         });
+
+        req.admin = admin;
+        alertAdminActivity(req, 'Connexion administrateur réussie', {
+          targetResource: 'admin',
+          targetId: admin._id,
+          summary: admin.adminName,
+        }).catch(() => {});
       } catch (error) {
         console.error('Erreur /login :', error);
         res.status(500).json({ message: 'Erreur serveur.' });
@@ -1022,7 +1042,10 @@ const startServer = async () => {
       }
     });
 
-    app.put('/api/vendor-requests/:id/validate', verifyAdmin, async (req, res) => {
+    app.put('/api/vendor-requests/:id/validate', verifyAdmin, adminActionLogger('Validation demande vendeur', (req) => ({
+      targetResource: 'vendor-request',
+      targetId: req.params.id,
+    })), async (req, res) => {
       try {
         const request = await VendorRequest.findById(req.params.id);
         if (!request) return res.status(404).json({ message: "Demande introuvable" });
@@ -1045,7 +1068,10 @@ const startServer = async () => {
       }
     });
 
-    app.put('/api/vendor-requests/:id/reject', verifyAdmin, async (req, res) => {
+    app.put('/api/vendor-requests/:id/reject', verifyAdmin, adminActionLogger('Rejet demande vendeur', (req) => ({
+      targetResource: 'vendor-request',
+      targetId: req.params.id,
+    })), async (req, res) => {
       try {
         const { reason } = req.body;
         const request = await VendorRequest.findById(req.params.id);
@@ -1159,7 +1185,11 @@ const startServer = async () => {
     });
 
     // Approuver une demande de retrait
-    app.put('/api/withdrawal-requests/:id/approve', verifyAdmin, async (req, res) => {
+    app.put('/api/withdrawal-requests/:id/approve', verifyAdmin, adminActionLogger('Approbation retrait vendeur', (req) => ({
+      targetResource: 'withdrawal-request',
+      targetId: req.params.id,
+      summary: req.body?.transactionReference || '',
+    })), async (req, res) => {
       try {
         const { transactionReference } = req.body;
         const request = await WithdrawalRequest.findById(req.params.id);
@@ -1185,7 +1215,11 @@ const startServer = async () => {
     });
 
     // Rejeter une demande de retrait
-    app.put('/api/withdrawal-requests/:id/reject', verifyAdmin, async (req, res) => {
+    app.put('/api/withdrawal-requests/:id/reject', verifyAdmin, adminActionLogger('Rejet retrait vendeur', (req) => ({
+      targetResource: 'withdrawal-request',
+      targetId: req.params.id,
+      summary: req.body?.reason || '',
+    })), async (req, res) => {
       try {
         const { reason } = req.body;
         const request = await WithdrawalRequest.findById(req.params.id);
@@ -1634,7 +1668,11 @@ const startServer = async () => {
     });
 
     // Modifier le statut d'une commande
-    app.put('/commande/status', verifyAdmin, async (req, res) => {
+    app.put('/commande/status', verifyAdmin, adminActionLogger('Changement statut commande', (req) => ({
+      targetResource: 'commande',
+      targetId: req.body?.orderId,
+      summary: req.body?.status,
+    })), async (req, res) => {
       try {
         const { orderId, status } = req.body;
 
@@ -1661,7 +1699,11 @@ const startServer = async () => {
     });
 
     // Modifier le statut d'un devis
-    app.put('/devis/status', verifyAdmin, async (req, res) => {
+    app.put('/devis/status', verifyAdmin, adminActionLogger('Changement statut devis', (req) => ({
+      targetResource: 'devis',
+      targetId: req.body?.orderId,
+      summary: req.body?.status,
+    })), async (req, res) => {
       try {
         const { orderId, status } = req.body;
 
@@ -1747,7 +1789,11 @@ const startServer = async () => {
       }
     });
 
-    app.put('/achat/status', verifyAdmin, async (req, res) => {
+    app.put('/achat/status', verifyAdmin, adminActionLogger('Changement statut achat', (req) => ({
+      targetResource: 'achat',
+      targetId: req.body?.orderId,
+      summary: req.body?.status,
+    })), async (req, res) => {
       try {
         const { orderId, status } = req.body;
 

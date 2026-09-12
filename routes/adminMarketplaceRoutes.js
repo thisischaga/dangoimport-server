@@ -5,6 +5,7 @@ const AuditLog = require('../Models/AuditLog');
 const Notification = require('../Models/Notification');
 const { verifyAdmin } = require('../Middlewares/verifyTokens');
 const emailService = require('../utils/emailService');
+const { alertAdminActivity } = require('../utils/securityAlerts');
 
 const router = express.Router();
 
@@ -22,6 +23,12 @@ const logAudit = async (req, action, targetResource, targetId, details = {}) => 
       details,
       ipAddress: req.ip || req.connection?.remoteAddress || '127.0.0.1',
     });
+    await alertAdminActivity(req, action, {
+      targetResource,
+      targetId,
+      summary: details?.summary || action,
+      ...details,
+    }, { skipAuditLog: true });
   } catch (err) {
     console.error('⚠️ [AuditLog Error]:', err.message);
   }

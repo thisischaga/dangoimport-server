@@ -1,4 +1,10 @@
 const rateLimit = require('express-rate-limit');
+const { alertRateLimit } = require('../utils/securityAlerts');
+
+const rateLimitHandler = (limiterName) => (req, res) => {
+  alertRateLimit(req, limiterName).catch(() => {});
+  res.status(429).json({ message: 'Trop de requêtes, réessayez plus tard.' });
+};
 
 const authLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -6,7 +12,7 @@ const authLoginLimiter = rateLimit({
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Trop de tentatives. Réessayez dans 15 minutes.' },
+  handler: rateLimitHandler('auth-login'),
 });
 
 const otpLimiter = rateLimit({
@@ -14,7 +20,7 @@ const otpLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Trop de demandes OTP. Réessayez plus tard.' },
+  handler: rateLimitHandler('otp'),
 });
 
 const uploadLimiter = rateLimit({
@@ -22,7 +28,7 @@ const uploadLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Trop d’uploads. Réessayez plus tard.' },
+  handler: rateLimitHandler('upload'),
 });
 
 module.exports = {

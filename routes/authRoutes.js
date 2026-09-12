@@ -4,10 +4,10 @@ const { authLoginLimiter, otpLimiter } = require('../Middlewares/rateLimiters');
 const router = express.Router();
 
 const {
-    login,
-    signup,
-    sendSignupOTP,
-    googleLogin
+  login,
+  signup,
+  sendSignupOTP,
+  googleLogin,
 } = require('../Controllers/usersControllers');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { sendVerificationLink, verifyEmail, getCurrentUser, updateCurrentUser, exchangeOAuthCode } = require('../Controllers/usersControllers');

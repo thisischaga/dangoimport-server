@@ -22,6 +22,7 @@ const emailService = require('../utils/emailService');
 const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
 const { calculateDeliveryForItems } = require('../services/deliveryService');
+const { alertIntrusion } = require('../utils/securityAlerts');
 
 const router = express.Router();
 
@@ -534,6 +535,7 @@ const handleFedapayWebhook = async (req, res) => {
           const ok = timingSafeEqual(normalized, expected) || timingSafeEqual(raw, expected) || timingSafeEqual(raw, `sha256=${expected}`);
           if (!ok) {
             await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide (fallback HMAC): expected ${expected.slice(0,8)}...` });
+            await alertIntrusion(req, 'Webhook FedaPay — signature invalide', { eventName, entityId });
             console.error('[fedapayRoutes] webhook signature invalid after HMAC fallback', {
               signature: raw,
               expectedSnippet: expected.slice(0, 16) + '...',
@@ -552,6 +554,7 @@ const handleFedapayWebhook = async (req, res) => {
       }
     } else if (!allowUnsignedWebhook) {
       await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'Signature webhook FedaPay manquante en production' });
+      await alertIntrusion(req, 'Webhook FedaPay — signature manquante en production', { eventName, entityId });
       console.error('[fedapayRoutes] webhook signature missing in production', { signature, secretConfigured: Boolean(secret), eventName, entityId });
       return res.status(403).send('Signature invalide');
     } else {

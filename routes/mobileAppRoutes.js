@@ -67,7 +67,7 @@ router.get('/support', (req, res) => {
         'En cas de problème de connexion, déconnectez-vous puis reconnectez-vous.',
       ],
       policySummary:
-        'L’application livreur Dango Import est réservée aux livreurs autorisés. Vos données de localisation et d’activité sont utilisées uniquement pour le suivi des livraisons.',
+        'L’application livreur Dango import est réservée aux livreurs autorisés. Vos données de localisation et d’activité sont utilisées uniquement pour le suivi des livraisons.',
     },
   });
 });
