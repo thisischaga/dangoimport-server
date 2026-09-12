@@ -20,6 +20,15 @@ const normalizeDeliveryPriority = (value) => {
   return 'Normale';
 };
 
+function formatShippingAddress(shippingAddress = {}) {
+  return (
+    shippingAddress.fullAddress ||
+    [shippingAddress.neighborhood, shippingAddress.city, shippingAddress.country].filter(Boolean).join(', ') ||
+    shippingAddress.city ||
+    ''
+  );
+}
+
 function isOrderEligibleForDelivery(order = {}) {
   if (!order || !order._id) return false;
 
@@ -166,12 +175,12 @@ async function createDeliveryListFromOrders({
           vendorId,
           customerId: order.customerId || null,
           pickupLocation: {
-            address: store?.address || store?.name || order.shippingAddress?.fullAddress || order.shippingAddress?.city || '',
+            address: [store?.address, store?.city, store?.country].filter(Boolean).join(', ') || store?.name || '',
             latitude: vendorGeo.latitude,
             longitude: vendorGeo.longitude,
           },
           deliveryLocation: {
-            address: order.shippingAddress?.fullAddress || order.shippingAddress?.city || '',
+            address: formatShippingAddress(order.shippingAddress || {}),
             latitude: customerGeo.latitude,
             longitude: customerGeo.longitude,
           },
@@ -181,6 +190,9 @@ async function createDeliveryListFromOrders({
           metadata: {
             orderNumber: order.orderNumber,
             customerName: order.customerName,
+            customerPhone: order.customerPhone || '',
+            vendorName: store?.name || '',
+            storeName: store?.name || '',
             priority: normalizedPriority,
           },
           driverId: driverUser._id,

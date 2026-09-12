@@ -6,6 +6,7 @@ const Delivery = require('../Models/Delivery');
 const DeliveryList = require('../Models/DeliveryList');
 const QRCode = require('../Models/QRCode');
 const User = require('../Models/User');
+const ShopOrder = require('../Models/ShopOrder');
 const { changeStatus, pushEvent } = require('../services/deliveryService');
 const { extractQrToken } = require('../utils/qrTokenParser');
 
@@ -15,6 +16,51 @@ const requireDeliveryDriver = (req, res, next) => {
   }
   return next();
 };
+
+function formatDeliveryForDriver(item, orderMap = new Map(), userMap = new Map()) {
+  if (!item) return item;
+  const meta = item.metadata || {};
+  const order = orderMap.get(String(item.orderId));
+  const customerUser = userMap.get(String(item.customerId));
+  const pickupAddress = item.pickupLocation?.address || '';
+  const deliveryAddress = item.deliveryLocation?.address || '';
+  const customerPhone = meta.customerPhone || meta.phone || order?.customerPhone || customerUser?.userPhone || '';
+
+  return {
+    ...item,
+    deliveryNumber: item.deliveryId || meta.orderNumber || '',
+    orderNumber: meta.orderNumber || item.deliveryId || '',
+    customerName: meta.customerName || order?.customerName || 'Client',
+    vendorName: meta.vendorName || meta.storeName || '',
+    pickupAddress,
+    vendorAddress: pickupAddress,
+    deliveryAddress,
+    customerAddress: deliveryAddress,
+    customerPhone,
+    instructions: meta.instructions || item.deliveryLocation?.instructions || order?.shippingAddress?.instructions || '',
+  };
+}
+
+async function enrichDeliveriesForDriver(items) {
+  if (!items?.length) return [];
+
+  const orderIds = [...new Set(items.map((item) => item.orderId).filter(Boolean))];
+  const customerIds = [...new Set(items.map((item) => item.customerId).filter(Boolean))];
+
+  const [orders, users] = await Promise.all([
+    orderIds.length
+      ? ShopOrder.find({ _id: { $in: orderIds } }).select('customerPhone customerName shippingAddress').lean()
+      : [],
+    customerIds.length
+      ? User.find({ _id: { $in: customerIds } }).select('userPhone').lean()
+      : [],
+  ]);
+
+  const orderMap = new Map(orders.map((order) => [String(order._id), order]));
+  const userMap = new Map(users.map((user) => [String(user._id), user]));
+
+  return items.map((item) => formatDeliveryForDriver(item, orderMap, userMap));
+}
 
 router.get('/lists', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
@@ -39,7 +85,8 @@ router.get('/lists/:id', verifyToken, requireDeliveryDriver, async (req, res) =>
 router.get('/deliveries', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
     const deliveries = await Delivery.find({ driverId: req.user.id }).sort({ createdAt: -1 }).limit(200).lean();
-    res.json({ success: true, data: deliveries });
+    const data = await enrichDeliveriesForDriver(deliveries);
+    res.json({ success: true, data, deliveries: data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -50,7 +97,8 @@ router.get('/deliveries/:id', verifyToken, requireDeliveryDriver, async (req, re
     const driverId = req.user.id || req.user.userId;
     const delivery = await Delivery.findOne({ _id: req.params.id, driverId }).lean();
     if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
-    res.json({ success: true, data: delivery });
+    const [data] = await enrichDeliveriesForDriver([delivery]);
+    res.json({ success: true, data, delivery: data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -68,13 +116,7 @@ router.get('/history', verifyToken, requireDeliveryDriver, async (req, res) => {
       Delivery.find(filter).sort({ deliveredAt: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
       Delivery.countDocuments(filter),
     ]);
-    const data = rows.map((item) => ({
-      ...item,
-      customerName: item.metadata?.customerName || 'Client',
-      orderNumber: item.metadata?.orderNumber || item.deliveryId || '',
-      deliveryNumber: item.deliveryId || item.metadata?.orderNumber || '',
-      customerAddress: item.deliveryLocation?.address || '',
-    }));
+    const data = await enrichDeliveriesForDriver(rows);
     res.json({ success: true, data, deliveries: data, pagination: { page, limit, total } });
   } catch (error) {
     console.error('[deliveryRoutes] GET /history:', error);
@@ -86,7 +128,8 @@ router.get('/driver', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
     const driverId = req.user.id || req.user.userId;
     const deliveries = await Delivery.find({ driverId }).sort({ createdAt: -1 }).limit(200).lean();
-    res.json({ success: true, data: deliveries });
+    const data = await enrichDeliveriesForDriver(deliveries);
+    res.json({ success: true, data, deliveries: data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -293,7 +336,8 @@ router.get('/:id', verifyToken, requireDeliveryDriver, async (req, res) => {
     const driverId = req.user.id || req.user.userId;
     const delivery = await Delivery.findOne({ _id: req.params.id, driverId }).lean();
     if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
-    res.json({ success: true, data: delivery });
+    const [formatted] = await enrichDeliveriesForDriver([delivery]);
+    res.json({ success: true, data: formatted, delivery: formatted });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -9,7 +9,7 @@ const {
     googleLogin
 } = require('../Controllers/usersControllers');
 const verifyToken = require('../Middlewares/verifyTokens');
-const { sendVerificationLink, verifyEmail, getCurrentUser } = require('../Controllers/usersControllers');
+const { sendVerificationLink, verifyEmail, getCurrentUser, updateCurrentUser } = require('../Controllers/usersControllers');
 
 
 // Connexion classique
@@ -17,6 +17,7 @@ router.post('/login', login);
 
 // Profil utilisateur courant
 router.get('/me', verifyToken, getCurrentUser);
+router.patch('/me', verifyToken, updateCurrentUser);
 
 // Inscription classique
 router.post('/signup', signup);

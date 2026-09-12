@@ -669,6 +669,57 @@ const googleCallback = async (req, res) => {
     }
 };
 
+const updateCurrentUser = async (req, res) => {
+    try {
+        const userId = req.userId || req.user?.userId || req.user?.id;
+        const { userPhone } = req.body || {};
+        const normalizedPhone = String(userPhone || '').trim();
+
+        if (normalizedPhone.replace(/\D/g, '').length < 8) {
+            return res.status(400).json({
+                success: false,
+                message: 'Veuillez saisir un numéro de téléphone valide.',
+            });
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'Utilisateur non trouvé',
+            });
+        }
+
+        user.userPhone = normalizedPhone;
+        await user.save();
+
+        return res.status(200).json({
+            success: true,
+            user: {
+                id: user._id,
+                userId: user._id,
+                userFirstname: user.userFirstname,
+                userSurname: user.userSurname,
+                userEmail: user.userEmail,
+                userPhone: user.userPhone || '',
+                profileImage: user.profileImage || '',
+                role: user.role || 'customer',
+                isVendor: user.isVendor || user.role === 'vendor',
+                isVerified: Boolean(user.isVerified),
+                vendorName: user.vendorName || '',
+                balance: user.balance || 0,
+                bankDetails: user.bankDetails || {},
+            },
+        });
+    } catch (error) {
+        console.error('Erreur mise à jour utilisateur:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Erreur interne du serveur',
+        });
+    }
+};
+
 const getCurrentUser = async (req, res) => {
     try {
         const userId = req.userId || req.user?.userId || req.user?.id;
@@ -719,6 +770,7 @@ module.exports = {
     googleLogin,
     googleCallback,
     getCurrentUser,
+    updateCurrentUser,
     sendVerificationLink,
     verifyEmail
 };
