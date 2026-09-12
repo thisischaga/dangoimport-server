@@ -50,6 +50,34 @@ function signAccessToken(payload, options = {}) {
   });
 }
 
+function signAdmin2FAPendingToken(adminId) {
+  const secret = getJwtSecret();
+  if (!secret) {
+    throw new Error('JWT_SECRET non configuré.');
+  }
+
+  return jwt.sign(
+    { userId: adminId, purpose: 'admin-2fa-pending' },
+    secret,
+    { expiresIn: '5m', algorithm: JWT_ALGORITHM },
+  );
+}
+
+function verifyAdmin2FAPendingToken(token) {
+  const secret = getJwtSecret();
+  if (!secret) {
+    throw new Error('JWT_SECRET non configuré.');
+  }
+
+  const decoded = jwt.verify(token, secret, { algorithms: [JWT_ALGORITHM] });
+  if (decoded.purpose !== 'admin-2fa-pending') {
+    const error = new Error('Token 2FA invalide.');
+    error.name = 'JsonWebTokenError';
+    throw error;
+  }
+  return decoded;
+}
+
 function verifyAccessToken(token) {
   const secret = getJwtSecret();
   if (!secret) {
@@ -62,5 +90,7 @@ module.exports = {
   JWT_ALGORITHM,
   assertJwtSecretConfigured,
   signAccessToken,
+  signAdmin2FAPendingToken,
+  verifyAdmin2FAPendingToken,
   verifyAccessToken,
 };

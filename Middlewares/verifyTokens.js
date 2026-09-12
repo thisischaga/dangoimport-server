@@ -25,6 +25,9 @@ const verifyToken = async (req, res, next) => {
 
   try {
     const decoded = verifyAccessToken(token);
+    if (decoded.purpose === 'admin-2fa-pending') {
+      return res.status(401).json({ message: 'Authentification 2FA requise.' });
+    }
     const userId = decoded.userId || decoded.id;
 
     if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
@@ -90,6 +93,9 @@ const verifyAdmin = async (req, res, next) => {
 
   try {
     const decoded = verifyAccessToken(token);
+    if (decoded.purpose === 'admin-2fa-pending') {
+      return denyAdmin(req, res, 401, { message: 'Authentification 2FA requise.' }, 'Token 2FA pending sur route admin');
+    }
     const admin = await Admin.findById(decoded.userId).select('-adminPassword');
     if (!admin) {
       return denyAdmin(req, res, 401, { message: 'Compte administrateur introuvable ou supprimé.' }, 'Compte admin introuvable');

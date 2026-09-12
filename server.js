@@ -55,9 +55,10 @@ const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const { alertFailedAdminLogin, alertAdminActivity, adminActionLogger, alertRateLimit } = require('./utils/securityAlerts');
 const { createCorsOptions } = require('./utils/corsConfig');
-const { assertJwtSecretConfigured, signAccessToken } = require('./utils/jwtConfig');
+const { assertJwtSecretConfigured, signAccessToken, signAdmin2FAPendingToken } = require('./utils/jwtConfig');
 const { createGlobalErrorHandler } = require('./utils/apiError');
 const { paymentLimiter } = require('./Middlewares/rateLimiters');
+const { loginRouter: admin2faLoginRouter, adminRouter: admin2faRouter } = require('./routes/admin2faRoutes');
 const slugify = require('slugify');
 const _fedapayMod = require('./routes/fedapayRoutes');
 const fedapayRouter = _fedapayMod.router || _fedapayMod;
@@ -460,19 +461,31 @@ const startServer = async () => {
           return res.status(401).json({ message: "Identifiants incorrects." });
         }
 
-        // JWT incluant le rôle pour éviter des requêtes DB supplémentaires côté middleware
+        const userPayload = {
+          id: admin._id,
+          firstname: admin.adminFirstname,
+          surname: admin.adminSurname,
+          email: admin.adminName,
+          role: admin.role,
+          totpEnabled: Boolean(admin.totpEnabled),
+        };
+
+        if (admin.totpEnabled) {
+          const pendingToken = signAdmin2FAPendingToken(admin._id);
+          return res.status(200).json({
+            message: 'Code 2FA requis',
+            requires2FA: true,
+            pendingToken,
+            user: userPayload,
+          });
+        }
+
         const token = signAccessToken({ userId: admin._id, role: admin.role });
 
         res.status(200).json({
           message: 'Connexion réussie',
           token,
-          user: {
-            id: admin._id,
-            firstname: admin.adminFirstname,
-            surname: admin.adminSurname,
-            email: admin.adminName,
-            role: admin.role,
-          }
+          user: userPayload,
         });
 
         req.admin = admin;
@@ -486,6 +499,9 @@ const startServer = async () => {
         res.status(500).json({ message: 'Erreur serveur.' });
       }
     });
+
+    app.use('/login/2fa', admin2faLoginRouter);
+    app.use('/api/admin/2fa', admin2faRouter);
 
     // --- GESTION DES ADMINS (Réservé au Dev Admin) ---
 
@@ -583,7 +599,8 @@ const startServer = async () => {
           userId: admin._id,
           role: admin.role,
           firstname: admin.adminFirstname,
-          surname: admin.adminSurname
+          surname: admin.adminSurname,
+          totpEnabled: Boolean(admin.totpEnabled),
         });
       } catch (error) {
         console.error("[server.js] Erreur capturée :", error);
