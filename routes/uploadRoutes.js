@@ -2,7 +2,9 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const verifyToken = require('../Middlewares/verifyTokens');
 const { verifyAdmin } = require('../Middlewares/verifyTokens');
+const { uploadLimiter } = require('../Middlewares/rateLimiters');
 const { uploadBuffer } = require('../utils/cloudinaryUpload');
 const { isCloudinaryConfigured } = require('../config/cloudinary');
 
@@ -42,8 +44,8 @@ function handleMulter(req, res, next) {
   });
 }
 
-/** Upload public (sourcing client) — POST /api/upload */
-router.post('/', handleMulter, async (req, res) => {
+/** Upload sourcing — POST /api/upload (auth + rate limit) */
+router.post('/', uploadLimiter, verifyToken, handleMulter, async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'Fichier image requis (champ "image").' });
   }

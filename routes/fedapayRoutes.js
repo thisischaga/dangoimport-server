@@ -358,7 +358,10 @@ router.post('/checkout', verifyToken, async (req, res) => {
       if (!product) {
         return res.status(404).json({ message: `Produit introuvable: ${item.productId || item._id || item.id}` });
       }
-      const unitPrice = Number(item.price || product.salePrice || product.price || 0);
+      const unitPrice = Number(product.salePrice || product.price || 0);
+      if (item.price != null && Math.abs(Number(item.price) - unitPrice) > 0.01) {
+        return res.status(400).json({ message: `Prix invalide pour ${product.name}.` });
+      }
       const quantity = Number(item.quantity || 1);
       const lineTotal = unitPrice * quantity;
       subtotal += lineTotal;
@@ -401,7 +404,11 @@ router.post('/checkout', verifyToken, async (req, res) => {
     }
     const discount = Number(payload.discount || 0);
     const tax = Number(payload.tax || 0);
-    const total = Number(payload.total || payload.totalPrice || Math.max(0, subtotal + shippingCost + tax - discount));
+    const total = Math.max(0, subtotal + shippingCost + tax - discount);
+    const clientTotal = Number(payload.total || payload.totalPrice || 0);
+    if (clientTotal > 0 && Math.abs(clientTotal - total) > 1) {
+      return res.status(400).json({ message: 'Total de commande invalide.' });
+    }
     const shippingMethod = normalizeShippingMethod(payload.shippingMethod || payload.shippingLabel || 'standard');
 
     const customer = {
@@ -501,7 +508,11 @@ const handleFedapayWebhook = async (req, res) => {
   const eventId = event?.id || event?.event_id || crypto.createHash('sha256').update(payloadString).digest('hex');
 
   try {
-    const allowUnsignedWebhook = process.env.NODE_ENV !== 'production' || !secret;
+    const allowUnsignedWebhook = process.env.NODE_ENV !== 'production';
+    if (process.env.NODE_ENV === 'production' && !secret) {
+      await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: 'FEDAPAY_WEBHOOK_SECRET manquant en production' });
+      return res.status(503).send('Webhook non configuré');
+    }
 
     if (secret && signature) {
       // Premièrement essayer la vérification via la librairie
@@ -518,7 +529,9 @@ const handleFedapayWebhook = async (req, res) => {
         try {
           const expected = crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
           const raw = String(signature || '').trim();
-          const ok = raw === expected || raw === `sha256=${expected}` || raw.includes(expected) || raw.split(',').some(s => s.includes(expected));
+          const { timingSafeEqual } = require('../Middlewares/securityHelpers');
+          const normalized = raw.startsWith('sha256=') ? raw.slice(7) : raw;
+          const ok = timingSafeEqual(normalized, expected) || timingSafeEqual(raw, expected) || timingSafeEqual(raw, `sha256=${expected}`);
           if (!ok) {
             await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide (fallback HMAC): expected ${expected.slice(0,8)}...` });
             console.error('[fedapayRoutes] webhook signature invalid after HMAC fallback', {
@@ -736,7 +749,7 @@ const handleFedapayWebhook = async (req, res) => {
 
 router.post('/webhook', async (req, res) => handleFedapayWebhook(req, res));
 
-router.get('/transaction/:id', async (req, res) => {
+router.get('/transaction/:id', verifyToken, async (req, res) => {
   try {
     const id = req.params.id;
     let transaction = null;
@@ -750,10 +763,33 @@ router.get('/transaction/:id', async (req, res) => {
     if (!transaction) {
       return res.status(404).json({ message: 'Transaction introuvable' });
     }
-    return res.json({ success: true, data: transaction });
+
+    const userId = String(req.user?.id || req.user?.userId || '');
+    const userEmail = String(req.user?.userEmail || '').toLowerCase();
+    const txUserId = String(transaction.metadata?.userId || transaction.userId || '');
+    const txEmail = String(transaction.customer?.email || transaction.user?.email || '').toLowerCase();
+    const isOwner = (userId && txUserId && userId === txUserId)
+      || (userEmail && txEmail && userEmail === txEmail);
+    const isAdmin = ['admin', 'dev-admin', 'superadmin', 'manager'].includes(req.user?.role);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ message: 'Accès refusé.' });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        id: transaction._id,
+        transactionId: transaction.transactionId,
+        status: transaction.status,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        orderId: transaction.orderId,
+      },
+    });
   } catch (error) {
     console.error('[fedapayRoutes] get transaction error:', error);
-    return res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    return res.status(500).json({ message: 'Erreur serveur' });
   }
 });
 

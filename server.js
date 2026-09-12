@@ -33,7 +33,8 @@ const {
 const { configureFedapay, getFedapayStatus } = require('./config/fedapay');
 const connectDB = require('./Congfig/db');
 const verifyToken = require('./Middlewares/verifyTokens');
-const { verifyAdmin } = require('./Middlewares/verifyTokens');
+const { verifyAdmin, verifyDevAdmin } = require('./Middlewares/verifyTokens');
+const { requireOwnerEmail, escapeRegExp, isAdminUser } = require('./Middlewares/securityHelpers');
 const Commande = require('./Models/Commande');
 const Admin = require('./Models/Admin');
 const Achat = require('./Models/Achat');
@@ -89,10 +90,7 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Trop de requêtes, réessayez dans 15 minutes.' },
-  skip: (req, res) => {
-    // Ne pas limiter les requêtes locales
-    return req.ip === '::1' || req.ip === '127.0.0.1';
-  }
+  skip: () => false
 });
 app.use(generalLimiter);
 
@@ -122,8 +120,7 @@ if (fedapayBoot.ok) {
 // CONFIGURATION CORS AMÉLIORÉE POUR iOS/macOS
 const corsOptions = {
   origin: function (origin, callback) {
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
-    // console.log('CORS origin check:', { origin, NODE_ENV: process.env.NODE_ENV, isDev });
+    const isDev = process.env.NODE_ENV === 'development';
     if (isDev) {
       return callback(null, true);
     }
@@ -177,34 +174,25 @@ app.use((req, res, next) => {
 
 // Parser avec limites augmentées pour les images
 app.use(express.json({
-  limit: '125mb',
+  limit: process.env.JSON_BODY_LIMIT || '5mb',
   verify: (req, res, buf) => {
     req.rawBody = buf.toString('utf8');
   },
 }));
 app.use(express.urlencoded({
-  limit: '125mb',
+  limit: process.env.JSON_BODY_LIMIT || '5mb',
   extended: true,
   verify: (req, res, buf) => {
     req.rawBody = buf.toString('utf8');
   },
 }));
 
-// Logger global des requêtes pour debug local
-app.use((req, res, next) => {
-  console.log(`[server.js] incoming request ${req.method} ${req.originalUrl}`);
-  console.log('  headers:', {
-    host: req.headers.host,
-    origin: req.headers.origin,
-    referer: req.headers.referer,
-    authorization: req.headers.authorization ? 'yes' : 'no',
-    'x-fedapay-signature': req.headers['x-fedapay-signature'] || null,
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`[server.js] ${req.method} ${req.originalUrl}`);
+    next();
   });
-  if (req.rawBody && req.rawBody.length > 0) {
-    console.log('[server.js] body snippet:', req.rawBody.slice(0, 400));
-  }
-  next();
-});
+}
 
 // Servir les images statiques
 app.use('/images', express.static(path.join(__dirname, 'public/images')));
@@ -249,10 +237,14 @@ const startServer = async () => {
       });
     });
 
-    // Ajouter un admin
-    app.post('/add_admin', async (req, res) => {
+    // Ajouter un admin (dev-admin uniquement, sans token retourné)
+    app.post('/add_admin', verifyDevAdmin, async (req, res) => {
       const { adminFirstname, adminSurname, adminName, adminPassword, role } = req.body;
       try {
+        if (!adminPassword || String(adminPassword).length < 8) {
+          return res.status(400).json({ message: 'Mot de passe admin requis (8 caractères minimum).' });
+        }
+
         const existingAdmin = await Admin.findOne({ adminName });
         if (existingAdmin) {
           return res.status(400).json({ message: "Ce nom d'admin existe déjà !" });
@@ -264,20 +256,14 @@ const startServer = async () => {
           adminSurname,
           adminName,
           adminPassword: hashedPassword,
-          role,
+          role: role || 'admin',
         });
         await newAdmin.save();
 
-        const token = jwt.sign(
-          { userId: newAdmin._id },
-          process.env.JWT_SECRET,
-          { expiresIn: '1h' }
-        );
-
-        res.status(201).json({ message: 'Admin ajouté avec succès', token });
+        res.status(201).json({ message: 'Admin ajouté avec succès', adminId: newAdmin._id });
       } catch (error) {
         console.error('Erreur /add_admin :', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+        res.status(500).json({ message: 'Erreur serveur' });
       }
     });
 
@@ -690,7 +676,7 @@ const startServer = async () => {
       res.json(getFedapayStatus());
     });
 
-    app.post(['/api/payment/create', '/api/payments/create'], async (req, res) => {
+    app.post(['/api/payment/create', '/api/payments/create'], verifyToken, async (req, res) => {
       const {
         amount,
         currency = 'XOF',
@@ -787,7 +773,7 @@ const startServer = async () => {
       return fedapayWebhook(req, res, next);
     });
 
-    app.post('/api/fedapay/direct-pay', async (req, res) => {
+    app.post('/api/fedapay/direct-pay', verifyToken, async (req, res) => {
       const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
       const date = new Date();
 
@@ -888,33 +874,17 @@ const startServer = async () => {
       }
     });
 
-    app.get('/api/fedapay/transaction/:id', async (req, res) => {
+    app.get('/api/fedapay/transaction/:id', verifyToken, async (req, res) => {
       try {
         const fedapayConfig = configureFedapay();
         if (!fedapayConfig.ok) {
           return res.status(503).json({ message: "Paiement FedaPay non configuré." });
         }
         const transaction = await Transaction.retrieve(req.params.id);
-        
-        // Mettre à jour la base de données si c'est approuvé
-        if (transaction && transaction.status === 'approved') {
-           const meta = transaction.custom_metadata || {};
-           const orderId = meta.orderId;
-           if (orderId) {
-             if (meta.type === 'cart') {
-               await Commande.findByIdAndUpdate(orderId, { status: 'Payé' });
-             } else if (meta.type === 'devis') {
-               await Devis.findByIdAndUpdate(orderId, { status: 'paid', paymentToken: transaction.id });
-             } else {
-               await Achat.findByIdAndUpdate(orderId, { status: 'Payé' });
-             }
-           }
-        }
-        
         res.json({ status: transaction.status, id: transaction.id });
       } catch (error) {
         console.error('Erreur status FedaPay:', error.message);
-        res.status(500).json({ message: 'Erreur lors de la récupération du statut', error: error.message });
+        res.status(500).json({ message: 'Erreur lors de la récupération du statut' });
       }
     });
 
@@ -986,7 +956,7 @@ const startServer = async () => {
     });
 
     // --- DASHBOARD CLIENT & VENDEUR ROUTES ---
-    app.get('/api/user-activities/:email', async (req, res) => {
+    app.get('/api/user-activities/:email', verifyToken, requireOwnerEmail('email'), async (req, res) => {
       try {
         const email = req.params.email;
         const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
@@ -1001,10 +971,14 @@ const startServer = async () => {
       }
     });
 
-    app.get('/api/vendor-dashboard/:vendorName', async (req, res) => {
+    app.get('/api/vendor-dashboard/:vendorName', verifyToken, async (req, res) => {
       try {
         const vendorName = req.params.vendorName.trim();
-        const vendorRegex = new RegExp(`^${vendorName}$`, 'i');
+        const userVendorName = String(req.user?.vendorName || '').trim();
+        if (!isAdminUser(req) && userVendorName.toLowerCase() !== vendorName.toLowerCase()) {
+          return res.status(403).json({ message: 'Accès refusé.' });
+        }
+        const vendorRegex = new RegExp(`^${escapeRegExp(vendorName)}$`, 'i');
         const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
         const [achats, commandes, products] = await Promise.all([
           Achat.find({ vendorName: vendorRegex }).sort({ date: -1 }).limit(limit).lean(),
@@ -1038,7 +1012,7 @@ const startServer = async () => {
       }
     });
 
-    app.get('/api/vendor-requests', async (req, res) => {
+    app.get('/api/vendor-requests', verifyAdmin, async (req, res) => {
       try {
         const requests = await VendorRequest.find().sort({ date: -1 });
         res.status(200).json(requests);
@@ -1048,7 +1022,7 @@ const startServer = async () => {
       }
     });
 
-    app.put('/api/vendor-requests/:id/validate', async (req, res) => {
+    app.put('/api/vendor-requests/:id/validate', verifyAdmin, async (req, res) => {
       try {
         const request = await VendorRequest.findById(req.params.id);
         if (!request) return res.status(404).json({ message: "Demande introuvable" });
@@ -1071,7 +1045,7 @@ const startServer = async () => {
       }
     });
 
-    app.put('/api/vendor-requests/:id/reject', async (req, res) => {
+    app.put('/api/vendor-requests/:id/reject', verifyAdmin, async (req, res) => {
       try {
         const { reason } = req.body;
         const request = await VendorRequest.findById(req.params.id);
@@ -1088,12 +1062,11 @@ const startServer = async () => {
       }
     });
 
-    app.get('/api/users/me/:email', async (req, res) => {
+    app.get('/api/users/me/:email', verifyToken, requireOwnerEmail('email'), async (req, res) => {
       try {
         const user = await User.findOne({ userEmail: req.params.email });
         if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
 
-        // Retourner SEULEMENT les champs nécessaires
         res.status(200).json({
           _id: user._id,
           userFirstname: user.userFirstname,
@@ -1115,15 +1088,20 @@ const startServer = async () => {
     // --- WITHDRAWAL ROUTES ---
 
     // Créer une demande de retrait
-    app.post('/api/withdrawal-requests', async (req, res) => {
+    app.post('/api/withdrawal-requests', verifyToken, async (req, res) => {
       try {
         const { vendorEmail, amount, accountHolder, accountNumber, bankName, iban } = req.body;
+        const requestEmail = String(vendorEmail || req.user?.userEmail || '').trim().toLowerCase();
 
-        if (!vendorEmail || !amount || !accountHolder || !accountNumber || !bankName) {
+        if (!requestEmail || !amount || !accountHolder || !accountNumber || !bankName) {
           return res.status(400).json({ message: "Champs obligatoires manquants." });
         }
 
-        const user = await User.findOne({ userEmail: vendorEmail });
+        if (!isAdminUser(req) && String(req.user?.userEmail || '').toLowerCase() !== requestEmail) {
+          return res.status(403).json({ message: 'Accès refusé.' });
+        }
+
+        const user = await User.findOne({ userEmail: requestEmail });
         if (!user) return res.status(404).json({ message: "Vendeur non trouvé" });
 
         if (amount <= 0) {
@@ -1136,7 +1114,7 @@ const startServer = async () => {
 
         const withdrawalRequest = new WithdrawalRequest({
           userId: user._id,
-          vendorEmail,
+          vendorEmail: requestEmail,
           amount,
           bankDetails: {
             accountHolder,
@@ -1159,7 +1137,7 @@ const startServer = async () => {
     });
 
     // Récupérer les demandes de retrait d'un vendeur
-    app.get('/api/withdrawal-requests/:email', async (req, res) => {
+    app.get('/api/withdrawal-requests/:email', verifyToken, requireOwnerEmail('email'), async (req, res) => {
       try {
         const requests = await WithdrawalRequest.find({ vendorEmail: req.params.email }).sort({ date: -1 });
         res.status(200).json(requests);
@@ -1170,7 +1148,7 @@ const startServer = async () => {
     });
 
     // Récupérer toutes les demandes de retrait (admin)
-    app.get('/api/withdrawal-requests/admin/all', async (req, res) => {
+    app.get('/api/withdrawal-requests/admin/all', verifyAdmin, async (req, res) => {
       try {
         const requests = await WithdrawalRequest.find().sort({ date: -1 });
         res.status(200).json(requests);
@@ -1181,7 +1159,7 @@ const startServer = async () => {
     });
 
     // Approuver une demande de retrait
-    app.put('/api/withdrawal-requests/:id/approve', async (req, res) => {
+    app.put('/api/withdrawal-requests/:id/approve', verifyAdmin, async (req, res) => {
       try {
         const { transactionReference } = req.body;
         const request = await WithdrawalRequest.findById(req.params.id);
@@ -1207,7 +1185,7 @@ const startServer = async () => {
     });
 
     // Rejeter une demande de retrait
-    app.put('/api/withdrawal-requests/:id/reject', async (req, res) => {
+    app.put('/api/withdrawal-requests/:id/reject', verifyAdmin, async (req, res) => {
       try {
         const { reason } = req.body;
         const request = await WithdrawalRequest.findById(req.params.id);
@@ -1228,10 +1206,22 @@ const startServer = async () => {
     // --- MARKETPLACE ROUTES ---
 
     // Récupérer les notifications
-    app.get('/api/notifications', async (req, res) => {
+    app.get('/api/notifications', verifyToken, async (req, res) => {
       try {
-        const { recipient } = req.query; // 'admin' ou userId
+        const { recipient } = req.query;
         if (!recipient) return res.status(400).json({ message: "Recipient requis" });
+
+        const userId = String(req.user?.id || req.user?.userId || '');
+        const userEmail = String(req.user?.userEmail || '');
+        if (recipient === 'admin' && !isAdminUser(req)) {
+          return res.status(403).json({ message: 'Accès refusé.' });
+        }
+        const allowed = isAdminUser(req)
+          || recipient === userId
+          || recipient === userEmail;
+        if (!allowed) {
+          return res.status(403).json({ message: 'Accès refusé.' });
+        }
 
         const notifications = await Notification.find({ recipient })
           .sort({ createdAt: -1 })
@@ -1644,7 +1634,7 @@ const startServer = async () => {
     });
 
     // Modifier le statut d'une commande
-    app.put('/commande/status', async (req, res) => {
+    app.put('/commande/status', verifyAdmin, async (req, res) => {
       try {
         const { orderId, status } = req.body;
 
@@ -1671,7 +1661,7 @@ const startServer = async () => {
     });
 
     // Modifier le statut d'un devis
-    app.put('/devis/status', async (req, res) => {
+    app.put('/devis/status', verifyAdmin, async (req, res) => {
       try {
         const { orderId, status } = req.body;
 
@@ -1757,7 +1747,7 @@ const startServer = async () => {
       }
     });
 
-    app.put('/achat/status', async (req, res) => {
+    app.put('/achat/status', verifyAdmin, async (req, res) => {
       try {
         const { orderId, status } = req.body;
 

@@ -18,17 +18,11 @@ const Delivery = require('../Models/Delivery');
 const DeliveryList = require('../Models/DeliveryList');
 const { isOrderEligibleForDelivery, createDeliveryListFromOrders, getEligibleDeliveryOrders } = require('../services/deliveryDispatchService');
 const verifyToken = require('../Middlewares/verifyTokens');
+const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
 
 const router = express.Router();
 
-// Middleware pour vérifier l'accès admin
-const adminOnly = (req, res, next) => {
-    const role = req.user?.role || req.admin?.role;
-    if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(role)) {
-        return next();
-    }
-    return res.status(403).json({ success: false, message: 'Accès refusé' });
-};
+const adminOnly = requireAdminFromDb;
 
 // POST - Créer un produit
 router.post('/products', verifyToken, adminOnly, async (req, res) => {
@@ -148,7 +142,6 @@ router.get('/drivers', verifyToken, adminOnly, async (req, res) => {
         const payload = drivers.map((driver) => ({
             id: driver._id,
             driverCode: driver.driverCode,
-            driverPassword: driver.driverPassword || '',
             status: driver.status,
             isActive: driver.isActive,
             vehicleType: driver.vehicleType,
@@ -194,7 +187,6 @@ router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
             email: driver.userId?.userEmail || '',
             phone: driver.userId?.userPhone || driver.phone || '',
             driverCode: driver.driverCode || '',
-            driverPassword: driver.driverPassword || '',
             vehicleType: driver.vehicleType || '',
             vehiclePlate: driver.vehiclePlate || '',
             zone: driver.zone || '',
@@ -203,7 +195,7 @@ router.get('/drivers/export', verifyToken, adminOnly, async (req, res) => {
             createdAt: driver.createdAt ? new Date(driver.createdAt).toISOString() : '',
         }));
 
-        const headers = ['driverId', 'userId', 'firstName', 'lastName', 'email', 'phone', 'driverCode', 'driverPassword', 'vehicleType', 'vehiclePlate', 'zone', 'status', 'isActive', 'createdAt'];
+        const headers = ['driverId', 'userId', 'firstName', 'lastName', 'email', 'phone', 'driverCode', 'vehicleType', 'vehiclePlate', 'zone', 'status', 'isActive', 'createdAt'];
         const csv = [headers.join(',')].concat(rows.map((row) => headers.map((header) => {
             const value = row[header] ?? '';
             const escaped = String(value).replace(/"/g, '""');
@@ -286,7 +278,6 @@ router.post('/drivers', verifyToken, adminOnly, async (req, res) => {
                 userId: savedUser._id,
                 driverCode: driverIdentifier,
                 phone: normalizedPhone,
-                driverPassword: generatedPassword,
                 vehicleType: vehicleType || '',
                 vehiclePlate: vehiclePlate || '',
                 zone: zone || '',
@@ -297,7 +288,6 @@ router.post('/drivers', verifyToken, adminOnly, async (req, res) => {
         } else {
             existingDriver.driverCode = driverIdentifier;
             existingDriver.phone = normalizedPhone;
-            existingDriver.driverPassword = generatedPassword;
             existingDriver.vehicleType = vehicleType || existingDriver.vehicleType || '';
             existingDriver.vehiclePlate = vehiclePlate || existingDriver.vehiclePlate || '';
             existingDriver.zone = zone || existingDriver.zone || '';
@@ -317,7 +307,6 @@ router.post('/drivers', verifyToken, adminOnly, async (req, res) => {
                 id: savedDriver._id,
                 userId: savedUser._id,
                 driverCode: savedDriver.driverCode,
-                driverPassword: savedDriver.driverPassword,
                 userPhone: savedUser.userPhone,
                 userEmail: savedUser.userEmail,
                 generatedPassword,
@@ -382,7 +371,6 @@ router.patch('/drivers/:id', verifyToken, adminOnly, async (req, res) => {
             status,
             isActive,
             userPassword,
-            driverPassword,
         } = req.body || {};
 
         const driver = await Driver.findById(req.params.id);
@@ -401,9 +389,6 @@ router.patch('/drivers/:id', verifyToken, adminOnly, async (req, res) => {
         if (userPhone) user.userPhone = String(userPhone).trim();
         if (userPassword) {
             user.userPassword = await bcrypt.hash(String(userPassword), 10);
-        }
-        if (driverPassword) {
-            driver.driverPassword = String(driverPassword);
         }
         if (driverCode) driver.driverCode = String(driverCode).trim().toUpperCase();
         if (vehicleType !== undefined) driver.vehicleType = vehicleType;

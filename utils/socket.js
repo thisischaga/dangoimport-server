@@ -26,7 +26,7 @@ const initSocket = (server) => {
         if (allowed.includes(origin) || origin.endsWith('.dangoimport.com')) {
           return callback(null, true);
         }
-        return callback(null, true); // Fallback allow to prevent CORS block on socket polling
+        return callback(new Error('Not allowed by CORS'));
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       credentials: true,

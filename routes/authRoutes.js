@@ -1,4 +1,5 @@
 const express = require('express');
+const { authLoginLimiter, otpLimiter } = require('../Middlewares/rateLimiters');
 
 const router = express.Router();
 
@@ -9,21 +10,21 @@ const {
     googleLogin
 } = require('../Controllers/usersControllers');
 const verifyToken = require('../Middlewares/verifyTokens');
-const { sendVerificationLink, verifyEmail, getCurrentUser, updateCurrentUser } = require('../Controllers/usersControllers');
+const { sendVerificationLink, verifyEmail, getCurrentUser, updateCurrentUser, exchangeOAuthCode } = require('../Controllers/usersControllers');
 
 
 // Connexion classique
-router.post('/login', login);
+router.post('/login', authLoginLimiter, login);
 
 // Profil utilisateur courant
 router.get('/me', verifyToken, getCurrentUser);
 router.patch('/me', verifyToken, updateCurrentUser);
 
 // Inscription classique
-router.post('/signup', signup);
+router.post('/signup', authLoginLimiter, signup);
 
 // Vérification email
-router.post('/send-otp', sendSignupOTP);
+router.post('/send-otp', otpLimiter, sendSignupOTP);
 
 // Send verification link (authenticated preferred)
 router.post('/send-verification-link', verifyToken, sendVerificationLink);
@@ -31,9 +32,12 @@ router.post('/send-verification-link', verifyToken, sendVerificationLink);
 // Verify token via link
 router.get('/verify-email', verifyEmail);
 
+// Échange code OAuth éphémère → JWT
+router.post('/oauth-exchange', authLoginLimiter, exchangeOAuthCode);
+
 // Connexion Google
-router.get('/google', googleLogin);
-router.post('/google', googleLogin);
+router.get('/google', authLoginLimiter, googleLogin);
+router.post('/google', authLoginLimiter, googleLogin);
 
 
 module.exports = router;

@@ -300,8 +300,8 @@ router.post('/', verifyToken, async (req, res) => {
 
         const tax = 0;
         const total = Math.max(0, subtotal + shippingCost - discount);
-        const paymentStatus = ['fedapay', 'mobile_money'].includes(paymentMethod) ? 'completed' : 'pending';
-        const orderStatus = paymentStatus === 'completed' ? 'confirmed' : 'pending';
+        const paymentStatus = 'pending';
+        const orderStatus = 'pending';
 
         const order = new Order({
             orderNumber: generateOrderNumber(),
@@ -342,25 +342,6 @@ router.post('/', verifyToken, async (req, res) => {
         }
 
         await order.save();
-
-        // Réduire le stock
-        for (const item of items) {
-            await Product.findByIdAndUpdate(item.productId, {
-                $inc: { stock: -item.quantity, totalSales: item.quantity }
-            });
-        }
-
-        if (promotion && discount > 0) {
-            await Promotion.findByIdAndUpdate(promotion._id, { $inc: { usedCount: 1 } });
-            await PromoUsage.create({
-                promotionId: promotion._id,
-                code: promotion.code,
-                userId: req.user.id,
-                orderId: order._id,
-                subtotal,
-                discountAmount: discount,
-            });
-        }
 
         // Vider le panier
         await Cart.findOneAndUpdate({ userId: req.user.id }, { items: [], totalItems: 0, totalPrice: 0 });

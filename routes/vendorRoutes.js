@@ -11,6 +11,7 @@ const Review = require('../Models/Review');
 const QRCode = require('../Models/QRCode');
 const Otp = require('../Models/Otp');
 const verifyToken = require('../Middlewares/verifyTokens');
+const { authLoginLimiter, otpLimiter } = require('../Middlewares/rateLimiters');
 const { buildProductPayload } = require('../utils/productPayload');
 const { normalizeProductImages } = require('../utils/imageStorage');
 const { resolveSkuForCreate } = require('../utils/productIdentifiers');
@@ -104,7 +105,7 @@ const getStore = async (req, res, next) => {
 // Resend client configuration
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// POST /api/vendor/become-vendor — upgrade instantané (sans validation admin)
+// POST /api/vendor/become-vendor — nécessite une demande vendeur approuvée
 router.post('/become-vendor', verifyToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.userId || req.user.id);
@@ -112,10 +113,24 @@ router.post('/become-vendor', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'Utilisateur introuvable.' });
     }
 
+    const VendorRequest = require('../Models/VendorRequest');
+    const approvedRequest = await VendorRequest.findOne({
+      email: user.userEmail,
+      status: 'approved',
+    }).sort({ date: -1 });
+
+    if (!approvedRequest && !user.isVendor) {
+      return res.status(403).json({
+        message: 'Votre demande vendeur doit être approuvée par un administrateur avant activation.',
+      });
+    }
+
     user.role = 'vendor';
     user.isVendor = true;
     if (!user.vendorName) {
-      user.vendorName = `${user.userFirstname || ''} ${user.userSurname || ''}`.trim() || 'Ma boutique';
+      user.vendorName = approvedRequest?.businessName
+        || `${user.userFirstname || ''} ${user.userSurname || ''}`.trim()
+        || 'Ma boutique';
     }
     await user.save();
 
@@ -124,7 +139,7 @@ router.post('/become-vendor', verifyToken, async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Vous êtes maintenant vendeur sur DANGOIMPORT.',
+      message: 'Compte vendeur activé.',
       token,
       user: {
         ...buildVendorPayload(user),
@@ -139,7 +154,7 @@ router.post('/become-vendor', verifyToken, async (req, res) => {
 });
 
 // POST /api/vendor/send-otp
-router.post('/send-otp', async (req, res) => {
+router.post('/send-otp', otpLimiter, async (req, res) => {
   try {
     const { name, email, password, storeName, whatsapp, description } = req.body;
 
@@ -361,7 +376,7 @@ router.patch('/password', verifyToken, verifyVendor, async (req, res) => {
 });
 
 // POST /api/vendor/login
-router.post('/login', async (req, res) => {
+router.post('/login', authLoginLimiter, async (req, res) => {
   try {
     const { userEmail, userPassword } = req.body;
     if (!userEmail || !userPassword) {
@@ -952,10 +967,6 @@ router.delete('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor,
         { vendorName: req.vendorUser?.vendorName || `${req.vendorUser?.userFirstname} ${req.vendorUser?.userSurname}`.trim() },
       ],
     });
-
-    if (!deleted) {
-      deleted = await Product.findByIdAndDelete(productId);
-    }
 
     if (!deleted) {
       return res.status(404).json({ message: 'Produit introuvable.' });

@@ -50,13 +50,14 @@ const getPhoneVariants = (value = '') => {
 
 const matchesPassword = async (candidatePassword, inputPassword) => {
     if (!candidatePassword) return false;
-    if (String(candidatePassword) === String(inputPassword)) return true;
     try {
         return await bcrypt.compare(String(inputPassword), String(candidatePassword));
     } catch (error) {
         return false;
     }
 };
+
+const oauthCodeStore = new Map();
 
 const login = async (req, res) => {
     const {
@@ -110,14 +111,8 @@ const login = async (req, res) => {
             const candidateUsers = await User.find({ userPhone: { $in: allPhoneVariants } }).lean();
 
             for (const candidate of candidateUsers) {
-                const driver = await Driver.findOne({ userId: candidate._id }).select('driverPassword').lean();
-                const passwordsToCheck = [candidate.userPassword, driver?.driverPassword].filter(Boolean);
-
-                for (const candidatePassword of passwordsToCheck) {
-                    if (await matchesPassword(candidatePassword, cleanPassword)) {
-                        user = candidate;
-                        break;
-                    }
+                if (await matchesPassword(candidate.userPassword, cleanPassword)) {
+                    user = candidate;
                 }
 
                 if (user) break;
@@ -128,20 +123,15 @@ const login = async (req, res) => {
             const driver = await Driver.findOne({ driverCode: normalizedIdentifier.toUpperCase() }).populate('userId');
             const candidateUser = driver?.userId;
             if (candidateUser) {
-                const driverPassword = driver?.driverPassword;
-                const passwordsToCheck = [candidateUser.userPassword, driverPassword].filter(Boolean);
-                for (const candidatePassword of passwordsToCheck) {
-                    if (await matchesPassword(candidatePassword, cleanPassword)) {
-                        user = candidateUser;
-                        resolvedDriverCode = driver.driverCode;
-                        break;
-                    }
+                if (await matchesPassword(candidateUser.userPassword, cleanPassword)) {
+                    user = candidateUser;
+                    resolvedDriverCode = driver.driverCode;
                 }
             }
         }
 
         if (!user) {
-            return res.status(401).json({ message: "Utilisateur non trouvé !" });
+            return res.status(401).json({ message: 'Identifiants incorrects.' });
         }
 
         const driver = await Driver.findOne({ userId: user._id }).lean();
@@ -184,6 +174,7 @@ const login = async (req, res) => {
 
 const crypto = require('crypto');
 const emailService = require('../utils/emailService');
+const { sanitizeRedirectUrl } = require('../Middlewares/securityHelpers');
 
 /**
  * POST /api/auth/send-verification-link
@@ -211,7 +202,7 @@ const sendVerificationLink = async (req, res) => {
 
         // Build verification URL that points to backend verify endpoint
         const backendBase = process.env.BACKEND_URL || (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null) || `http://localhost:${process.env.PORT || 8000}`;
-        const clientRedirect = req.body?.redirectUrl || req.headers?.origin || '';
+        const clientRedirect = sanitizeRedirectUrl(req.body?.redirectUrl || req.headers?.origin || '', process.env.FRONTEND_URL);
         const redirectParam = clientRedirect ? `&redirect=${encodeURIComponent(clientRedirect)}` : '';
         const verifyUrl = `${backendBase.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}${redirectParam}`;
 
@@ -228,8 +219,7 @@ const sendVerificationLink = async (req, res) => {
 const verifyEmail = async (req, res) => {
     try {
         const { token, redirect } = req.query || {};
-        let targetFrontend = redirect || process.env.FRONTEND_URL || 'http://localhost:5173';
-        targetFrontend = targetFrontend.replace(/\/$/, '');
+        let targetFrontend = sanitizeRedirectUrl(redirect, process.env.FRONTEND_URL || 'https://dangoimport.com');
 
         if (!token) {
             return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token requis')}`);
@@ -256,7 +246,7 @@ const verifyEmail = async (req, res) => {
         return res.redirect(`${targetFrontend}/verification-success?verified=1`);
     } catch (error) {
         console.error('verifyEmail error:', error);
-        const targetFrontend = (req.query?.redirect || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+        const targetFrontend = sanitizeRedirectUrl(req.query?.redirect, process.env.FRONTEND_URL || 'https://dangoimport.com');
         return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Erreur serveur lors de la vérification.')}`);
     }
 };
@@ -275,10 +265,9 @@ const sendSignupOTP = async (req, res) => {
 
         signupOtpStore.set(userEmail, { otp, expiration });
 
-        // Log the OTP for local development/debugging
-        console.log(`\n================================`);
-        console.log(`🔐 OTP pour ${userEmail} : ${otp}`);
-        console.log(`================================\n`);
+        if (process.env.NODE_ENV !== 'production') {
+            console.log(`[dev] OTP envoyé pour ${userEmail}`);
+        }
 
         try {
             await resend.emails.send({
@@ -300,6 +289,10 @@ const sendSignupOTP = async (req, res) => {
 
 const signup = async (req, res) => {
     const { userFirstname, userSurname, userEmail, userPassword, otp } = req.body;
+
+    if (!userPassword || String(userPassword).length < 8) {
+        return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 8 caractères.' });
+    }
 
     try {
         // 1. Vérifier l'OTP
@@ -644,14 +637,11 @@ const googleCallback = async (req, res) => {
         );
 
 
-        // ============================
-        // REDIRECTION FRONTEND
-        // ============================
+        const oauthCode = crypto.randomBytes(32).toString('hex');
+        oauthCodeStore.set(oauthCode, { token, expires: Date.now() + 5 * 60 * 1000 });
 
         return res.redirect(
-
-            `${process.env.FRONTEND_URL}/oauth-success?token=${encodeURIComponent(token)}`
-
+            `${process.env.FRONTEND_URL}/oauth-success?code=${encodeURIComponent(oauthCode)}`
         );
 
     } catch (error) {
@@ -763,12 +753,29 @@ const getCurrentUser = async (req, res) => {
     }
 };
 
+const exchangeOAuthCode = async (req, res) => {
+    const { code } = req.body || {};
+    if (!code) {
+        return res.status(400).json({ message: 'Code requis.' });
+    }
+
+    const record = oauthCodeStore.get(String(code));
+    if (!record || Date.now() > record.expires) {
+        oauthCodeStore.delete(String(code));
+        return res.status(400).json({ message: 'Code invalide ou expiré.' });
+    }
+
+    oauthCodeStore.delete(String(code));
+    return res.status(200).json({ token: record.token });
+};
+
 module.exports = {
     login,
     signup,
     sendSignupOTP,
     googleLogin,
     googleCallback,
+    exchangeOAuthCode,
     getCurrentUser,
     updateCurrentUser,
     sendVerificationLink,

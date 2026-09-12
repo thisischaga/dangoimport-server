@@ -57,23 +57,6 @@ const verifyToken = async (req, res, next) => {
       return next();
     }
 
-    // 3. Fallback : si non trouvé dans User, vérifier dans Admin
-    const admin = await Admin.findById(userId).select('-adminPassword');
-    if (admin) {
-      req.user = {
-        ...decoded,
-        id: admin._id,
-        userId: admin._id,
-        userFirstname: admin.adminFirstname || '',
-        userSurname: admin.adminSurname || '',
-        userEmail: admin.adminName || '',
-        userPhone: admin.adminPhone || '',
-        role: admin.role || 'admin',
-      };
-      req.admin = admin;
-      return next();
-    }
-
     return res.status(401).json({ message: 'Utilisateur introuvable.' });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
