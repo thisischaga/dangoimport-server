@@ -23,6 +23,7 @@ const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
 const { calculateDeliveryForItems } = require('../services/deliveryService');
 const { alertIntrusion } = require('../utils/securityAlerts');
+const { validatePromotion } = require('../utils/promoValidation');
 
 const router = express.Router();
 
@@ -403,7 +404,17 @@ router.post('/checkout', verifyToken, async (req, res) => {
     } catch (err) {
       console.warn('[fedapayRoutes] shipping cost compute error:', err.message);
     }
-    const discount = Number(payload.discount || 0);
+
+    const promoResult = await validatePromotion(
+      payload.promoCode,
+      subtotal,
+      req.user?.id || payload.userId || null,
+      orderItems,
+    );
+    if (promoResult.error) {
+      return res.status(400).json({ message: promoResult.error });
+    }
+    const discount = promoResult.discount || 0;
     const tax = Number(payload.tax || 0);
     const total = Math.max(0, subtotal + shippingCost + tax - discount);
     const clientTotal = Number(payload.total || payload.totalPrice || 0);

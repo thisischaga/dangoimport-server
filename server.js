@@ -624,69 +624,8 @@ const startServer = async () => {
     });
 
 
-    app.post('/commander', async (req, res) => {
-      const { userName, userEmail, categorie, productQuantity, picture, productDescription, selectedCountry, status, lat, lng, deliveryFee, paymentMethod, address, city, totalPrice, productPrice } = req.body;
-      const date = new Date();
-
-      if (!userEmail || !userName || !categorie || !productQuantity || !picture || !productDescription || !selectedCountry || !status) {
-        return res.status(400).json({ message: "Champs manquants." });
-      }
-
-      try {
-        const newCommande = new Commande({
-          userName,
-          userEmail,
-          categorie,
-          productQuantity,
-          picture,
-          productDescription,
-          selectedCountry,
-          status,
-          lat,
-          lng,
-          deliveryFee,
-          paymentMethod,
-          address,
-          city,
-          totalPrice,
-          productPrice,
-          date,
-        });
-
-        await newCommande.save();
-
-        // Notification Admin
-        await notifyAdmins({
-          subject: '📦 Nouvelle Commande (Sur mesure)',
-          html: `
-            <h2>Nouvelle commande sur mesure</h2>
-            <p><strong>Client :</strong> ${userName} (${userEmail})</p>
-            <p><strong>Catégorie :</strong> ${categorie}</p>
-            <p><strong>Description :</strong> ${productDescription}</p>
-            <p><strong>Quantité :</strong> ${productQuantity}</p>
-            <p><strong>Total :</strong> ${totalPrice} FCFA</p>
-            <hr/>
-            <p><a href="http://localhost:5173/orders">Voir dans le panel admin</a></p>
-          `
-        });
-
-        res.status(201).json({
-          message: "Nous avons reçu votre commande, nous vous contacterons !",
-          commandeId: newCommande._id
-        });
-
-        // Notification Temps Réel Admin
-        await sendNotification({
-          recipient: 'admin',
-          type: 'order',
-          title: '📦 Nouvelle Commande',
-          message: `Commande de ${userName} (${categorie}).`,
-          link: '/orders'
-        });
-      } catch (error) {
-        console.error("Erreur /commander :", error);
-        res.status(500).json({ message: "Erreur serveur", error: error.message });
-      }
+    app.post('/commander', verifyToken, async (req, res) => {
+      return res.status(410).json({ message: 'Route obsolète. Utilisez le checkout marketplace (/api/fedapay/checkout).' });
     });
 
     // ═══════════════════════════════════════════════
@@ -697,77 +636,9 @@ const startServer = async () => {
     });
 
     app.post(['/api/payment/create', '/api/payments/create'], verifyToken, async (req, res) => {
-      const {
-        amount,
-        currency = 'XOF',
-        description,
-        callback_url,
-        customer,
-        deliveryCountry = 'Togo',
-        custom_metadata,
-      } = req.body;
-
-      if (!amount || !customer?.email || !customer?.phone) {
-        return res.status(400).json({ message: 'Montant, email et téléphone requis pour le paiement.' });
-      }
-
-      if (!process.env.FEDAPAY_SECRET_KEY) {
-        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
-      }
-
-      const fedapayConfig = configureFedapay();
-      if (!fedapayConfig.ok) {
-        return res.status(503).json({ message: 'Paiement FedaPay non configuré.' });
-      }
-
-      try {
-        const phoneDigits = String(customer.phone).replace(/\D/g, '');
-        const normalizedPhone = phoneDigits.startsWith('229') || phoneDigits.startsWith('228') || phoneDigits.startsWith('225') || phoneDigits.startsWith('221') || phoneDigits.startsWith('226') || phoneDigits.startsWith('227') || phoneDigits.startsWith('223') || phoneDigits.startsWith('224') || phoneDigits.startsWith('220') || phoneDigits.startsWith('222') || phoneDigits.startsWith('230')
-          ? phoneDigits.replace(/^(229|228|225|221|226|227|223|224|220|222|230)/, '')
-          : phoneDigits;
-
-        // Résolution robuste du pays pour FedaPay
-        const inputCountry = req.body.countryCode || req.body.selectedCountry || deliveryCountry || 'Togo';
-        const norm = String(inputCountry).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const countryCode = (norm === 'bj' || norm === 'benin' || norm === 'bénin') ? 'BJ' : 'TG';
-
-        const transactionPayload = {
-          description: description || 'Paiement Dango Import',
-          amount: Math.round(Number(amount)),
-          currency: { iso: String(currency).toUpperCase() },
-          callback_url: callback_url || process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
-          customer: {
-            firstname: customer.firstname || 'Client',
-            lastname: customer.lastname || 'Dango',
-            email: customer.email,
-            phone_number: {
-              number: normalizedPhone || '97000000',
-              country: countryCode,
-            }
-          }
-        };
-
-        if (custom_metadata && typeof custom_metadata === 'object') {
-          transactionPayload.custom_metadata = custom_metadata;
-        }
-
-        const transaction = await Transaction.create(transactionPayload);
-
-        const token = await transaction.generateToken();
-        return res.status(201).json({
-          message: 'Paiement initialisé.',
-          payment_url: token.url,
-          paymentUrl: token.url,
-          transactionId: transaction.id,
-        });
-      } catch (error) {
-        console.error('=== Erreur /api/payment/create ===');
-        console.error(error.message);
-        return res.status(500).json({
-          message: 'Erreur lors de l’initialisation du paiement FedaPay.',
-          error: error.message,
-        });
-      }
+      return res.status(410).json({
+        message: 'Paiement libre désactivé. Utilisez le checkout marketplace (/api/fedapay/checkout).',
+      });
     });
 
     // Sourcing — enregistré tôt (même zone que payment) pour éviter 404 si le mount tardif échoue
@@ -794,104 +665,9 @@ const startServer = async () => {
     });
 
     app.post('/api/fedapay/direct-pay', verifyToken, async (req, res) => {
-      const { userName, userNumber, network, countryCode, productQuantity, picture, userPref, userEmail, selectedCountry, lat, lng, deliveryFee, address, city, totalPrice, productPrice, description, type, vendorName } = req.body;
-      const date = new Date();
-
-      if (!userNumber || !userName || !userEmail || !totalPrice || !network) {
-        return res.status(400).json({ message: "Champs manquants pour FedaPay Direct (network requis)." });
-      }
-
-      if (!process.env.FEDAPAY_SECRET_KEY) {
-        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
-      }
-
-      const fedapayConfig = configureFedapay();
-      if (!fedapayConfig.ok) {
-        return res.status(503).json({ message: "Paiement FedaPay non configuré." });
-      }
-
-      try {
-        let newOrder;
-
-        const phoneDigits = String(userNumber).replace(/\D/g, '');
-        const phoneAsNumber = parseInt(phoneDigits.slice(-8), 10) || 97000000;
-        const safePicture = picture && String(picture).trim() ? picture : 'https://dangoimport.com/logo.png';
-        const orderDate = date instanceof Date ? date.toISOString() : String(date);
-
-        const achatPayload = {
-          userName,
-          userNumber: phoneAsNumber,
-          productQuantity: productQuantity || 1,
-          userPref: userPref || description || (type === 'cart' ? 'Commande panier' : 'Achat direct'),
-          selectedCountry: selectedCountry || 'Benin',
-          picture: safePicture,
-          userEmail,
-          status: 'En attente',
-          lat: lat || 6.37,
-          lng: lng || 2.43,
-          deliveryFee: deliveryFee || 0,
-          paymentMethod: 'FedaPay (USSD)',
-          address: address || 'Non précisé',
-          city: city || 'Non précisé',
-          totalPrice,
-          productPrice: productPrice || totalPrice,
-          date: orderDate,
-          vendorName: vendorName || 'Dango Import',
-        };
-
-        newOrder = new Achat(achatPayload);
-        await newOrder.save();
-
-        const nameParts = userName.trim().split(' ');
-        const firstname = nameParts[0] || 'Client';
-        const lastname = nameParts.slice(1).join(' ') || 'Dango';
-        const returnUrl = process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/';
-
-        // Nettoyage du numéro
-        let phoneNumber = String(userNumber).replace(/\D/g, '');
-        const prefixes = ['229', '228', '225', '221', '226', '227', '223', '224', '220', '222', '230'];
-        for (const pfx of prefixes) {
-          if (phoneNumber.startsWith(pfx)) { phoneNumber = phoneNumber.slice(pfx.length); break; }
-        }
-        if (phoneNumber.length < 8) phoneNumber = '97000000';
-
-        const transaction = await Transaction.create({
-          description: description || 'Commande Dango Import',
-          amount: Math.round(Number(totalPrice)),
-          currency: { iso: 'XOF' },
-          callback_url: returnUrl,
-          custom_metadata: { orderId: newOrder._id.toString(), type: type || 'achat' },
-          customer: {
-            firstname,
-            lastname,
-            email: userEmail || 'client@dangoimport.com',
-            phone_number: {
-              number: phoneNumber,
-              country: countryCode || 'BJ'
-            }
-          }
-        });
-
-        const token = await transaction.generateToken();
-        const sendResult = await transaction.sendNowWithToken(network, token.token);
-
-        res.status(201).json({ 
-          message: "Demande de paiement envoyée.",
-          transactionId: transaction.id, 
-          orderId: newOrder._id 
-        });
-      } catch (error) {
-        console.error('=== Erreur FedaPay Direct ===');
-        console.error('Message:', error.message);
-        console.error('Errors:', JSON.stringify(error.errors || error.body || {}, null, 2));
-
-        const isAuthError = String(error.message || '').includes('401');
-        res.status(isAuthError ? 502 : 500).json({
-          message: "Erreur lors de l'initialisation du paiement direct FedaPay",
-          error: error.message,
-          details: error.errors || error.body || null
-        });
-      }
+      return res.status(410).json({
+        message: 'Paiement direct obsolète. Utilisez le checkout marketplace (/api/fedapay/checkout).',
+      });
     });
 
     app.get('/api/fedapay/transaction/:id', verifyToken, async (req, res) => {
@@ -908,71 +684,10 @@ const startServer = async () => {
       }
     });
 
-    app.post('/acheter', async (req, res) => {
-      const { userName, userNumber, productQuantity, picture, userPref, userEmail, selectedCountry, status, lat, lng, deliveryFee, paymentMethod, address, city, totalPrice, productPrice, vendorName } = req.body;
-      const date = new Date();
-
-      if (!userNumber || !userName || !userEmail || !productQuantity || !picture || !userPref || !selectedCountry || !status) {
-        return res.status(400).json({ message: "Champs manquants." });
-      }
-
-      try {
-        const newAchat = new Achat({
-          userName,
-          userNumber,
-          productQuantity,
-          userPref,
-          selectedCountry,
-          picture,
-          userEmail,
-          status,
-          lat,
-          lng,
-          deliveryFee,
-          paymentMethod,
-          address,
-          city,
-          totalPrice,
-          productPrice,
-          date,
-          vendorName,
-        });
-
-        await newAchat.save();
-
-        // Notification Admin
-        await notifyAdmins({
-          subject: '🛍️ Nouvel Achat (Boutique)',
-          html: `
-            <h2>Nouvel achat boutique</h2>
-            <p><strong>Client :</strong> ${userName} (${userEmail})</p>
-            <p><strong>Téléphone :</strong> ${userNumber}</p>
-            <p><strong>Détails :</strong> ${userPref}</p>
-            <p><strong>Quantité :</strong> ${productQuantity}</p>
-            <p><strong>Total :</strong> ${totalPrice} FCFA</p>
-            <p><strong>Localisation :</strong> <a href="https://www.google.com/maps?q=${lat},${lng}">Voir sur Maps</a></p>
-            <hr/>
-            <p><a href="http://localhost:5173/orders">Voir dans le panel admin</a></p>
-          `
-        });
-
-        res.status(201).json({
-          message: "Nous avons reçu votre commande, nous vous contacterons !",
-          achatId: newAchat._id
-        });
-
-        // Notification Temps Réel Admin
-        await sendNotification({
-          recipient: 'admin',
-          type: 'order',
-          title: '🛍️ Nouvel Achat Boutique',
-          message: `${userName} a acheté ${productQuantity} article(s).`,
-          link: '/orders'
-        });
-      } catch (error) {
-        console.error("Erreur /acheter :", error);
-        res.status(500).json({ message: "Erreur serveur", error: error.message });
-      }
+    app.post('/acheter', verifyToken, async (req, res) => {
+      return res.status(410).json({
+        message: 'Route obsolète. Utilisez le checkout marketplace (/api/fedapay/checkout).',
+      });
     });
 
     // --- DASHBOARD CLIENT & VENDEUR ROUTES ---
@@ -1268,10 +983,27 @@ const startServer = async () => {
     });
 
     // Marquer comme lu
-    app.put('/api/notifications/:id/read', async (req, res) => {
+    app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
       try {
-        await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
-        res.status(200).json({ message: "Marqué comme lu" });
+        const notification = await Notification.findById(req.params.id);
+        if (!notification) {
+          return res.status(404).json({ message: 'Notification introuvable' });
+        }
+
+        const userId = String(req.user?.id || req.user?.userId || '');
+        const userEmail = String(req.user?.userEmail || '');
+        const allowed = isAdminUser(req)
+          || notification.recipient === userId
+          || notification.recipient === userEmail
+          || (notification.recipient === 'admin' && isAdminUser(req));
+
+        if (!allowed) {
+          return res.status(403).json({ message: 'Accès refusé.' });
+        }
+
+        notification.isRead = true;
+        await notification.save();
+        res.status(200).json({ message: 'Marqué comme lu' });
       } catch (error) {
         console.error("[server.js] Erreur capturée :", error);
         res.status(500).json({ message: "Erreur serveur" });

@@ -101,8 +101,14 @@ router.post('/:conversationId/messages', async (req, res) => {
       return res.status(404).json({ message: 'Conversation introuvable' });
     }
 
-    const senderId = req.user.userId;
-    const isBuyer = conversation.buyerId.toString() === senderId;
+    const senderId = String(req.user.userId || req.user.id);
+    const isBuyer = String(conversation.buyerId) === senderId;
+    const isSeller = String(conversation.sellerId) === senderId;
+
+    if (!isBuyer && !isSeller) {
+      return res.status(403).json({ message: 'Accès refusé à cette conversation.' });
+    }
+
     const recipientId = isBuyer ? conversation.sellerId : conversation.buyerId;
 
     if (!content || !String(content).trim()) {

@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Product = require('../Models/Product');
 const Review = require('../Models/Review');
+const verifyToken = require('../Middlewares/verifyTokens');
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -262,11 +263,15 @@ router.get('/:id/reviews', async (req, res) => {
   }
 });
 
-// POST /api/products/:id/reviews - Ajouter un avis
-router.post('/:id/reviews', async (req, res) => {
+// POST /api/products/:id/reviews - Ajouter un avis (auth requise)
+router.post('/:id/reviews', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId, userName, rating, title, comment } = req.body;
+    const { rating, title, comment } = req.body;
+    const userId = req.user?.id || req.user?.userId;
+    const userName = `${req.user?.userFirstname || ''} ${req.user?.userSurname || ''}`.trim()
+      || req.user?.userEmail
+      || 'Acheteur';
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'ID produit invalide' });
@@ -281,13 +286,18 @@ router.post('/:id/reviews', async (req, res) => {
       return res.status(404).json({ message: 'Produit introuvable' });
     }
 
+    const existing = await Review.findOne({ productId: id, userId });
+    if (existing) {
+      return res.status(400).json({ message: 'Vous avez déjà laissé un avis pour ce produit.' });
+    }
+
     const newReview = new Review({
       productId: id,
-      userId: userId || new mongoose.Types.ObjectId(),
-      userName: userName || 'Acheteur',
+      userId,
+      userName,
       rating: Number(rating),
       title: title || 'Avis client',
-      comment
+      comment,
     });
 
     await newReview.save();
