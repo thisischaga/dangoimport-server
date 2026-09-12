@@ -47,34 +47,253 @@ router.get('/deliveries', verifyToken, requireDeliveryDriver, async (req, res) =
 
 router.get('/deliveries/:id', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
-    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id }).lean();
+    const driverId = req.user.id || req.user.userId;
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId }).lean();
     if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
     res.json({ success: true, data: delivery });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Routes statiques AVANT /:id — sinon "history" et "driver" sont pris pour des ObjectId → 500
+router.get('/history', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const driverId = req.user.id || req.user.userId;
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
+    const skip = (page - 1) * limit;
+    const filter = { driverId, status: { $in: ['DELIVERED', 'CANCELLED', 'FAILED'] } };
+    const [rows, total] = await Promise.all([
+      Delivery.find(filter).sort({ deliveredAt: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      Delivery.countDocuments(filter),
+    ]);
+    const data = rows.map((item) => ({
+      ...item,
+      customerName: item.metadata?.customerName || 'Client',
+      orderNumber: item.metadata?.orderNumber || item.deliveryId || '',
+      deliveryNumber: item.deliveryId || item.metadata?.orderNumber || '',
+      customerAddress: item.deliveryLocation?.address || '',
+    }));
+    res.json({ success: true, data, deliveries: data, pagination: { page, limit, total } });
+  } catch (error) {
+    console.error('[deliveryRoutes] GET /history:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.get('/driver', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const driverId = req.user.id || req.user.userId;
+    const deliveries = await Delivery.find({ driverId }).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ success: true, data: deliveries });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+const NEXT_STATUS_MAP = {
+  ASSIGNED: 'ACCEPTED',
+  ACCEPTED: 'PICKED_UP',
+  PICKED_UP: 'IN_TRANSIT',
+  IN_TRANSIT: 'ARRIVED',
+  ARRIVED: 'DELIVERED',
+};
+
+const STATUS_ACTION_LABELS = {
+  ACCEPTED: 'Accepter la livraison',
+  PICKED_UP: 'Confirmer le retrait du colis',
+  IN_TRANSIT: 'Démarrer la livraison',
+  ARRIVED: 'Confirmer l’arrivée chez le client',
+  DELIVERED: 'Confirmer la remise au client',
+};
+
+const STATUS_SUCCESS_LABELS = {
+  ACCEPTED: 'Livraison acceptée.',
+  PICKED_UP: 'Colis récupéré.',
+  IN_TRANSIT: 'Livraison en cours.',
+  ARRIVED: 'Arrivée enregistrée.',
+  DELIVERED: 'Colis livré avec succès.',
+};
+
+const getNextDeliveryStatus = (currentStatus) => NEXT_STATUS_MAP[currentStatus] || null;
+
+async function resolveDeliveryForDriverScan(token, driverId) {
+  const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  let delivery = await Delivery.findOne({
+    $or: [{ qrToken: token }, { qrHash: candidateHash }],
+    driverId,
+  });
+
+  let scanSource = 'delivery_qr';
+
+  if (!delivery) {
+    const orderQr = await QRCode.findOne({ code: token }).lean();
+    if (orderQr?.orderId) {
+      delivery = await Delivery.findOne({ orderId: orderQr.orderId, driverId });
+      if (delivery) scanSource = 'order_qr';
+    }
+  }
+
+  if (!delivery) {
+    const anyDelivery = await Delivery.findOne({
+      $or: [{ qrToken: token }, { qrHash: candidateHash }],
+    }).lean();
+
+    if (anyDelivery) {
+      const err = new Error('Ce colis ne fait pas partie de vos livraisons.');
+      err.status = 403;
+      throw err;
+    }
+
+    const orderQr = await QRCode.findOne({ code: token }).lean();
+    if (orderQr) {
+      const anyOrderDelivery = await Delivery.findOne({ orderId: orderQr.orderId }).lean();
+      if (anyOrderDelivery) {
+        const err = new Error('Commande reconnue, mais cette livraison n’est pas assignée à votre compte.');
+        err.status = 403;
+        err.code = 'NOT_YOUR_DELIVERY';
+        throw err;
+      }
+      const err = new Error('Commande reconnue, mais aucune livraison n’a encore été planifiée pour ce colis.');
+      err.status = 404;
+      err.code = 'NO_DELIVERY_PLANNED';
+      throw err;
+    }
+
+    const err = new Error('Code colis invalide. Utilisez le QR de la commande ou le QR livraison assigné.');
+    err.status = 404;
+    err.code = 'INVALID_QR';
+    throw err;
+  }
+
+  return { delivery, scanSource };
+}
+
+function buildScanPreviewPayload(delivery, scanSource) {
+  const nextStatus = getNextDeliveryStatus(delivery.status);
+  const meta = delivery.metadata || {};
+
+  return {
+    deliveryId: delivery._id,
+    orderNumber: meta.orderNumber || delivery.deliveryId || String(delivery._id).slice(-8).toUpperCase(),
+    customerName: meta.customerName || 'Client',
+    customerAddress: delivery.deliveryLocation?.address || '',
+    pickupAddress: delivery.pickupLocation?.address || '',
+    currentStatus: delivery.status,
+    nextStatus,
+    nextActionLabel: nextStatus ? STATUS_ACTION_LABELS[nextStatus] : null,
+    scanSource,
+  };
+}
+
+// Routes scan AVANT /:id/confirm — sinon "scan" est pris pour un ObjectId
+router.post('/scan/confirm', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
+    const { deliveryId, type } = req.body || {};
+    const token = extractQrToken(rawToken);
+
+    const driverId = req.user.id || req.user.userId;
+    let delivery = null;
+    let scanSource = 'delivery_qr';
+
+    if (deliveryId) {
+      delivery = await Delivery.findOne({ _id: deliveryId, driverId });
+      if (!delivery && token) {
+        const resolved = await resolveDeliveryForDriverScan(token, driverId);
+        delivery = resolved.delivery;
+        scanSource = resolved.scanSource;
+      }
+    } else if (token) {
+      const resolved = await resolveDeliveryForDriverScan(token, driverId);
+      delivery = resolved.delivery;
+      scanSource = resolved.scanSource;
+    } else {
+      return res.status(400).json({ success: false, message: 'QR code ou identifiant de livraison requis.' });
+    }
+
+    if (!delivery) {
+      return res.status(404).json({ success: false, message: 'Livraison introuvable.' });
+    }
+
+    if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
+      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
+    }
+
+    const nextStatus = getNextDeliveryStatus(delivery.status);
+    if (!nextStatus) {
+      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
+    }
+
+    const updated = await changeStatus(delivery._id, nextStatus, req.user.id, req.user.role, {
+      metadata: { driverId: req.user.id, scanType: type || 'CONFIRMED', scanSource, confirmedAt: new Date() },
+    });
+
+    return res.json({
+      success: true,
+      confirmed: true,
+      message: STATUS_SUCCESS_LABELS[nextStatus] || 'Action confirmée.',
+      data: updated,
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'CONFIRM_ERROR',
+      message: error.message || 'Erreur lors de la confirmation.',
+    });
+  }
+});
+
+router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
+    const { type } = req.body || {};
+    const token = extractQrToken(rawToken);
+    if (!token) {
+      return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Vérifiez que le QR code est bien lisible.' });
+    }
+
+    const driverId = req.user.id || req.user.userId;
+    const { delivery, scanSource } = await resolveDeliveryForDriverScan(token, driverId);
+
+    if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
+      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
+    }
+
+    if (type && type === 'PICKUP_SCAN' && delivery.status !== 'ACCEPTED') {
+      return res.status(400).json({ success: false, message: 'Le scan de retrait n’est pas autorisé à ce stade.' });
+    }
+
+    const nextStatus = getNextDeliveryStatus(delivery.status);
+    if (!nextStatus) {
+      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
+    }
+
+    return res.json({
+      success: true,
+      preview: true,
+      message: 'QR code reconnu. Confirmez l’action pour valider.',
+      data: buildScanPreviewPayload(delivery, scanSource),
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'SCAN_ERROR',
+      message: error.message || 'Erreur lors du scan.',
+    });
   }
 });
 
 router.get('/:id', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
-    const delivery = await Delivery.findOne({ _id: req.params.id, driverId: req.user.id }).lean();
+    const driverId = req.user.id || req.user.userId;
+    const delivery = await Delivery.findOne({ _id: req.params.id, driverId }).lean();
     if (!delivery) return res.status(403).json({ success: false, message: 'Cette livraison ne fait pas partie de vos livraisons.' });
     res.json({ success: true, data: delivery });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.get('/history', verifyToken, requireDeliveryDriver, async (req, res) => {
-  try {
-    const page = Math.max(1, Number(req.query.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
-    const skip = (page - 1) * limit;
-    const [items, total] = await Promise.all([
-      Delivery.find({ driverId: req.user.id, status: { $in: ['DELIVERED', 'CANCELLED', 'FAILED'] } }).sort({ deliveredAt: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
-      Delivery.countDocuments({ driverId: req.user.id, status: { $in: ['DELIVERED', 'CANCELLED', 'FAILED'] } }),
-    ]);
-    res.json({ success: true, data: items, pagination: { page, limit, total } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -221,212 +440,6 @@ router.patch('/deliveries/:id/status', verifyToken, requireDeliveryDriver, async
     res.json({ success: true, data: updated });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
-  }
-});
-
-const NEXT_STATUS_MAP = {
-  ASSIGNED: 'ACCEPTED',
-  ACCEPTED: 'PICKED_UP',
-  PICKED_UP: 'IN_TRANSIT',
-  IN_TRANSIT: 'ARRIVED',
-  ARRIVED: 'DELIVERED',
-};
-
-const STATUS_ACTION_LABELS = {
-  ACCEPTED: 'Accepter la livraison',
-  PICKED_UP: 'Confirmer le retrait du colis',
-  IN_TRANSIT: 'Démarrer la livraison',
-  ARRIVED: 'Confirmer l’arrivée chez le client',
-  DELIVERED: 'Confirmer la remise au client',
-};
-
-const STATUS_SUCCESS_LABELS = {
-  ACCEPTED: 'Livraison acceptée.',
-  PICKED_UP: 'Colis récupéré.',
-  IN_TRANSIT: 'Livraison en cours.',
-  ARRIVED: 'Arrivée enregistrée.',
-  DELIVERED: 'Colis livré avec succès.',
-};
-
-const getNextDeliveryStatus = (currentStatus) => NEXT_STATUS_MAP[currentStatus] || null;
-
-async function resolveDeliveryForDriverScan(token, driverId) {
-  const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
-
-  let delivery = await Delivery.findOne({
-    $or: [{ qrToken: token }, { qrHash: candidateHash }],
-    driverId,
-  });
-
-  let scanSource = 'delivery_qr';
-
-  if (!delivery) {
-    const orderQr = await QRCode.findOne({ code: token }).lean();
-    if (orderQr?.orderId) {
-      delivery = await Delivery.findOne({ orderId: orderQr.orderId, driverId });
-      if (delivery) scanSource = 'order_qr';
-    }
-  }
-
-  if (!delivery) {
-    const anyDelivery = await Delivery.findOne({
-      $or: [{ qrToken: token }, { qrHash: candidateHash }],
-    }).lean();
-
-    if (anyDelivery) {
-      const err = new Error('Ce colis ne fait pas partie de vos livraisons.');
-      err.status = 403;
-      throw err;
-    }
-
-    const orderQr = await QRCode.findOne({ code: token }).lean();
-    if (orderQr) {
-      const anyOrderDelivery = await Delivery.findOne({ orderId: orderQr.orderId }).lean();
-      if (anyOrderDelivery) {
-        const err = new Error('Commande reconnue, mais cette livraison n’est pas assignée à votre compte.');
-        err.status = 403;
-        err.code = 'NOT_YOUR_DELIVERY';
-        throw err;
-      }
-      const err = new Error('Commande reconnue, mais aucune livraison n’a encore été planifiée pour ce colis.');
-      err.status = 404;
-      err.code = 'NO_DELIVERY_PLANNED';
-      throw err;
-    }
-
-    const err = new Error('Code colis invalide. Utilisez le QR de la commande ou le QR livraison assigné.');
-    err.status = 404;
-    err.code = 'INVALID_QR';
-    throw err;
-  }
-
-  return { delivery, scanSource };
-}
-
-function buildScanPreviewPayload(delivery, scanSource) {
-  const nextStatus = getNextDeliveryStatus(delivery.status);
-  const meta = delivery.metadata || {};
-
-  return {
-    deliveryId: delivery._id,
-    orderNumber: meta.orderNumber || delivery.deliveryId || String(delivery._id).slice(-8).toUpperCase(),
-    customerName: meta.customerName || 'Client',
-    customerAddress: delivery.deliveryLocation?.address || '',
-    pickupAddress: delivery.pickupLocation?.address || '',
-    currentStatus: delivery.status,
-    nextStatus,
-    nextActionLabel: nextStatus ? STATUS_ACTION_LABELS[nextStatus] : null,
-    scanSource,
-  };
-}
-
-// Étape 1 — Aperçu du scan (ne modifie pas le statut)
-router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
-  try {
-    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
-    const { type } = req.body || {};
-    const token = extractQrToken(rawToken);
-    if (!token) {
-      return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Vérifiez que le QR code est bien lisible.' });
-    }
-
-    const driverId = req.user.id || req.user.userId;
-    const { delivery, scanSource } = await resolveDeliveryForDriverScan(token, driverId);
-
-    if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
-      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
-    }
-
-    if (type && type === 'PICKUP_SCAN' && delivery.status !== 'ACCEPTED') {
-      return res.status(400).json({ success: false, message: 'Le scan de retrait n’est pas autorisé à ce stade.' });
-    }
-
-    const nextStatus = getNextDeliveryStatus(delivery.status);
-    if (!nextStatus) {
-      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
-    }
-
-    return res.json({
-      success: true,
-      preview: true,
-      message: 'QR code reconnu. Confirmez l’action pour valider.',
-      data: buildScanPreviewPayload(delivery, scanSource),
-    });
-  } catch (error) {
-    const status = error.status || 500;
-    return res.status(status).json({
-      success: false,
-      code: error.code || 'SCAN_ERROR',
-      message: error.message || 'Erreur lors du scan.',
-    });
-  }
-});
-
-// Étape 2 — Confirmation explicite après scan
-router.post('/scan/confirm', verifyToken, requireDeliveryDriver, async (req, res) => {
-  try {
-    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
-    const { deliveryId, type } = req.body || {};
-    const token = extractQrToken(rawToken);
-
-    const driverId = req.user.id || req.user.userId;
-    let delivery = null;
-    let scanSource = 'delivery_qr';
-
-    if (deliveryId) {
-      delivery = await Delivery.findOne({ _id: deliveryId, driverId });
-      if (!delivery && token) {
-        const resolved = await resolveDeliveryForDriverScan(token, driverId);
-        delivery = resolved.delivery;
-        scanSource = resolved.scanSource;
-      }
-    } else if (token) {
-      const resolved = await resolveDeliveryForDriverScan(token, driverId);
-      delivery = resolved.delivery;
-      scanSource = resolved.scanSource;
-    } else {
-      return res.status(400).json({ success: false, message: 'QR code ou identifiant de livraison requis.' });
-    }
-
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: 'Livraison introuvable.' });
-    }
-
-    if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
-      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
-    }
-
-    const nextStatus = getNextDeliveryStatus(delivery.status);
-    if (!nextStatus) {
-      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
-    }
-
-    const updated = await changeStatus(delivery._id, nextStatus, req.user.id, req.user.role, {
-      metadata: { driverId: req.user.id, scanType: type || 'CONFIRMED', scanSource, confirmedAt: new Date() },
-    });
-
-    return res.json({
-      success: true,
-      confirmed: true,
-      message: STATUS_SUCCESS_LABELS[nextStatus] || 'Action confirmée.',
-      data: updated,
-    });
-  } catch (error) {
-    const status = error.status || 500;
-    return res.status(status).json({
-      success: false,
-      code: error.code || 'CONFIRM_ERROR',
-      message: error.message || 'Erreur lors de la confirmation.',
-    });
-  }
-});
-
-router.get('/driver', verifyToken, requireDeliveryDriver, async (req, res) => {
-  try {
-    const deliveries = await Delivery.find({ driverId: req.user.id }).sort({ createdAt: -1 }).limit(200).lean();
-    res.json({ success: true, data: deliveries });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 });
 
