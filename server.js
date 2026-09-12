@@ -54,6 +54,10 @@ const conversationRoutes = require('./routes/conversationRoutes');
 const { notifyAdmins } = require('./utils/notifications');
 const { sendNotification } = require('./utils/socket');
 const { alertFailedAdminLogin, alertAdminActivity, adminActionLogger, alertRateLimit } = require('./utils/securityAlerts');
+const { createCorsOptions } = require('./utils/corsConfig');
+const { assertJwtSecretConfigured, signAccessToken } = require('./utils/jwtConfig');
+const { createGlobalErrorHandler } = require('./utils/apiError');
+const { paymentLimiter } = require('./Middlewares/rateLimiters');
 const slugify = require('slugify');
 const _fedapayMod = require('./routes/fedapayRoutes');
 const fedapayRouter = _fedapayMod.router || _fedapayMod;
@@ -126,41 +130,8 @@ if (fedapayBoot.ok) {
 }
 
 
-// CONFIGURATION CORS AMÉLIORÉE POUR iOS/macOS
-const corsOptions = {
-  origin: function (origin, callback) {
-    const isDev = process.env.NODE_ENV === 'development';
-    if (isDev) {
-      return callback(null, true);
-    }
-
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://127.0.0.1:5173',
-      'http://127.0.0.1:5174',
-      "https://ddtyywq-dav228-8081.exp.direct",
-      'https://dangoimport.com',
-      'https://www.dangoimport.com',
-      'https://dangoimport-admin-eiim.vercel.app',
-      'https://business.dangoimport.com',
-    ];
-
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  exposedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400, // Cache preflight pendant 24h
-  optionsSuccessStatus: 200
-};
+// CONFIGURATION CORS — domaines autorisés uniquement (voir utils/corsConfig.js)
+const corsOptions = createCorsOptions();
 
 app.use(cors(corsOptions));
 
@@ -235,6 +206,7 @@ const devisUpload = multer({
 // Point de départ du serveur
 const startServer = async () => {
   try {
+    assertJwtSecretConfigured();
     await connectDB();
 
     // Route de santé pour tester la connexion
@@ -489,11 +461,7 @@ const startServer = async () => {
         }
 
         // JWT incluant le rôle pour éviter des requêtes DB supplémentaires côté middleware
-        const token = jwt.sign(
-          { userId: admin._id, role: admin.role },
-          process.env.JWT_SECRET,
-          { expiresIn: '8h' }
-        );
+        const token = signAccessToken({ userId: admin._id, role: admin.role });
 
         res.status(200).json({
           message: 'Connexion réussie',
@@ -635,7 +603,7 @@ const startServer = async () => {
       res.json(getFedapayStatus());
     });
 
-    app.post(['/api/payment/create', '/api/payments/create'], verifyToken, async (req, res) => {
+    app.post(['/api/payment/create', '/api/payments/create'], paymentLimiter, verifyToken, async (req, res) => {
       return res.status(410).json({
         message: 'Paiement libre désactivé. Utilisez le checkout marketplace (/api/fedapay/checkout).',
       });
@@ -652,7 +620,7 @@ const startServer = async () => {
 
     
 
-    app.use('/api/fedapay', fedapayRouter);
+    app.use('/api/fedapay', paymentLimiter, fedapayRouter);
     app.post('/webhook/paiement', async (req, res, next) => {
       console.log('[server.js] incoming webhook /webhook/paiement', {
         method: req.method,
@@ -1583,13 +1551,7 @@ const startServer = async () => {
     });
 
     // Gestion globale des erreurs
-    app.use((err, req, res, next) => {
-      console.error('Erreur globale:', err);
-      res.status(500).json({
-        message: 'Erreur serveur',
-        error: process.env.NODE_ENV === 'development' ? err.message : undefined
-      });
-    });
+    app.use(createGlobalErrorHandler());
 
     // Lancer le serveur avec HTTP + Socket.io
     const server = http.createServer(app);

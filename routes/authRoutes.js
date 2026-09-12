@@ -1,5 +1,5 @@
 const express = require('express');
-const { authLoginLimiter, otpLimiter } = require('../Middlewares/rateLimiters');
+const { authLoginLimiter, otpLimiter, passwordResetLimiter } = require('../Middlewares/rateLimiters');
 
 const router = express.Router();
 
@@ -27,7 +27,7 @@ router.post('/signup', authLoginLimiter, signup);
 router.post('/send-otp', otpLimiter, sendSignupOTP);
 
 // Send verification link (authenticated preferred)
-router.post('/send-verification-link', verifyToken, sendVerificationLink);
+router.post('/send-verification-link', passwordResetLimiter, verifyToken, sendVerificationLink);
 
 // Verify token via link
 router.get('/verify-email', verifyEmail);

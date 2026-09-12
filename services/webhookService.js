@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { Webhook } = require('fedapay');
 const WebhookLog = require('../Models/WebhookLog');
 const { verifyWebhookSignature, getTransactionStatus } = require('./fedapayService');
 const { findTransactionByProviderId, markTransactionFailed } = require('./paymentService');
@@ -9,35 +10,114 @@ const emailService = require('../utils/emailService');
 const Cart = require('../Models/Cart');
 const ShopOrder = require('../Models/ShopOrder');
 const TransactionModel = require('../Models/Transaction');
+const { timingSafeEqual } = require('../Middlewares/securityHelpers');
+const { alertIntrusion } = require('../utils/securityAlerts');
 
 const logWebhookEvent = async ({ eventId, payload, signature, status, error }) => {
   return WebhookLog.create({ eventId, provider: 'fedapay', payload, signature, status, error });
 };
 
+const verifyFedapayWebhookSignature = async ({ req, payloadString, signature, secret, eventId, event }) => {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction && !secret) {
+    await logWebhookEvent({
+      eventId,
+      payload: event,
+      signature,
+      status: 'failed',
+      error: 'FEDAPAY_WEBHOOK_SECRET manquant en production',
+    });
+    const error = new Error('Webhook non configuré');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  if (!secret || !signature) {
+    if (isProduction) {
+      await logWebhookEvent({
+        eventId,
+        payload: event,
+        signature,
+        status: 'failed',
+        error: 'Signature webhook FedaPay manquante en production',
+      });
+      await alertIntrusion(req, 'Webhook FedaPay — signature manquante', {
+        route: 'paymentRoutes/webhook',
+      });
+      const error = new Error('Signature webhook manquante');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    console.warn('[webhookService] webhook non signé autorisé uniquement hors production', {
+      eventId,
+      signaturePresent: Boolean(signature),
+      secretConfigured: Boolean(secret),
+    });
+    return;
+  }
+
+  let verified = false;
+  try {
+    Webhook.constructEvent(payloadString, signature, secret);
+    verified = true;
+  } catch (sdkErr) {
+    console.warn('[webhookService] SDK signature validation failed, attempting HMAC fallback', {
+      message: sdkErr.message,
+    });
+  }
+
+  if (!verified) {
+    try {
+      verifyWebhookSignature({ payloadString, signature, secret });
+      verified = true;
+    } catch (hmacErr) {
+      const expected = crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
+      const raw = String(signature || '').trim();
+      const normalized = raw.startsWith('sha256=') ? raw.slice(7) : raw;
+      verified = timingSafeEqual(normalized, expected)
+        || timingSafeEqual(raw, expected)
+        || timingSafeEqual(raw, `sha256=${expected}`);
+    }
+  }
+
+  if (!verified) {
+    await logWebhookEvent({
+      eventId,
+      payload: event,
+      signature,
+      status: 'failed',
+      error: 'Signature webhook FedaPay invalide',
+    });
+    await alertIntrusion(req, 'Webhook FedaPay — signature invalide', {
+      route: 'paymentRoutes/webhook',
+    });
+    const error = new Error('Signature invalide');
+    error.statusCode = 403;
+    throw error;
+  }
+};
+
 const handleWebhook = async ({ req, res }) => {
-  const signature = req.headers['x-fedapay-signature'];
+  const signature = req.headers['x-fedapay-signature']
+    || req.headers['fedapay-signature']
+    || req.headers['signature']
+    || req.headers['x-signature']
+    || null;
   const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
   const payloadString = req.rawBody || JSON.stringify(req.body);
   const event = req.body;
   const eventId = event?.id || event?.event_id || crypto.createHash('sha256').update(payloadString).digest('hex');
 
   try {
-    const allowUnsignedWebhook = process.env.NODE_ENV !== 'production' || !secret;
-    if (secret && signature) {
-      verifyWebhookSignature({ payloadString, signature, secret });
-    } else if (!allowUnsignedWebhook) {
-      throw new Error('Signature webhook FedaPay manquante en production');
-    } else {
-      console.warn('[webhookService] skipping signature validation for unsigned local/test webhook', {
-        eventId,
-        signaturePresent: Boolean(signature),
-        secretConfigured: Boolean(secret),
-        nodeEnv: process.env.NODE_ENV,
-      });
-    }
+    await verifyFedapayWebhookSignature({ req, payloadString, signature, secret, eventId, event });
   } catch (error) {
-    await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: error.message });
-    return res.status(403).send('Signature invalide');
+    const status = error.statusCode || 403;
+    if (status === 403) {
+      return res.status(403).send('Signature invalide');
+    }
+    return res.status(status).send('Webhook non configuré');
   }
 
   const existingWebhook = await WebhookLog.findOne({ eventId });

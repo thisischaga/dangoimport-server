@@ -31,8 +31,26 @@ const uploadLimiter = rateLimit({
   handler: rateLimitHandler('upload'),
 });
 
+const paymentLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler('payment'),
+});
+
+const passwordResetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler('password-reset'),
+});
+
 module.exports = {
   authLoginLimiter,
   otpLimiter,
   uploadLimiter,
+  paymentLimiter,
+  passwordResetLimiter,
 };

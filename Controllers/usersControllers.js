@@ -1,11 +1,11 @@
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
 const User = require('../Models/User');
 const Driver = require('../Models/Driver');
 const { Resend } = require('resend');
 const { generateOTP } = require('../utils/otp');
 const { alertIntrusion } = require('../utils/securityAlerts');
+const { signAccessToken } = require('../utils/jwtConfig');
 
 const {
     getGoogleAuthUrl,
@@ -146,7 +146,7 @@ const login = async (req, res) => {
             user.role = 'driver';
         }
 
-        const token = jwt.sign({ userId: user._id, role: effectiveRole }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        const token = signAccessToken({ userId: user._id, role: effectiveRole });
 
         res.status(200).json({
             message: 'connexion réussie',
@@ -331,9 +331,8 @@ const signup = async (req, res) => {
 
         signupOtpStore.delete(userEmail);
 
-        const token = jwt.sign(
+        const token = signAccessToken(
             { userId: newUser._id, role: newUser.role || 'customer' },
-            process.env.JWT_SECRET,
             { expiresIn: '1h' }
         );
 
@@ -427,16 +426,10 @@ const googleLogin = async (req, res) => {
                 await user.save();
             }
 
-            const jwtToken = jwt.sign(
-                {
-                    userId: user._id,
-                    role: user.role || 'customer'
-                },
-                process.env.JWT_SECRET,
-                {
-                    expiresIn: '24h'
-                }
-            );
+            const jwtToken = signAccessToken({
+                userId: user._id,
+                role: user.role || 'customer',
+            });
 
             return res.status(200).json({
                 message: 'Connexion Google réussie',
@@ -625,20 +618,10 @@ const googleCallback = async (req, res) => {
         // GÉNÉRATION DU JWT
         // ============================
 
-        const token = jwt.sign(
-
-            {
-                userId: user._id,
-                role: user.role || 'customer'
-            },
-
-            process.env.JWT_SECRET,
-
-            {
-                expiresIn: '24h'
-            }
-
-        );
+        const token = signAccessToken({
+            userId: user._id,
+            role: user.role || 'customer',
+        });
 
 
         const oauthCode = crypto.randomBytes(32).toString('hex');

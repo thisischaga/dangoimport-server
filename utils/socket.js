@@ -1,31 +1,23 @@
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
 const Admin = require('../Models/Admin');
 const User = require('../Models/User');
 const Notification = require('../Models/Notification');
+const { isOriginAllowed } = require('./corsConfig');
+const { verifyAccessToken } = require('./jwtConfig');
 
 let io;
+
+const isStrictSocketAuth = () => (
+  process.env.SOCKET_STRICT_AUTH === 'true'
+  || process.env.NODE_ENV === 'production'
+);
 
 const initSocket = (server) => {
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
         if (!origin) return callback(null, true);
-        const allowed = [
-          'http://localhost:3000',
-          'http://localhost:3001',
-          'http://localhost:5173',
-          'http://localhost:5174',
-          'http://127.0.0.1:5173',
-          'http://127.0.0.1:5174',
-          'https://dangoimport.com',
-          'https://business.dangoimport.com',
-          'https://dangoimport-admin.vercel.app',
-          'https://dangoimport-admin-eiim.vercel.app',
-        ];
-        if (allowed.includes(origin) || origin.endsWith('.dangoimport.com')) {
-          return callback(null, true);
-        }
+        if (isOriginAllowed(origin)) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -40,15 +32,12 @@ const initSocket = (server) => {
   io.on('connection', (socket) => {
     console.log(`[Socket] Nouveau client connecté: ${socket.id}`);
 
-    // Si le client fournit un token via handshake.auth.token, vérifier et auto-join
     try {
       const token = socket.handshake?.auth?.token;
-      console.log(`[Socket] Handshake token present: ${Boolean(token)}`);
       if (token) {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = verifyAccessToken(token);
         const userId = decoded.userId || decoded.id;
 
-        // Chercher dans Admin si rôle admin-like
         if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
           Admin.findById(userId).select('-adminPassword').then((admin) => {
             if (admin) {
@@ -58,7 +47,6 @@ const initSocket = (server) => {
             }
           }).catch(() => {});
         } else {
-          // Chercher dans User
           User.findById(userId).select('userFirstname userSurname userEmail userPhone role').then((user) => {
             if (user) {
               socket.user = { ...decoded, id: user._id, role: user.role || decoded.role || 'user' };
@@ -71,22 +59,23 @@ const initSocket = (server) => {
         }
       }
     } catch (err) {
-      // Si token invalide, on n'empêche pas la connexion mais on logue
       console.warn('[Socket] Token socket invalide ou expiré:', err?.message || err);
+      if (isStrictSocketAuth()) {
+        socket.disconnect(true);
+        return;
+      }
     }
 
-    // Endpoint d'authentification post-connexion (fallback si token non fourni en handshake)
     socket.on('authenticate', async (payload) => {
-      console.log(`[Socket:${socket.id}] authenticate payload:`, Boolean(payload));
       const token = (payload && payload.token) || null;
       if (!token) {
         socket.emit('unauthorized', { message: 'Aucun token fourni' });
-        if (process.env.SOCKET_STRICT_AUTH === 'true') return socket.disconnect(true);
+        if (isStrictSocketAuth()) return socket.disconnect(true);
         return;
       }
 
       try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = verifyAccessToken(token);
         const userId = decoded.userId || decoded.id;
 
         if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
@@ -110,17 +99,15 @@ const initSocket = (server) => {
         }
 
         socket.emit('unauthorized', { message: 'Utilisateur introuvable' });
-        if (process.env.SOCKET_STRICT_AUTH === 'true') socket.disconnect(true);
+        if (isStrictSocketAuth()) socket.disconnect(true);
       } catch (error) {
-        socket.emit('unauthorized', { message: error?.message || 'Token invalide' });
-        if (process.env.SOCKET_STRICT_AUTH === 'true') socket.disconnect(true);
+        socket.emit('unauthorized', { message: 'Token invalide' });
+        if (isStrictSocketAuth()) socket.disconnect(true);
       }
     });
 
-    // Rejoindre une salle spécifique
     socket.on('join', (room) => {
       socket.join(room);
-      // console.log(`[Socket] Client ${socket.id} a rejoint la salle: ${room}`);
     });
 
     socket.on('join_user', (userId) => {
@@ -128,53 +115,38 @@ const initSocket = (server) => {
       socket.join(`user_${userId}`);
     });
 
-    // Join driver-specific room
     socket.on('join_driver', (driverId) => {
       if (!driverId) return;
       socket.join(`driver_${driverId}`);
     });
 
-    // Join order-specific room
     socket.on('join_order', (orderId) => {
       if (!orderId) return;
       socket.join(`order_${orderId}`);
     });
 
-    // Calculate delivery on demand (client -> server)
     socket.on('calculate_delivery_for_user', async (payload) => {
-      console.log(`[Socket:${socket.id}] calculate_delivery_for_user payload:`, payload);
       try {
         const { lat, lng, items } = payload || {};
         const clientLocation = (lat !== undefined && lng !== undefined)
           ? { lat: Number(lat), lng: Number(lng) }
           : null;
 
-        // Charger la fonction dynamiquement pour éviter la dépendance circulaire
         const { calculateDeliveryForItems } = require('../services/deliveryService');
-
         const result = await calculateDeliveryForItems({ items: items || [], clientLocation });
 
-        console.log(`[Socket:${socket.id}] delivery result computed, groups:`, (result && result.groups && result.groups.length) || 0);
-
-        // Reply to the requesting socket
         socket.emit('delivery_price_update', { data: result });
-        console.log(`[Socket:${socket.id}] emitted delivery_price_update to socket`);
 
-        // Also broadcast to the user's room if authenticated
         if (socket.user && socket.user.id && io) {
           io.to(`user_${socket.user.id}`).emit('delivery_price_update', { data: result });
-          console.log(`[Socket] broadcasted delivery_price_update to user_${socket.user.id}`);
         }
       } catch (err) {
         console.error(`[Socket:${socket.id}] error calculating delivery:`, err);
-        // Send a simple error response back to client
-        socket.emit('delivery_price_update_error', { message: err?.message || 'Erreur calcul livraison' });
+        socket.emit('delivery_price_update_error', { message: 'Erreur calcul livraison' });
       }
     });
 
-    socket.on('disconnect', () => {
-      // console.log(`[Socket] Client déconnecté: ${socket.id}`);
-    });
+    socket.on('disconnect', () => {});
   });
 
   return io;
@@ -182,18 +154,16 @@ const initSocket = (server) => {
 
 const sendNotification = async ({ recipient, type, title, message, link, sender = 'System' }) => {
   try {
-    // 1. Persister en base de données
     const newNotif = new Notification({
       recipient,
       type,
       title,
       message,
       link,
-      sender
+      sender,
     });
     await newNotif.save();
 
-    // 2. Émettre via Socket.io
     if (io) {
       if (recipient === 'admin') {
         io.to('admin').emit('new_notification', newNotif);
@@ -201,7 +171,7 @@ const sendNotification = async ({ recipient, type, title, message, link, sender 
         io.to(`user_${recipient}`).emit('new_notification', newNotif);
       }
     }
-    
+
     return newNotif;
   } catch (error) {
     console.error('❌ Erreur lors de l\'envoi de la notification socket:', error);

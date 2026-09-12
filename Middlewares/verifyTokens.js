@@ -1,6 +1,7 @@
-const jwt = require('jsonwebtoken');
 const Admin = require('../Models/Admin');
 const User = require('../Models/User');
+const Driver = require('../Models/Driver');
+const { verifyAccessToken } = require('../utils/jwtConfig');
 const { alertIntrusion } = require('../utils/securityAlerts');
 
 const denyAdmin = (req, res, status, body, reason) => {
@@ -23,10 +24,9 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
     const userId = decoded.userId || decoded.id;
 
-    // 1. Si le rôle dans le token indique un Admin
     if (['admin', 'dev-admin', 'superadmin', 'manager'].includes(decoded.role)) {
       const admin = await Admin.findById(userId).select('-adminPassword');
       if (admin) {
@@ -45,10 +45,9 @@ const verifyToken = async (req, res, next) => {
       }
     }
 
-    // 2. Sinon, chercher dans la collection User
     const user = await User.findById(userId).select('userFirstname userSurname userEmail userPhone role');
     if (user) {
-      const driverProfile = await require('../Models/Driver').findOne({ userId: user._id }).lean();
+      const driverProfile = await Driver.findOne({ userId: user._id }).lean();
       const effectiveRole = user.role === 'driver' || driverProfile ? 'driver' : (user.role || decoded.role || 'user');
       req.user = {
         ...decoded,
@@ -77,7 +76,6 @@ const verifyToken = async (req, res, next) => {
 
 /**
  * Middleware verifyAdmin — vérifie que le token appartient bien à un admin
- * et enrichit req.admin avec les données du compte
  */
 const verifyAdmin = async (req, res, next) => {
   const authHeader = req.header('Authorization');
@@ -91,8 +89,7 @@ const verifyAdmin = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+    const decoded = verifyAccessToken(token);
     const admin = await Admin.findById(decoded.userId).select('-adminPassword');
     if (!admin) {
       return denyAdmin(req, res, 401, { message: 'Compte administrateur introuvable ou supprimé.' }, 'Compte admin introuvable');

@@ -1,6 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const { signAccessToken } = require('../utils/jwtConfig');
 const slugify = require('slugify');
 const User = require('../Models/User');
 const Store = require('../Models/Store');
@@ -34,17 +34,13 @@ const buildVendorPayload = (user) => ({
 });
 
 // Helper to sign JWT token
-const signVendorToken = (user) => jwt.sign(
-  {
-    userId: user._id,
-    role: user.role,
-    userFirstname: user.userFirstname,
-    userSurname: user.userSurname,
-    userEmail: user.userEmail,
-  },
-  process.env.JWT_SECRET,
-  { expiresIn: '24h' }
-);
+const signVendorToken = (user) => signAccessToken({
+  userId: user._id,
+  role: user.role,
+  userFirstname: user.userFirstname,
+  userSurname: user.userSurname,
+  userEmail: user.userEmail,
+});
 
 // Middleware vendeur
 const verifyVendor = async (req, res, next) => {

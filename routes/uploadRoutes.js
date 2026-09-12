@@ -7,11 +7,13 @@ const { verifyAdmin } = require('../Middlewares/verifyTokens');
 const { uploadLimiter } = require('../Middlewares/rateLimiters');
 const { uploadBuffer } = require('../utils/cloudinaryUpload');
 const { isCloudinaryConfigured } = require('../config/cloudinary');
+const { validateImageUpload } = require('../utils/uploadValidation');
+const { sendServerError } = require('../utils/apiError');
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype?.startsWith('image/')) {
       return cb(new Error('Seules les images sont acceptées.'));
@@ -26,7 +28,7 @@ async function saveLocalUpload(file, folder = 'sourcing') {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
   const ext = path.extname(file.originalname || '') || '.jpg';
-  const filename = `${folder}_${Date.now()}${ext}`;
+  const filename = `${folder}_${Date.now()}${ext.replace(/[^a-zA-Z0-9.]/g, '')}`;
   fs.writeFileSync(path.join(uploadDir, filename), file.buffer);
   const apiBase = (process.env.API_BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
   if (apiBase) {
@@ -44,17 +46,23 @@ function handleMulter(req, res, next) {
   });
 }
 
-/** Upload sourcing — POST /api/upload (auth + rate limit) */
-router.post('/', uploadLimiter, verifyToken, handleMulter, async (req, res) => {
+function validateUploadedFile(req, res, next) {
   if (!req.file) {
     return res.status(400).json({ message: 'Fichier image requis (champ "image").' });
   }
+  const validation = validateImageUpload(req.file);
+  if (!validation.ok) {
+    return res.status(400).json({ message: validation.message });
+  }
+  next();
+}
 
+router.post('/', uploadLimiter, verifyToken, handleMulter, validateUploadedFile, async (req, res) => {
   try {
     if (isCloudinaryConfigured) {
       const result = await uploadBuffer(req.file.buffer, {
-        public_id: `sourcing_${Date.now()}`,
-        folder: 'dangoimport/sourcing',
+        public_id: `upload_${Date.now()}`,
+        folder: 'dangoimport/uploads',
       });
       return res.json({
         url: result.secure_url,
@@ -62,24 +70,17 @@ router.post('/', uploadLimiter, verifyToken, handleMulter, async (req, res) => {
       });
     }
 
-    const url = await saveLocalUpload(req.file, 'sourcing');
+    const url = await saveLocalUpload(req.file, 'uploads');
     return res.json({ url });
   } catch (error) {
     console.error('Erreur upload /api/upload:', error);
-    return res.status(500).json({
-      message: "Erreur lors de l'upload de l'image.",
-      error: error.message,
-    });
+    return sendServerError(res, error, "Erreur lors de l'upload de l'image.");
   }
 });
 
-/** Upload admin produits — POST /api/upload/product-image */
-router.post('/product-image', verifyAdmin, handleMulter, async (req, res) => {
+router.post('/product-image', uploadLimiter, verifyAdmin, handleMulter, validateUploadedFile, async (req, res) => {
   if (!isCloudinaryConfigured) {
     return res.status(503).json({ message: 'Cloudinary non configuré sur le serveur.' });
-  }
-  if (!req.file) {
-    return res.status(400).json({ message: 'Fichier image requis (champ "image").' });
   }
 
   try {
@@ -94,7 +95,7 @@ router.post('/product-image', verifyAdmin, handleMulter, async (req, res) => {
     });
   } catch (error) {
     console.error('Erreur upload Cloudinary:', error);
-    res.status(500).json({ message: "Erreur lors de l'upload de l'image.", error: error.message });
+    return sendServerError(res, error, "Erreur lors de l'upload de l'image.");
   }
 });
 

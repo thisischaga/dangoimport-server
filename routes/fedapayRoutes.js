@@ -495,7 +495,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error('[fedapayRoutes] checkout error:', error);
-    return res.status(500).json({ message: 'Erreur lors de l’initialisation du paiement FedaPay.', error: error.message });
+    return res.status(500).json({ message: 'Erreur lors de l’initialisation du paiement FedaPay.' });
   }
 });
 
@@ -555,12 +555,12 @@ const handleFedapayWebhook = async (req, res) => {
               entityId,
               payloadSnippet: payloadString && payloadString.slice ? payloadString.slice(0, 1000) : null,
             });
-            return res.status(403).json({ error: 'Signature invalide', details: 'HMAC fallback mismatch' });
+            return res.status(403).send('Signature invalide');
           }
         } catch (err) {
           await logWebhookEvent({ eventId, payload: event, signature, status: 'failed', error: `Signature invalide: ${err.message}` });
           console.error('[fedapayRoutes] webhook signature verification error', err.message, { eventName, entityId });
-          return res.status(403).json({ error: 'Signature verification error', details: err.message });
+          return res.status(403).send('Signature invalide');
         }
       }
     } else if (!allowUnsignedWebhook) {

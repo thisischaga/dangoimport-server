@@ -1,5 +1,7 @@
 const Admin = require('../Models/Admin');
 
+const { alertIntrusion } = require('../utils/securityAlerts');
+
 const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const ALLOWED_REDIRECT_ORIGINS = [
@@ -50,6 +52,10 @@ const requireAdminFromDb = async (req, res, next) => {
     req.admin = admin;
     return next();
   }
+  alertIntrusion(req, 'Accès admin refusé', {
+    userId: req.user?.userId || req.user?.id,
+    role: req.user?.role,
+  }).catch(() => {});
   return res.status(403).json({ message: 'Accès refusé.' });
 };
 
