@@ -145,6 +145,12 @@ const userSchema = new mongoose.Schema({
         default: 0
     },
 
+    // Montant réservé pour retraits en attente
+    reservedBalance: {
+        type: Number,
+        default: 0
+    },
+
     bankDetails: {
         accountHolder: {
             type: String,

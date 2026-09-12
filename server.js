@@ -1352,6 +1352,10 @@ const startServer = async () => {
     const vendorRoutes = require('./routes/vendorRoutes');
     app.use('/api/vendor', vendorRoutes);
 
+    // Vendor Withdrawals (prepare / verify OTP / list)
+    const vendorWithdrawals = require('./routes/vendorWithdrawalRoutes');
+    app.use('/api/vendor/withdrawals', vendorWithdrawals);
+
     // Seller Routes
     const sellerRoutes = require('./routes/sellerRoutes');
     app.use('/api/seller', sellerRoutes);
