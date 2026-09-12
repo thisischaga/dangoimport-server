@@ -94,13 +94,14 @@ const storeSchema = new mongoose.Schema({
       type: String,
       enum: ['PENDING', 'VERIFIED', 'UNVERIFIED', 'REJECTED'],
       default: 'UNVERIFIED'
-    }
-    ,
+    },
     documents: [{
       url: { type: String },
       type: { type: String },
       uploadedAt: { type: Date, default: Date.now }
-    }]
+    }],
+    rejectionReason: { type: String, default: '' },
+    verifiedAt: { type: Date }
   },
   createdAt: {
     type: Date,

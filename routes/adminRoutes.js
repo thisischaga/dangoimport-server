@@ -11,6 +11,8 @@ const AuditLog = require('../Models/AuditLog');
 const WithdrawalRequest = require('../Models/WithdrawalRequest');
 const Notification = require('../Models/Notification');
 const User = require('../Models/User');
+const Store = require('../Models/Store');
+const VendorWithdrawal = require('../Models/VendorWithdrawal');
 const Driver = require('../Models/Driver');
 const Delivery = require('../Models/Delivery');
 const DeliveryList = require('../Models/DeliveryList');
@@ -892,6 +894,231 @@ router.get('/reported-products', verifyToken, adminOnly, async (req, res) => {
         return res.json({ success: true, data: rows });
     } catch (error) {
         console.error('[adminRoutes.js] reported-products:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =============================
+// VENDORS & VERIFICATION
+// =============================
+
+router.get('/vendors', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const stores = await Store.find({})
+            .populate('userId', 'userEmail userFirstname userSurname userPhone balance reservedBalance role')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const data = stores.map((store) => ({
+            _id: store._id,
+            storeName: store.name,
+            slug: store.slug,
+            city: store.city,
+            country: store.country,
+            logo: store.logo,
+            verificationStatus: store.verification?.status || 'UNVERIFIED',
+            documentsCount: store.verification?.documents?.length || 0,
+            vendorId: store.userId?._id,
+            vendorEmail: store.userId?.userEmail,
+            vendorName: [store.userId?.userFirstname, store.userId?.userSurname].filter(Boolean).join(' '),
+            vendorPhone: store.userId?.userPhone,
+            balance: store.userId?.balance || 0,
+            reservedBalance: store.userId?.reservedBalance || 0,
+            createdAt: store.createdAt,
+        }));
+
+        return res.json({ success: true, data });
+    } catch (error) {
+        console.error('[adminRoutes.js] vendors:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/stores/verification', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { status = 'PENDING' } = req.query;
+        const filter = status === 'ALL'
+            ? { 'verification.documents.0': { $exists: true } }
+            : { 'verification.status': status };
+
+        const stores = await Store.find(filter)
+            .populate('userId', 'userEmail userFirstname userSurname userPhone')
+            .sort({ updatedAt: -1 })
+            .lean();
+
+        const data = stores.map((store) => ({
+            _id: store._id,
+            storeName: store.name,
+            slug: store.slug,
+            city: store.city,
+            country: store.country,
+            verification: {
+                status: store.verification?.status || 'UNVERIFIED',
+                documents: store.verification?.documents || [],
+                rejectionReason: store.verification?.rejectionReason || '',
+                verifiedAt: store.verification?.verifiedAt,
+            },
+            vendor: store.userId ? {
+                _id: store.userId._id,
+                email: store.userId.userEmail,
+                name: [store.userId.userFirstname, store.userId.userSurname].filter(Boolean).join(' '),
+                phone: store.userId.userPhone,
+            } : null,
+            updatedAt: store.updatedAt,
+        }));
+
+        return res.json({ success: true, data });
+    } catch (error) {
+        console.error('[adminRoutes.js] stores/verification:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.put('/stores/:id/verification', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { status, reason } = req.body;
+        const allowed = ['VERIFIED', 'REJECTED', 'PENDING', 'UNVERIFIED'];
+        if (!allowed.includes(status)) {
+            return res.status(400).json({ success: false, message: 'Statut invalide.' });
+        }
+
+        const store = await Store.findById(req.params.id);
+        if (!store) {
+            return res.status(404).json({ success: false, message: 'Boutique introuvable.' });
+        }
+
+        store.verification = store.verification || {};
+        store.verification.status = status;
+        if (status === 'REJECTED') {
+            store.verification.rejectionReason = reason || '';
+        } else if (status === 'VERIFIED') {
+            store.verification.verifiedAt = new Date();
+            store.verification.rejectionReason = '';
+        }
+        await store.save();
+
+        return res.json({
+            success: true,
+            message: status === 'VERIFIED' ? 'Vendeur vérifié.' : status === 'REJECTED' ? 'Vérification rejetée.' : 'Statut mis à jour.',
+            data: store.verification,
+        });
+    } catch (error) {
+        console.error('[adminRoutes.js] stores/:id/verification:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =============================
+// VENDOR PAYOUTS (VERSEMENTS)
+// =============================
+
+router.get('/vendor-payouts', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const { status } = req.query;
+        const filter = status ? { status } : {};
+        const rows = await VendorWithdrawal.find(filter)
+            .populate('userId', 'userEmail userFirstname userSurname userPhone')
+            .sort({ createdAt: -1 })
+            .limit(500)
+            .lean();
+
+        return res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('[adminRoutes.js] vendor-payouts GET:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.post('/vendor-payouts', verifyToken, adminOnly, async (req, res) => {
+    try {
+        const {
+            vendorEmail,
+            userId,
+            amount,
+            destinationPhone,
+            reference,
+            withdrawalId,
+            note,
+        } = req.body;
+
+        if (withdrawalId) {
+            const withdrawal = await VendorWithdrawal.findById(withdrawalId);
+            if (!withdrawal) {
+                return res.status(404).json({ success: false, message: 'Demande de retrait introuvable.' });
+            }
+            if (withdrawal.status === 'completed') {
+                return res.status(400).json({ success: false, message: 'Ce versement a déjà été effectué.' });
+            }
+
+            const user = await User.findById(withdrawal.userId);
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'Vendeur introuvable.' });
+            }
+
+            const payoutAmount = Number(withdrawal.amount);
+            if ((user.balance || 0) < payoutAmount) {
+                return res.status(400).json({ success: false, message: 'Solde vendeur insuffisant.' });
+            }
+
+            user.balance = (user.balance || 0) - payoutAmount;
+            user.reservedBalance = Math.max(0, (user.reservedBalance || 0) - payoutAmount);
+            await user.save();
+
+            withdrawal.status = 'completed';
+            withdrawal.meta = {
+                ...(withdrawal.meta || {}),
+                reference: reference || '',
+                note: note || '',
+                completedBy: req.user.userId || req.user.id,
+                completedAt: new Date(),
+                source: 'admin_complete',
+            };
+            await withdrawal.save();
+
+            return res.json({ success: true, message: 'Versement confirmé.', data: withdrawal });
+        }
+
+        const payoutAmount = Number(amount);
+        if (!payoutAmount || payoutAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'Montant invalide.' });
+        }
+
+        let user = null;
+        if (userId) user = await User.findById(userId);
+        else if (vendorEmail) user = await User.findOne({ userEmail: String(vendorEmail).trim().toLowerCase() });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'Vendeur introuvable.' });
+        }
+
+        const available = (user.balance || 0) - (user.reservedBalance || 0);
+        if (payoutAmount > available) {
+            return res.status(400).json({
+                success: false,
+                message: `Solde disponible insuffisant (${available.toLocaleString()} FCFA).`,
+            });
+        }
+
+        user.balance = (user.balance || 0) - payoutAmount;
+        await user.save();
+
+        const payout = await VendorWithdrawal.create({
+            userId: user._id,
+            amount: payoutAmount,
+            destinationPhone: destinationPhone || user.userPhone || '',
+            status: 'completed',
+            otpVerified: false,
+            meta: {
+                reference: reference || '',
+                note: note || '',
+                source: 'admin_manual',
+                createdBy: req.user.userId || req.user.id,
+                method: 'Mobile Money',
+            },
+        });
+
+        return res.status(201).json({ success: true, message: 'Versement enregistré.', data: payout });
+    } catch (error) {
+        console.error('[adminRoutes.js] vendor-payouts POST:', error);
         return res.status(500).json({ success: false, message: error.message });
     }
 });
