@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const verifyToken = require('../Middlewares/verifyTokens');
 const ShopOrder = require('../Models/ShopOrder');
 const { streamOrderInvoicePdf } = require('../utils/invoiceGenerator');
@@ -46,7 +47,12 @@ router.get('/my-orders', verifyToken, async (req, res) => {
     const userEmail = String(req.user?.userEmail || '').trim().toLowerCase();
 
     const orFilters = [];
-    if (userId) orFilters.push({ customerId: userId });
+    if (userId) {
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        orFilters.push({ customerId: new mongoose.Types.ObjectId(userId) });
+      }
+      orFilters.push({ customerId: String(userId) });
+    }
     if (userEmail) {
       orFilters.push({ customerEmail: new RegExp(`^${escapeRegExp(userEmail)}$`, 'i') });
     }

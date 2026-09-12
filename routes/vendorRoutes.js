@@ -327,6 +327,39 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// PATCH /api/vendor/password — changer le mot de passe vendeur
+router.patch('/password', verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const currentPassword = String(req.body?.currentPassword || '').trim();
+    const newPassword = String(req.body?.newPassword || '').trim();
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Mot de passe actuel et nouveau mot de passe requis.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
+    }
+
+    const user = await User.findById(req.vendorUser._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Compte introuvable.' });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.userPassword);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Mot de passe actuel incorrect.' });
+    }
+
+    user.userPassword = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return res.status(200).json({ success: true, message: 'Mot de passe mis à jour avec succès.' });
+  } catch (error) {
+    console.error('[vendorRoutes.js] change password:', error);
+    return res.status(500).json({ success: false, message: 'Erreur serveur lors du changement de mot de passe.' });
+  }
+});
+
 // POST /api/vendor/login
 router.post('/login', async (req, res) => {
   try {
@@ -737,15 +770,34 @@ router.get('/reviews', verifyToken, verifyVendor, async (req, res) => {
 
     const data = reviews.map((review) => ({
       id: review._id,
+      productId: review.productId,
       product: productNameById[String(review.productId)] || 'Produit',
       client: review.userName || 'Client',
       rating: review.rating,
       comment: review.comment,
       title: review.title,
+      verified: Boolean(review.verified),
       createdAt: review.createdAt,
     }));
 
-    return res.status(200).json({ success: true, data });
+    const total = data.length;
+    const averageRating = total
+      ? Math.round((data.reduce((sum, r) => sum + Number(r.rating || 0), 0) / total) * 10) / 10
+      : 0;
+    const distribution = [5, 4, 3, 2, 1].map((stars) => ({
+      stars,
+      count: data.filter((r) => Math.round(Number(r.rating)) === stars).length,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data,
+      summary: {
+        total,
+        averageRating,
+        distribution,
+      },
+    });
   } catch (error) {
     console.error('[vendorRoutes.js] get vendor reviews:', error);
     return res.status(500).json({ message: 'Erreur serveur lors du chargement des avis.' });
