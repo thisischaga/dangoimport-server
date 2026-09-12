@@ -224,6 +224,103 @@ router.patch('/deliveries/:id/status', verifyToken, requireDeliveryDriver, async
   }
 });
 
+const NEXT_STATUS_MAP = {
+  ASSIGNED: 'ACCEPTED',
+  ACCEPTED: 'PICKED_UP',
+  PICKED_UP: 'IN_TRANSIT',
+  IN_TRANSIT: 'ARRIVED',
+  ARRIVED: 'DELIVERED',
+};
+
+const STATUS_ACTION_LABELS = {
+  ACCEPTED: 'Accepter la livraison',
+  PICKED_UP: 'Confirmer le retrait du colis',
+  IN_TRANSIT: 'Démarrer la livraison',
+  ARRIVED: 'Confirmer l’arrivée chez le client',
+  DELIVERED: 'Confirmer la remise au client',
+};
+
+const STATUS_SUCCESS_LABELS = {
+  ACCEPTED: 'Livraison acceptée.',
+  PICKED_UP: 'Colis récupéré.',
+  IN_TRANSIT: 'Livraison en cours.',
+  ARRIVED: 'Arrivée enregistrée.',
+  DELIVERED: 'Colis livré avec succès.',
+};
+
+const getNextDeliveryStatus = (currentStatus) => NEXT_STATUS_MAP[currentStatus] || null;
+
+async function resolveDeliveryForDriverScan(token, driverId) {
+  const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  let delivery = await Delivery.findOne({
+    $or: [{ qrToken: token }, { qrHash: candidateHash }],
+    driverId,
+  });
+
+  let scanSource = 'delivery_qr';
+
+  if (!delivery) {
+    const orderQr = await QRCode.findOne({ code: token }).lean();
+    if (orderQr?.orderId) {
+      delivery = await Delivery.findOne({ orderId: orderQr.orderId, driverId });
+      if (delivery) scanSource = 'order_qr';
+    }
+  }
+
+  if (!delivery) {
+    const anyDelivery = await Delivery.findOne({
+      $or: [{ qrToken: token }, { qrHash: candidateHash }],
+    }).lean();
+
+    if (anyDelivery) {
+      const err = new Error('Ce colis ne fait pas partie de vos livraisons.');
+      err.status = 403;
+      throw err;
+    }
+
+    const orderQr = await QRCode.findOne({ code: token }).lean();
+    if (orderQr) {
+      const anyOrderDelivery = await Delivery.findOne({ orderId: orderQr.orderId }).lean();
+      if (anyOrderDelivery) {
+        const err = new Error('Commande reconnue, mais cette livraison n’est pas assignée à votre compte.');
+        err.status = 403;
+        err.code = 'NOT_YOUR_DELIVERY';
+        throw err;
+      }
+      const err = new Error('Commande reconnue, mais aucune livraison n’a encore été planifiée pour ce colis.');
+      err.status = 404;
+      err.code = 'NO_DELIVERY_PLANNED';
+      throw err;
+    }
+
+    const err = new Error('Code colis invalide. Utilisez le QR de la commande ou le QR livraison assigné.');
+    err.status = 404;
+    err.code = 'INVALID_QR';
+    throw err;
+  }
+
+  return { delivery, scanSource };
+}
+
+function buildScanPreviewPayload(delivery, scanSource) {
+  const nextStatus = getNextDeliveryStatus(delivery.status);
+  const meta = delivery.metadata || {};
+
+  return {
+    deliveryId: delivery._id,
+    orderNumber: meta.orderNumber || delivery.deliveryId || String(delivery._id).slice(-8).toUpperCase(),
+    customerName: meta.customerName || 'Client',
+    customerAddress: delivery.deliveryLocation?.address || '',
+    pickupAddress: delivery.pickupLocation?.address || '',
+    currentStatus: delivery.status,
+    nextStatus,
+    nextActionLabel: nextStatus ? STATUS_ACTION_LABELS[nextStatus] : null,
+    scanSource,
+  };
+}
+
+// Étape 1 — Aperçu du scan (ne modifie pas le statut)
 router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
   try {
     const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
@@ -233,87 +330,94 @@ router.post('/scan', verifyToken, requireDeliveryDriver, async (req, res) => {
       return res.status(400).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Vérifiez que le QR code est bien lisible.' });
     }
 
-    const candidateHash = crypto.createHash('sha256').update(token).digest('hex');
     const driverId = req.user.id || req.user.userId;
-
-    let delivery = await Delivery.findOne({
-      $or: [
-        { qrToken: token },
-        { qrHash: candidateHash },
-      ],
-      driverId,
-    });
-
-    let scanSource = 'delivery_qr';
-
-    if (!delivery) {
-      const orderQr = await QRCode.findOne({ code: token }).lean();
-      if (orderQr?.orderId) {
-        delivery = await Delivery.findOne({ orderId: orderQr.orderId, driverId });
-        if (delivery) scanSource = 'order_qr';
-      }
-    }
-
-    if (!delivery) {
-      const anyDelivery = await Delivery.findOne({
-        $or: [
-          { qrToken: token },
-          { qrHash: candidateHash },
-        ],
-      }).lean();
-
-      if (anyDelivery) {
-        return res.status(403).json({ success: false, message: 'Ce colis ne fait pas partie de vos livraisons.' });
-      }
-
-      const orderQr = await QRCode.findOne({ code: token }).lean();
-      if (orderQr) {
-        const anyOrderDelivery = await Delivery.findOne({ orderId: orderQr.orderId }).lean();
-        if (anyOrderDelivery) {
-          return res.status(403).json({
-            success: false,
-            code: 'NOT_YOUR_DELIVERY',
-            message: 'Commande reconnue, mais cette livraison n’est pas assignée à votre compte.',
-          });
-        }
-        return res.status(404).json({
-          success: false,
-          code: 'NO_DELIVERY_PLANNED',
-          message: 'Commande reconnue, mais aucune livraison n’a encore été planifiée pour ce colis.',
-        });
-      }
-
-      return res.status(404).json({ success: false, code: 'INVALID_QR', message: 'Code colis invalide. Utilisez le QR de la commande ou le QR livraison assigné.' });
-    }
+    const { delivery, scanSource } = await resolveDeliveryForDriverScan(token, driverId);
 
     if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
-      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été scanné.' });
+      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
     }
 
     if (type && type === 'PICKUP_SCAN' && delivery.status !== 'ACCEPTED') {
       return res.status(400).json({ success: false, message: 'Le scan de retrait n’est pas autorisé à ce stade.' });
     }
 
-    const nextStatus = delivery.status === 'ASSIGNED' ? 'ACCEPTED' : delivery.status === 'ACCEPTED' ? 'PICKED_UP' : delivery.status === 'PICKED_UP' ? 'IN_TRANSIT' : delivery.status === 'IN_TRANSIT' ? 'ARRIVED' : 'DELIVERED';
+    const nextStatus = getNextDeliveryStatus(delivery.status);
+    if (!nextStatus) {
+      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
+    }
+
+    return res.json({
+      success: true,
+      preview: true,
+      message: 'QR code reconnu. Confirmez l’action pour valider.',
+      data: buildScanPreviewPayload(delivery, scanSource),
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'SCAN_ERROR',
+      message: error.message || 'Erreur lors du scan.',
+    });
+  }
+});
+
+// Étape 2 — Confirmation explicite après scan
+router.post('/scan/confirm', verifyToken, requireDeliveryDriver, async (req, res) => {
+  try {
+    const rawToken = req.body?.token ?? req.body?.code ?? req.body?.qrCode;
+    const { deliveryId, type } = req.body || {};
+    const token = extractQrToken(rawToken);
+
+    const driverId = req.user.id || req.user.userId;
+    let delivery = null;
+    let scanSource = 'delivery_qr';
+
+    if (deliveryId) {
+      delivery = await Delivery.findOne({ _id: deliveryId, driverId });
+      if (!delivery && token) {
+        const resolved = await resolveDeliveryForDriverScan(token, driverId);
+        delivery = resolved.delivery;
+        scanSource = resolved.scanSource;
+      }
+    } else if (token) {
+      const resolved = await resolveDeliveryForDriverScan(token, driverId);
+      delivery = resolved.delivery;
+      scanSource = resolved.scanSource;
+    } else {
+      return res.status(400).json({ success: false, message: 'QR code ou identifiant de livraison requis.' });
+    }
+
+    if (!delivery) {
+      return res.status(404).json({ success: false, message: 'Livraison introuvable.' });
+    }
+
+    if (['DELIVERED', 'CANCELLED', 'FAILED'].includes(delivery.status)) {
+      return res.status(409).json({ success: false, code: 'ALREADY_SCANNED', message: 'Ce colis a déjà été traité.' });
+    }
+
+    const nextStatus = getNextDeliveryStatus(delivery.status);
+    if (!nextStatus) {
+      return res.status(400).json({ success: false, message: 'Aucune action disponible pour ce colis à ce stade.' });
+    }
+
     const updated = await changeStatus(delivery._id, nextStatus, req.user.id, req.user.role, {
-      metadata: { driverId: req.user.id, scanType: type || 'AUTO', scanSource },
+      metadata: { driverId: req.user.id, scanType: type || 'CONFIRMED', scanSource, confirmedAt: new Date() },
     });
 
-    const statusLabels = {
-      ACCEPTED: 'Colis accepté.',
-      PICKED_UP: 'Colis récupéré.',
-      IN_TRANSIT: 'Colis en cours de livraison.',
-      ARRIVED: 'Colis arrivé chez le client.',
-      DELIVERED: 'Colis livré avec succès.',
-    };
-
-    res.json({
+    return res.json({
       success: true,
-      message: statusLabels[nextStatus] || 'Scan validé.',
+      confirmed: true,
+      message: STATUS_SUCCESS_LABELS[nextStatus] || 'Action confirmée.',
       data: updated,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    const status = error.status || 500;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'CONFIRM_ERROR',
+      message: error.message || 'Erreur lors de la confirmation.',
+    });
   }
 });
 
