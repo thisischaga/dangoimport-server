@@ -223,14 +223,27 @@ const sendVerificationLink = async (req, res) => {
 const verifyEmail = async (req, res) => {
     try {
         const { token, redirect } = req.query || {};
-        let targetFrontend = sanitizeRedirectUrl(redirect, process.env.FRONTEND_URL || 'https://dangoimport.com');
+        const User = require('../Models/User');
+        const tokenStr = String(token || '').trim();
 
-        if (!token) {
+        let user = null;
+        if (tokenStr) {
+            user = await User.findOne({ emailVerificationToken: tokenStr });
+        }
+
+        const isVendorUser = Boolean(
+            user && (user.role === 'vendor' || user.isVendor || user.vendorName)
+        );
+        const defaultFrontend = isVendorUser
+            ? (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'http://localhost:5173')
+            : (process.env.FRONTEND_URL || 'https://dangoimport.com');
+
+        let targetFrontend = sanitizeRedirectUrl(redirect, defaultFrontend);
+
+        if (!tokenStr) {
             return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token requis')}`);
         }
 
-        const User = require('../Models/User');
-        const user = await User.findOne({ emailVerificationToken: String(token) });
         if (!user) {
             return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Token invalide ou introuvable')}`);
         }
@@ -250,7 +263,8 @@ const verifyEmail = async (req, res) => {
         return res.redirect(`${targetFrontend}/verification-success?verified=1`);
     } catch (error) {
         console.error('verifyEmail error:', error);
-        const targetFrontend = sanitizeRedirectUrl(req.query?.redirect, process.env.FRONTEND_URL || 'https://dangoimport.com');
+        const defaultFrontend = process.env.SELLER_FRONTEND_URL || process.env.FRONTEND_URL || 'https://dangoimport.com';
+        const targetFrontend = sanitizeRedirectUrl(req.query?.redirect, defaultFrontend);
         return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Erreur serveur lors de la vérification.')}`);
     }
 };

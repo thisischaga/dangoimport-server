@@ -8,9 +8,13 @@ const ALLOWED_REDIRECT_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176',
+  'http://localhost:3001',
   'https://dangoimport.com',
   'https://www.dangoimport.com',
   'https://business.dangoimport.com',
+  'https://seller.dangoimport.com',
   'https://dangoimport-admin-eiim.vercel.app',
 ];
 
@@ -18,10 +22,16 @@ const isAllowedRedirectUrl = (url = '') => {
   if (!url || typeof url !== 'string') return false;
   try {
     const parsed = new URL(url);
-    return ALLOWED_REDIRECT_ORIGINS.some((origin) => {
-      const allowed = new URL(origin);
-      return parsed.protocol === allowed.protocol && parsed.host === allowed.host;
-    }) || parsed.hostname.endsWith('.dangoimport.com');
+    return (
+      ALLOWED_REDIRECT_ORIGINS.some((origin) => {
+        const allowed = new URL(origin);
+        return parsed.protocol === allowed.protocol && parsed.host === allowed.host;
+      }) ||
+      parsed.hostname.endsWith('.dangoimport.com') ||
+      parsed.hostname.includes('vercel.app') ||
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1'
+    );
   } catch {
     return false;
   }
@@ -29,7 +39,7 @@ const isAllowedRedirectUrl = (url = '') => {
 
 const sanitizeRedirectUrl = (url, fallback) => {
   if (isAllowedRedirectUrl(url)) return url.replace(/\/$/, '');
-  return (fallback || process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
+  return (fallback || process.env.SELLER_FRONTEND_URL || process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
 };
 
 const isAdminUser = (req) => {
