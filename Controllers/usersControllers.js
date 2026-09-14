@@ -206,9 +206,9 @@ const sendVerificationLink = async (req, res) => {
         await user.save();
 
         const isVendor = await userHasVendorAccess(user);
-        const sellerFrontend = (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'https://business.dangoimport.com').replace(/\/$/, '');
-        const customerFrontend = (process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
-        const defaultFrontend = isVendor ? sellerFrontend : customerFrontend;
+        const sellerFrontend = ('https://business.dangoimport.com').replace(/\/$/, '');
+        const customerFrontend = ('https://business.dangoimport.com').replace(/\/$/, '');
+        const defaultFrontend = sellerFrontend;
 
         let clientRedirect = req.body?.redirectUrl || req.headers?.origin || req.headers?.referer || '';
         if (isVendor || (clientRedirect && (clientRedirect.includes('5174') || clientRedirect.includes('business.dangoimport.com') || clientRedirect.includes('seller')))) {
@@ -218,7 +218,7 @@ const sendVerificationLink = async (req, res) => {
         }
 
         // Build verification URL pointing to the backend API endpoint
-        const backendBase = (process.env.BACKEND_URL || process.env.API_URL || 'https://www.dangoimport.com').replace(/\/$/, '');
+        const backendBase = 'https://business.dangoimport.com'.replace(/\/$/, '');
         const redirectParam = clientRedirect ? `&redirect=${encodeURIComponent(clientRedirect)}` : '';
         const verifyUrl = `${backendBase}/api/auth/verify-email?token=${encodeURIComponent(token)}${redirectParam}`;
 
