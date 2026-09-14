@@ -873,6 +873,9 @@ router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async
       return res.status(400).json({ message: 'Au moins une image est requise.' });
     }
 
+    const isDraft = req.body.validationStatus === 'draft' || req.body.isDraft === true || req.body.status === 'draft';
+    const validationStatus = isDraft ? 'draft' : 'pending';
+
     let payload = buildProductPayload({
       ...req.body,
       name,
@@ -885,10 +888,11 @@ router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async
       image: imageList[0].url,
       images: imageList,
       isPublished: false,
-      validationStatus: 'pending',
+      validationStatus,
       vendorName: req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim(),
       shippingInfo: country ? `Livraison: ${country}` : undefined,
     });
+    payload.validationStatus = validationStatus;
 
     payload.vendorId = req.vendorUser._id;
     payload.isVendorCertified = Boolean(req.vendorUser.isCertified);
@@ -896,8 +900,8 @@ router.post('/products', verifyToken, verifyVendor, requireVerifiedVendor, async
     payload = await normalizeProductImages(payload);
     payload.history = [
       {
-        action: 'Créé & soumis à validation',
-        comment: 'Produit soumis à l’équipe de modération Dango Import.',
+        action: isDraft ? 'Créé en brouillon' : 'Créé & soumis à validation',
+        comment: isDraft ? 'Produit enregistré en tant que brouillon.' : 'Produit soumis à l’équipe de modération Dango Import.',
         performedBy: req.vendorUser.vendorName || `${req.vendorUser.userFirstname} ${req.vendorUser.userSurname}`.trim(),
         role: 'vendor',
         date: new Date(),
@@ -928,8 +932,11 @@ router.put('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor, as
     let payload = buildProductPayload(req.body, { existingProduct: existing });
     payload.vendorId = req.vendorUser._id;
     
-    // Si le produit nécessitait des modifications ou était rejeté, sa mise à jour le repasse en validation
-    if (['changes_requested', 'rejected', 'draft'].includes(existing.validationStatus)) {
+    const isDraft = req.body.validationStatus === 'draft' || req.body.isDraft === true || req.body.status === 'draft';
+    if (isDraft) {
+      payload.validationStatus = 'draft';
+      payload.isPublished = false;
+    } else if (['changes_requested', 'rejected', 'draft'].includes(existing.validationStatus)) {
       payload.validationStatus = 'pending';
       payload.isPublished = false;
     } else {
