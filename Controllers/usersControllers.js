@@ -218,7 +218,7 @@ const sendVerificationLink = async (req, res) => {
         }
 
         // Build verification URL pointing to the backend API endpoint
-        const backendBase = 'https://business.dangoimport.com'.replace(/\/$/, '');
+        const backendBase = (process.env.BACKEND_URL || process.env.API_URL || 'https://dangoimport-server.onrender.com').replace(/\/$/, '');
         const redirectParam = clientRedirect ? `&redirect=${encodeURIComponent(clientRedirect)}` : '';
         const verifyUrl = `${backendBase}/api/auth/verify-email?token=${encodeURIComponent(token)}${redirectParam}`;
 
