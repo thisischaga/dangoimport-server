@@ -205,8 +205,8 @@ const sendVerificationLink = async (req, res) => {
         await user.save();
 
         const isVendorUser = Boolean(user && (user.role === 'vendor' || user.isVendor || user.vendorName));
-        const sellerFrontend = (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'https://business.dangoimport.com').replace(/\/$/, '');
-        const defaultFrontend = isVendorUser ? sellerFrontend : (process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
+        const sellerFrontend = ('https://business.dangoimport.com').replace(/\/$/, '');
+        const defaultFrontend = isVendorUser ? sellerFrontend : ('https://business.dangoimport.com').replace(/\/$/, '');
 
         let clientRedirect = req.body?.redirectUrl || req.headers?.origin || '';
         if (isVendorUser && (!clientRedirect || clientRedirect.includes('localhost:5173'))) {
