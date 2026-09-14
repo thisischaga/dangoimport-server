@@ -187,6 +187,7 @@ const { sanitizeRedirectUrl } = require('../Middlewares/securityHelpers');
 const sendVerificationLink = async (req, res) => {
     try {
         const User = require('../Models/User');
+        const { userHasVendorAccess } = require('../utils/vendorAccess');
         let user;
         if (req.user && (req.user.userId || req.user.id)) {
             user = await User.findById(req.user.userId || req.user.id);
@@ -204,12 +205,13 @@ const sendVerificationLink = async (req, res) => {
         user.emailVerificationTokenExpires = Date.now() + 24 * 3600 * 1000; // 24h
         await user.save();
 
-        const isVendorUser = Boolean(user && (user.role === 'vendor' || user.isVendor || user.vendorName));
-        const sellerFrontend = ('https://business.dangoimport.com').replace(/\/$/, '');
-        const defaultFrontend = isVendorUser ? sellerFrontend : ('https://business.dangoimport.com').replace(/\/$/, '');
+        const isVendor = await userHasVendorAccess(user);
+        const sellerFrontend = (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'https://business.dangoimport.com').replace(/\/$/, '');
+        const customerFrontend = (process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
+        const defaultFrontend = isVendor ? sellerFrontend : customerFrontend;
 
-        let clientRedirect = req.body?.redirectUrl || req.headers?.origin || '';
-        if (isVendorUser && (!clientRedirect || clientRedirect.includes('localhost:5173'))) {
+        let clientRedirect = req.body?.redirectUrl || req.headers?.origin || req.headers?.referer || '';
+        if (isVendor || (clientRedirect && (clientRedirect.includes('5174') || clientRedirect.includes('business.dangoimport.com') || clientRedirect.includes('seller')))) {
             clientRedirect = sellerFrontend;
         } else {
             clientRedirect = sanitizeRedirectUrl(clientRedirect, defaultFrontend);
@@ -234,6 +236,7 @@ const verifyEmail = async (req, res) => {
     try {
         const { token, redirect } = req.query || {};
         const User = require('../Models/User');
+        const { userHasVendorAccess } = require('../utils/vendorAccess');
         const tokenStr = String(token || '').trim();
 
         let user = null;
@@ -241,22 +244,19 @@ const verifyEmail = async (req, res) => {
             user = await User.findOne({ emailVerificationToken: tokenStr });
         }
 
-        const isVendorUser = Boolean(
-            user && (user.role === 'vendor' || user.isVendor || user.vendorName)
-        );
+        const isVendorUser = user ? await userHasVendorAccess(user) : false;
 
         const sellerFrontend = (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'https://business.dangoimport.com').replace(/\/$/, '');
-        const defaultFrontend = isVendorUser
-            ? sellerFrontend
-            : (process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
+        const customerFrontend = (process.env.FRONTEND_URL || 'https://dangoimport.com').replace(/\/$/, '');
 
-        let targetFrontend = sanitizeRedirectUrl(redirect, defaultFrontend);
-
-        // For vendor accounts, ensure redirect targets the vendor site (business.dangoimport.com)
-        if (isVendorUser) {
-            if (!redirect || redirect.includes('localhost:5173') || (!redirect.includes('5174') && !redirect.includes('business.dangoimport.com'))) {
-                targetFrontend = sellerFrontend;
+        let targetFrontend = customerFrontend;
+        if (isVendorUser || (redirect && (redirect.includes('business.dangoimport.com') || redirect.includes('5174') || redirect.includes('seller')))) {
+            targetFrontend = sellerFrontend;
+            if (redirect && redirect.includes('localhost:5174')) {
+                targetFrontend = 'http://localhost:5174';
             }
+        } else if (redirect) {
+            targetFrontend = sanitizeRedirectUrl(redirect, customerFrontend);
         }
 
         if (!tokenStr) {
@@ -283,9 +283,7 @@ const verifyEmail = async (req, res) => {
     } catch (error) {
         console.error('verifyEmail error:', error);
         const sellerFrontend = (process.env.SELLER_FRONTEND_URL || process.env.VENDOR_FRONTEND_URL || 'https://business.dangoimport.com').replace(/\/$/, '');
-        const defaultFrontend = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : 'https://dangoimport.com';
-        const targetFrontend = sanitizeRedirectUrl(req.query?.redirect, defaultFrontend);
-        return res.redirect(`${targetFrontend}/verification-success?error=${encodeURIComponent('Erreur serveur lors de la vérification.')}`);
+        return res.redirect(`${sellerFrontend}/verification-success?error=${encodeURIComponent('Erreur serveur lors de la vérification.')}`);
     }
 };
 
