@@ -57,7 +57,7 @@ const { alertFailedAdminLogin, alertAdminActivity, adminActionLogger, alertRateL
 const { createCorsOptions } = require('./utils/corsConfig');
 const { assertJwtSecretConfigured, signAccessToken, signAdmin2FAPendingToken } = require('./utils/jwtConfig');
 const { createGlobalErrorHandler } = require('./utils/apiError');
-const { trackRequest, startTrafficSampler } = require('./utils/serverTraffic');
+const { trackRequest, startTrafficSampler, getTrafficMetrics } = require('./utils/serverTraffic');
 const { paymentLimiter } = require('./Middlewares/rateLimiters');
 const { loginRouter: admin2faLoginRouter, adminRouter: admin2faRouter } = require('./routes/admin2faRoutes');
 const slugify = require('slugify');
@@ -1339,6 +1339,19 @@ const startServer = async () => {
       } catch (error) {
         console.error("Erreur GET /api/admin/stats :", error);
         res.status(500).json({ message: "Erreur serveur" });
+      }
+    });
+
+    // Monitoring trafic serveur (admin only)
+    app.get('/api/admin/server/traffic', verifyToken, async (req, res) => {
+      try {
+        const admin = await Admin.findById(req.user.userId);
+        if (!admin) return res.status(401).json({ message: 'Non autorisé' });
+
+        res.status(200).json(getTrafficMetrics());
+      } catch (error) {
+        console.error('Erreur GET /api/admin/server/traffic :', error);
+        res.status(500).json({ message: 'Erreur serveur' });
       }
     });
 
