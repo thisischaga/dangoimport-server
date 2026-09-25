@@ -1,7 +1,7 @@
 const express = require('express');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
-const dropshippingController = require('../controllers/dropshippingController');
+const dropshippingController = require('../Controllers/dropshippingController');
 
 const router = express.Router();
 const adminOnly = requireAdminFromDb;
