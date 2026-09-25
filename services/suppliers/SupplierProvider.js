@@ -3,8 +3,16 @@ class SupplierProvider {
     this.platform = platform;
   }
 
+  async searchProducts() {
+    throw new Error(`${this.platform}: searchProducts() non implémenté.`);
+  }
+
   async getProduct() {
     throw new Error(`${this.platform}: getProduct() non implémenté.`);
+  }
+
+  async getVariants() {
+    throw new Error(`${this.platform}: getVariants() non implémenté.`);
   }
 
   async getStock() {

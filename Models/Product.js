@@ -269,8 +269,19 @@ const productSchema = new mongoose.Schema({
     },
     importSourceType: {
         type: String,
-        enum: ['MANUAL', 'API', 'CSV', 'URL_IMPORT'],
+        enum: ['MANUAL', 'API', 'CSV', 'URL_IMPORT', 'CJ_API'],
         default: 'MANUAL',
+    },
+    externalSourceKey: {
+        type: String,
+        trim: true,
+        sparse: true,
+        unique: true,
+    },
+    syncStatus: {
+        type: String,
+        enum: ['pending', 'running', 'success', 'failed'],
+        default: 'success',
     },
     supplier: {
         name: String,
@@ -345,5 +356,15 @@ productSchema.index({ salePrice: 1 });
 productSchema.index({ category: 1, isPublished: 1 });
 productSchema.index({ sourceType: 1, isPublished: 1 });
 productSchema.index({ sourceType: 1, isDropshippingActive: 1 });
+productSchema.index(
+  { 'supplier.platform': 1, 'supplier.productId': 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      sourceType: 'DROPSHIPPING',
+      'supplier.productId': { $type: 'string', $ne: '' },
+    },
+  },
+);
 
 module.exports = mongoose.model('Product', productSchema);

@@ -26,6 +26,25 @@ function calculateMargin({
   };
 }
 
+function calculateSellingPrice({
+  supplierPrice = 0,
+  shippingCost = 0,
+  margin = null,
+  marginPercent = 30,
+  otherCosts = 0,
+}) {
+  const supplier = toNumber(supplierPrice);
+  const shipping = toNumber(shippingCost);
+  const other = toNumber(otherCosts);
+  const totalCost = supplier + shipping + other;
+  if (margin != null && Number.isFinite(Number(margin))) {
+    return Math.max(0, Math.round((totalCost + toNumber(margin)) * 100) / 100);
+  }
+  const pct = toNumber(marginPercent, 30);
+  const sale = totalCost / (1 - pct / 100);
+  return Math.max(0, Math.round(sale * 100) / 100);
+}
+
 function isDropshippingProduct(product) {
   return product?.sourceType === 'DROPSHIPPING';
 }
@@ -49,6 +68,7 @@ module.exports = {
   PLATFORM_VENDOR_NAME,
   toNumber,
   calculateMargin,
+  calculateSellingPrice,
   isDropshippingProduct,
   getSupplierSnapshot,
 };

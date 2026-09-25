@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/dropshipping.test.js",
+    "test": "node --test tests/dropshipping.test.js tests/cj.test.js",
     "start": "node --use-system-ca server.js",
     "dev": "nodemon --exec \"node --use-system-ca server.js\""
   },

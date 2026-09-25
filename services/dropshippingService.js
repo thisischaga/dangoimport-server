@@ -81,6 +81,8 @@ function normalizeDropshippingInput(body = {}) {
       estimatedDeliveryDays: Math.max(0, toNumber(body.supplier?.estimatedDeliveryDays ?? body.estimatedDeliveryDays)),
       lastSyncedAt: body.supplier?.lastSyncedAt || null,
     },
+    externalSourceKey: body.externalSourceKey ? String(body.externalSourceKey).trim() : undefined,
+    syncStatus: body.syncStatus || 'success',
   };
 }
 
@@ -336,7 +338,14 @@ async function syncDropshippingProduct(productId) {
     throw err;
   }
 
-  const provider = getSupplierProvider(product.supplier?.platform || 'manual');
+  const platform = String(product.supplier?.platform || 'manual').toLowerCase();
+
+  if (platform === 'cj') {
+    const { syncSingleCjProduct } = require('./cj/cjSyncService');
+    return syncSingleCjProduct(productId);
+  }
+
+  const provider = getSupplierProvider(platform);
 
   try {
     const supplierProductId = product.supplier?.productId;
