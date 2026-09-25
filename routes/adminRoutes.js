@@ -513,13 +513,19 @@ router.get('/promotions', verifyToken, adminOnly, async (req, res) => {
 // GET - Historique complet des commandes pour l'administration
 router.get('/orders/history', verifyToken, adminOnly, async (req, res) => {
     try {
-        const { page = 1, limit = 20, status, paymentStatus, search, from, to, dateFilter } = req.query;
+        const { page = 1, limit = 20, status, paymentStatus, search, from, to, dateFilter, orderSource } = req.query;
         const skip = (page - 1) * limit;
         const mongoose = require('mongoose');
 
         const filter = {};
         if (status) filter.status = status;
         if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+        if (orderSource === 'DROPSHIPPING') {
+            filter['items.sourceType'] = 'DROPSHIPPING';
+        } else if (orderSource === 'LOCAL_SELLER') {
+            filter['items.sourceType'] = { $ne: 'DROPSHIPPING' };
+        }
 
         if (search) {
             // Find transactionIds matching the search criteria

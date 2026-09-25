@@ -18,6 +18,7 @@ const VendorOrder = require('../Models/VendorOrder');
 const Product = require('../Models/Product');
 const User = require('../Models/User');
 const Notification = require('../Models/Notification');
+const { buildShopOrderItem, assertProductPurchasable } = require('../utils/orderItemBuilder');
 const emailService = require('../utils/emailService');
 const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
@@ -157,24 +158,13 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     if (!product) {
       throw new Error(`Produit introuvable : ${item.productId}`);
     }
-    if (product.stock < item.quantity) {
-      throw new Error(`Stock insuffisant pour le produit ${product.name}`);
-    }
-    orderItems.push({
-      productId: product._id,
-      productName: product.name,
-      productImage: product.images?.[0]?.url || product.image || '',
-      vendorId: product.vendorId,
-      vendorName: product.vendorName || 'Vendeur Indépendant',
-      price: product.salePrice || product.price,
-      originalPrice: product.price,
-      salePrice: product.salePrice || 0,
-      category: product.category,
+    assertProductPurchasable(product, item.quantity);
+    const built = buildShopOrderItem(product, {
       quantity: item.quantity,
       selectedOptions: item.selectedOptions || {},
-      subtotal: item.subtotal || (product.salePrice || product.price) * item.quantity,
-      delivered: false,
     });
+    built.fulfillmentStatus = 'PAID';
+    orderItems.push(built);
   }
 
   const existingOrder = transaction.orderId ? await ShopOrder.findById(transaction.orderId).session(session) : null;
@@ -365,23 +355,18 @@ router.post('/checkout', verifyToken, async (req, res) => {
         return res.status(400).json({ message: `Prix invalide pour ${product.name}.` });
       }
       const quantity = Number(item.quantity || 1);
-      const lineTotal = unitPrice * quantity;
-      subtotal += lineTotal;
-
-      orderItems.push({
-        productId: product._id,
-        productName: product.name,
-        productImage: product.images?.[0]?.url || product.image || '',
-        vendorId: product.vendorId || null,
-        vendorName: product.vendorName || item.vendorName || 'Vendeur Indépendant',
-        price: unitPrice,
-        originalPrice: product.price,
-        salePrice: product.salePrice || 0,
-        category: product.category,
+      try {
+        assertProductPurchasable(product, quantity);
+      } catch (stockError) {
+        return res.status(400).json({ message: stockError.message });
+      }
+      const built = buildShopOrderItem(product, {
         quantity,
         selectedOptions: item.selectedOptions || {},
-        subtotal: lineTotal,
+        unitPriceOverride: unitPrice,
       });
+      subtotal += built.subtotal;
+      orderItems.push(built);
     }
 
     // Compute shipping cost from payload if not provided explicitly

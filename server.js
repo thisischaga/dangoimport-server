@@ -1091,6 +1091,8 @@ const startServer = async () => {
 
     // Admin Routes
     app.use('/api/admin', adminRoutes);
+    const adminDropshippingRoutes = require('./routes/adminDropshippingRoutes');
+    app.use('/api/admin/products/dropshipping', adminDropshippingRoutes);
 
     // Vendor Routes
     const vendorRoutes = require('./routes/vendorRoutes');

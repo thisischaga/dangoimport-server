@@ -4,8 +4,17 @@ const mongoose = require('mongoose');
 const Product = require('../Models/Product');
 const Review = require('../Models/Review');
 const verifyToken = require('../Middlewares/verifyTokens');
+const { toPublicProduct, toPublicProducts } = require('../utils/publicProduct');
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const PUBLIC_CATALOG_SOURCE_FILTER = {
+  $or: [
+    { sourceType: { $exists: false } },
+    { sourceType: 'LOCAL_SELLER' },
+    { sourceType: 'DROPSHIPPING', isDropshippingActive: true },
+  ],
+};
 
 // GET /api/products/featured - Produits en vedette
 router.get('/featured', async (req, res) => {
@@ -16,7 +25,8 @@ router.get('/featured', async (req, res) => {
     let products = await Product.find({
       isPublished: true,
       validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-      isFeatured: true
+      isFeatured: true,
+      ...PUBLIC_CATALOG_SOURCE_FILTER,
     })
       .sort({ createdAt: -1 })
       .limit(limitNum)
@@ -29,7 +39,8 @@ router.get('/featured', async (req, res) => {
       const extra = await Product.find({
         _id: { $nin: existingIds },
         isPublished: true,
-        validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] }
+        validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
+        ...PUBLIC_CATALOG_SOURCE_FILTER,
       })
         .sort({ isBestSeller: -1, totalSales: -1, createdAt: -1 })
         .limit(remaining)
@@ -38,7 +49,7 @@ router.get('/featured', async (req, res) => {
       products = [...products, ...extra];
     }
 
-    return res.status(200).json({ success: true, data: products, count: products.length });
+    return res.status(200).json({ success: true, data: toPublicProducts(products), count: products.length });
   } catch (error) {
     console.error('Erreur GET /api/products/featured :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération des produits en vedette' });
@@ -67,6 +78,7 @@ router.get('/similar/:id', async (req, res) => {
       _id: { $ne: product._id },
       isPublished: true,
       validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
+      ...PUBLIC_CATALOG_SOURCE_FILTER,
     };
 
     if (product.category) {
@@ -78,7 +90,7 @@ router.get('/similar/:id', async (req, res) => {
       .limit(limitNum)
       .lean();
 
-    return res.status(200).json({ success: true, data: similar });
+    return res.status(200).json({ success: true, data: toPublicProducts(similar) });
   } catch (error) {
     console.error('Erreur GET /api/products/similar/:id :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
@@ -96,12 +108,13 @@ router.get('/vendor/:vendorName', async (req, res) => {
     const products = await Product.find({
       vendorName: new RegExp(`^${escapeRegex(vendorName)}$`, 'i'),
       isPublished: true,
-      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] }
+      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
+      ...PUBLIC_CATALOG_SOURCE_FILTER,
     })
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({ success: true, data: products, count: products.length });
+    return res.status(200).json({ success: true, data: toPublicProducts(products), count: products.length });
   } catch (error) {
     console.error('Erreur GET /api/products/vendor/:vendorName :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
@@ -201,17 +214,17 @@ router.get('/', async (req, res) => {
     }
 
     const [products, total] = await Promise.all([
-      Product.find(filter)
+      Product.find({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
         .sort(sortOption)
         .skip(skip)
         .limit(limitNum)
         .lean(),
-      Product.countDocuments(filter)
+      Product.countDocuments({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
     ]);
 
     return res.status(200).json({
       success: true,
-      data: products,
+      data: toPublicProducts(products),
       pagination: {
         currentPage: pageNum,
         totalPages: Math.max(1, Math.ceil(total / limitNum)),
@@ -335,7 +348,12 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
-    return res.status(200).json({ success: true, data: product, product });
+    if (product.sourceType === 'DROPSHIPPING' && !product.isDropshippingActive) {
+      return res.status(404).json({ success: false, message: 'Produit introuvable' });
+    }
+
+    const publicProduct = toPublicProduct(product);
+    return res.status(200).json({ success: true, data: publicProduct, product: publicProduct });
   } catch (error) {
     console.error('Erreur GET /api/products/:id :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération du produit' });

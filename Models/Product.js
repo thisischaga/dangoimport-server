@@ -260,6 +260,52 @@ const productSchema = new mongoose.Schema({
         }
     ],
 
+    // Source du produit (vendeur local vs dropshipping Dango Import)
+    sourceType: {
+        type: String,
+        enum: ['LOCAL_SELLER', 'DROPSHIPPING'],
+        default: 'LOCAL_SELLER',
+        index: true,
+    },
+    importSourceType: {
+        type: String,
+        enum: ['MANUAL', 'API', 'CSV', 'URL_IMPORT'],
+        default: 'MANUAL',
+    },
+    supplier: {
+        name: String,
+        platform: String,
+        productId: String,
+        productUrl: String,
+        supplierPrice: { type: Number, min: 0 },
+        supplierCurrency: { type: String, default: 'XOF', trim: true },
+        shippingCost: { type: Number, min: 0, default: 0 },
+        estimatedDeliveryDays: { type: Number, min: 0 },
+        lastSyncedAt: Date,
+    },
+    otherCosts: {
+        type: Number,
+        min: 0,
+        default: 0,
+    },
+    estimatedProfit: Number,
+    marginPercent: Number,
+    fulfillmentType: {
+        type: String,
+        enum: ['SELLER', 'DANGO_IMPORT', 'SUPPLIER'],
+        default: 'SELLER',
+    },
+    isDropshippingActive: {
+        type: Boolean,
+        default: false,
+        index: true,
+    },
+    syncError: {
+        type: String,
+        default: '',
+    },
+    lastSyncErrorAt: Date,
+
     // Informations de vendeur
     vendorName: {
         type: String,
@@ -297,5 +343,7 @@ productSchema.index({ isFeatured: 1, isPublished: 1 });
 productSchema.index({ vendorName: 1, isPublished: 1 });
 productSchema.index({ salePrice: 1 });
 productSchema.index({ category: 1, isPublished: 1 });
+productSchema.index({ sourceType: 1, isPublished: 1 });
+productSchema.index({ sourceType: 1, isDropshippingActive: 1 });
 
 module.exports = mongoose.model('Product', productSchema);

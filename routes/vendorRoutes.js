@@ -928,6 +928,9 @@ router.put('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor, as
     if (!existing) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
+    if (existing.sourceType === 'DROPSHIPPING') {
+      return res.status(403).json({ message: 'Ce produit est géré par Dango Import et ne peut pas être modifié.' });
+    }
 
     let payload = buildProductPayload(req.body, { existingProduct: existing });
     payload.vendorId = req.vendorUser._id;
@@ -976,7 +979,7 @@ router.delete('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor,
     const productId = req.params.id;
     const vendorId = req.vendorUser?._id;
 
-    let deleted = await Product.findOneAndDelete({
+    let deleted = await Product.findOne({
       _id: productId,
       $or: [
         { vendorId: vendorId },
@@ -988,6 +991,11 @@ router.delete('/products/:id', verifyToken, verifyVendor, requireVerifiedVendor,
     if (!deleted) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
+    if (deleted.sourceType === 'DROPSHIPPING') {
+      return res.status(403).json({ message: 'Ce produit est géré par Dango Import et ne peut pas être supprimé.' });
+    }
+
+    await Product.findByIdAndDelete(productId);
 
     const cache = require('../utils/cache');
     cache.delPrefix('products:');
