@@ -20,6 +20,7 @@ const { isOrderEligibleForDelivery, createDeliveryListFromOrders, getEligibleDel
 const verifyToken = require('../Middlewares/verifyTokens');
 const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
 const { adminActionLogger } = require('../utils/securityAlerts');
+const { getTrafficMetrics } = require('../utils/serverTraffic');
 
 const router = express.Router();
 
@@ -1158,6 +1159,15 @@ router.delete('/promotions/:id', verifyToken, adminOnly, async (req, res) => {
         res.json({ success: true, message: 'Promotion supprimée' });
     } catch (error) {
       console.error("[adminRoutes.js] Erreur capturée :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/server/traffic', verifyToken, adminOnly, async (req, res) => {
+    try {
+        res.json(getTrafficMetrics());
+    } catch (error) {
+        console.error('[adminRoutes.js] server traffic:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

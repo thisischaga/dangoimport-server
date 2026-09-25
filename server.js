@@ -57,6 +57,7 @@ const { alertFailedAdminLogin, alertAdminActivity, adminActionLogger, alertRateL
 const { createCorsOptions } = require('./utils/corsConfig');
 const { assertJwtSecretConfigured, signAccessToken, signAdmin2FAPendingToken } = require('./utils/jwtConfig');
 const { createGlobalErrorHandler } = require('./utils/apiError');
+const { trackRequest, startTrafficSampler } = require('./utils/serverTraffic');
 const { paymentLimiter } = require('./Middlewares/rateLimiters');
 const { loginRouter: admin2faLoginRouter, adminRouter: admin2faRouter } = require('./routes/admin2faRoutes');
 const slugify = require('slugify');
@@ -66,6 +67,10 @@ const fedapayWebhook = _fedapayMod.handleWebhook || (fedapayRouter && fedapayRou
 
 const app = express();
 app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  trackRequest();
+  next();
+});
 app.use(compression({
   filter: (req, res) => {
     // Ne pas compresser les uploads multipart (évite ERR_HTTP2_PROTOCOL_ERROR)
@@ -209,6 +214,7 @@ const startServer = async () => {
   try {
     assertJwtSecretConfigured();
     await connectDB();
+    startTrafficSampler();
 
     // Route de santé pour tester la connexion
     app.get('/health', (req, res) => {
