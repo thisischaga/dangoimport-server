@@ -78,27 +78,74 @@ function parseCjLocalizedName(value) {
   return trimmed;
 }
 
+function isPrimarilyChinese(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+  const cjk = (s.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+  const chars = (s.match(/\S/g) || []).length;
+  return cjk >= 3 && cjk / Math.max(chars, 1) >= 0.12;
+}
+
 function pickCjTitle(cjProduct = {}, detail = null) {
+  const raw = cjProduct.raw || {};
   const candidates = [
-    parseCjLocalizedName(detail?.productName),
     detail?.productNameEn,
+    detail?.nameEn,
+    raw.productNameEn,
+    raw.nameEn,
+    raw.name,
     cjProduct.name,
-    detail?.productNameEn,
+    parseCjLocalizedName(detail?.productName),
+    detail?.productName,
     parseCjLocalizedName(detail?.productSku),
-  ];
-  const title = candidates.find((c) => String(c || '').trim());
-  return String(title || 'Produit').trim();
+  ]
+    .map((c) => String(c || '').trim())
+    .filter(Boolean);
+
+  const preferred = candidates.find((c) => !isPrimarilyChinese(c));
+  if (preferred) return preferred;
+  return candidates[0] || 'Produit';
+}
+
+function resolveCjProductId(product = {}) {
+  const fromSupplier = String(product.supplier?.productId || '').trim();
+  if (fromSupplier) return fromSupplier;
+  const key = String(product.externalSourceKey || '').trim();
+  const match = key.match(/^cj:([^:\s]+)$/i);
+  if (match) return match[1];
+  return String(product.supplier?.externalProductId || '').trim();
+}
+
+function pickBestStoredProductName(doc = {}) {
+  const supplier = doc.supplier || {};
+  const candidates = [
+    supplier.productNameEn,
+    supplier.nameEn,
+    parseCjLocalizedName(doc.name),
+    doc.name,
+    doc.shortDescription,
+  ]
+    .map((c) => String(c || '').trim())
+    .filter(Boolean);
+  const preferred = candidates.find((c) => !isPrimarilyChinese(c));
+  return preferred || candidates[0] || 'Produit';
 }
 
 function pickCjDescription(cjProduct = {}, detail = null) {
   const raw = detail?.description
     || detail?.productDescription
+    || detail?.productDescriptionEn
+    || detail?.descriptionEn
+    || detail?.remarkEn
     || cjProduct.description
     || detail?.remark
+    || cjProduct.raw?.description
     || '';
   const text = stripHtml(raw);
+  if (text && text.length > 20) return text;
+  const title = pickCjTitle(cjProduct, detail);
   if (text) return text;
-  return pickCjTitle(cjProduct, detail);
+  return title;
 }
 
 function extractAllImageUrls(value) {
@@ -334,28 +381,70 @@ function repairPublicCategory(doc = {}) {
   return next;
 }
 
-function ensurePublicSellableStock(doc = {}) {
-  const next = { ...doc };
-  let stock = toNumber(next.stock, 0);
-  if (stock > 0) return next;
+function resolveDropshipSellableStock(product = {}) {
+  const supplier = product.supplier || {};
+  let stock = toNumber(product.stock, 0);
 
-  if (Array.isArray(next.variants) && next.variants.length) {
-    const variantStock = next.variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-    if (variantStock > 0) {
-      next.stock = variantStock;
-      return next;
-    }
-    next.variants = next.variants.map((v) => ({
-      ...v,
-      stock: v.stock > 0 ? v.stock : toNumber(cjConfig.defaultPublicStock, 50),
-    }));
-    next.stock = next.variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-    return next;
+  if (Array.isArray(product.variants) && product.variants.length) {
+    const variantStock = product.variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
+    stock = Math.max(stock, variantStock);
   }
 
-  if (isCjDropshippingProduct(next) || next.sourceType === 'DROPSHIPPING') {
-    next.stock = toNumber(cjConfig.defaultPublicStock, 50);
-    next.dropshipStockEstimated = true;
+  if (Array.isArray(supplier.warehouseInventories) && supplier.warehouseInventories.length) {
+    const warehouseStock = supplier.warehouseInventories.reduce(
+      (sum, row) => sum + toNumber(row?.quantity ?? row?.totalInventoryNum ?? row?.totalInventory, 0),
+      0,
+    );
+    stock = Math.max(stock, warehouseStock);
+  }
+
+  return Math.max(0, Math.round(stock));
+}
+
+function normalizePublicVariantStocks(variants = [], productStock = 0) {
+  if (!Array.isArray(variants) || !variants.length || productStock <= 0) {
+    return variants;
+  }
+  const allVariantsZero = variants.every((v) => toNumber(v.stock, 0) <= 0);
+  if (!allVariantsZero) return variants;
+  return variants.map((v) => ({ ...v, stock: productStock }));
+}
+
+function applyRealStock(doc = {}, source = {}) {
+  const next = { ...doc };
+  const resolved = resolveDropshipSellableStock({
+    ...source,
+    stock: next.stock,
+    variants: next.variants ?? source.variants,
+    supplier: source.supplier ?? next.supplier,
+  });
+  next.stock = resolved;
+  return next;
+}
+
+function attachPublicFulfillmentFields(doc = {}, source = {}) {
+  const next = { ...doc };
+  const supplier = source.supplier || {};
+  next.stock = resolveDropshipSellableStock({
+    ...source,
+    stock: next.stock,
+    variants: next.variants ?? source.variants,
+    supplier,
+  });
+  next.shippingOrigin = {
+    countryCode: String(supplier.shipFromCountryCode || '').toUpperCase(),
+    countryName: supplier.shipFromCountryName || '',
+    warehouseName: supplier.shipFromWarehouseName || '',
+  };
+  const realSupplier = String(
+    supplier.manufacturerName || supplier.name || '',
+  ).trim();
+  if (realSupplier) {
+    next.fulfillmentSupplierName = realSupplier;
+  }
+  next.fulfillmentPlatform = 'CJdropshipping';
+  if (supplier.estimatedDeliveryDays != null) {
+    next.estimatedDeliveryDays = toNumber(supplier.estimatedDeliveryDays, 0);
   }
   return next;
 }
@@ -372,8 +461,7 @@ function enrichPublicShippingInfo(doc = {}, source = {}) {
       next.shippingInfo = `Livraison dropshipping estimée : ${days} jour(s) ouvrés (hors week-end).`;
     }
   } else if (!next.shippingInfo?.trim() && isCjDropshippingProduct(source)) {
-    next.shippingInfo = 'Expédition internationale via Dango Import. Délai habituel : 10 à 25 jours ouvrés selon destination.';
-    next.estimatedDeliveryDays = next.estimatedDeliveryDays || 15;
+    next.shippingInfo = '';
   }
   return next;
 }
@@ -390,6 +478,17 @@ function enrichPublicSpecifications(doc = {}, source = {}) {
   if (days > 0 && !has('délai de livraison')) {
     rows.push({ key: 'Délai de livraison', value: `${days} jour(s) ouvrés (estimation)` });
   }
+  const origin = source.supplier?.shipFromCountryName || source.supplier?.shipFromCountryCode;
+  if (origin && !has('pays d\'expédition')) {
+    rows.push({
+      key: "Pays d'expédition",
+      value: [source.supplier?.shipFromCountryName, source.supplier?.shipFromWarehouseName].filter(Boolean).join(' · '),
+    });
+  }
+  const manufacturer = source.supplier?.manufacturerName || source.supplier?.name;
+  if (manufacturer && isCjDropshippingProduct(source) && !has('expéditeur')) {
+    rows.push({ key: 'Expéditeur (fournisseur CJ)', value: manufacturer });
+  }
   if (isCjDropshippingProduct(source) && !has('expédition')) {
     rows.push({ key: 'Expédition', value: 'Dropshipping international (CJdropshipping)' });
   }
@@ -403,13 +502,24 @@ function prepareDropshippingProductForPublic(product = {}) {
   let doc = repairCjDisplayPricing({ ...product });
   doc = { ...doc, ...normalizeProductImagesField(doc) };
   doc = repairPublicCategory(doc);
-  doc = ensurePublicSellableStock(doc);
-  doc.name = parseCjLocalizedName(doc.name) || doc.name;
-  if (doc.shortDescription) {
-    doc.shortDescription = stripHtml(doc.shortDescription).slice(0, 220);
+  doc = applyRealStock(doc, product);
+  doc = attachPublicFulfillmentFields(doc, product);
+  doc.stock = resolveDropshipSellableStock({ ...product, variants: doc.variants ?? product.variants });
+  if (Array.isArray(doc.variants) && doc.variants.length) {
+    doc.variants = normalizePublicVariantStocks(doc.variants, doc.stock);
+  }
+  doc.name = pickBestStoredProductName(doc);
+  if (isPrimarilyChinese(doc.name)) {
+    doc.name = parseCjLocalizedName(doc.name) || doc.name;
   }
   if (doc.description) {
     doc.description = stripHtml(doc.description) || doc.description;
+  }
+  if (!String(doc.description || '').trim()) {
+    doc.description = stripHtml(doc.shortDescription) || doc.shortDescription || doc.name || '';
+  }
+  if (!String(doc.shortDescription || '').trim() && doc.description) {
+    doc.shortDescription = String(doc.description).slice(0, 220);
   }
   doc = enrichPublicShippingInfo(doc, product);
   doc = enrichPublicSpecifications(doc, product);
@@ -425,6 +535,7 @@ function prepareDropshippingProductForAdmin(product = {}) {
   let doc = repairCjDisplayPricing({ ...product });
   const media = normalizeProductImagesField(doc);
   doc = { ...doc, ...media };
+  doc.stock = resolveDropshipSellableStock(product);
   const margin = calculateDropshippingMarginXof(doc);
   doc.estimatedProfit = margin.estimatedProfit;
   doc.marginPercent = margin.marginPercent;
@@ -450,6 +561,11 @@ module.exports = {
   looksLikeUnconvertedCjPrice,
   looksLikeUnconvertedUsdSellingPrice,
   isCjDropshippingProduct,
+  resolveCjProductId,
+  resolveDropshipSellableStock,
+  normalizePublicVariantStocks,
+  isPrimarilyChinese,
+  pickBestStoredProductName,
   calculateDropshippingMarginXof,
   repairCjDisplayPricing,
 };

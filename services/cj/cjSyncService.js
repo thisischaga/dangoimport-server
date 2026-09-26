@@ -2,14 +2,16 @@ const Product = require('../../Models/Product');
 const SupplierSyncJob = require('../../Models/SupplierSyncJob');
 const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const { getCJProductDetail } = require('./cjProductService');
+const { getCJInventoryByPid } = require('./cjInventoryService');
 const { hydrateCjPayloadMedia } = require('./cjMediaService');
 const { mapToDropshippingPayload, mapCJProductToDangoProduct } = require('./cjMapper');
 const { appendJobLog } = require('./cjImportService');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
-const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
+const { convertUsdPriceToXof, isCjDropshippingProduct } = require('../../utils/cjCatalogHelpers');
 
 function applyMappedToProductDocument(product, mapped, hydratedPayload = null) {
   const media = hydratedPayload || mapped;
+  if (mapped.name) product.name = mapped.name;
   product.costPrice = convertUsdPriceToXof(mapped.supplier?.supplierPrice ?? 0);
   product.price = mapped.pricing?.sellingPrice ?? product.price;
   product.stock = mapped.stock;
@@ -41,16 +43,12 @@ function applyMappedToProductDocument(product, mapped, hydratedPayload = null) {
   });
   product.estimatedProfit = margin.estimatedProfit;
   product.marginPercent = margin.marginPercent;
-  product.isDropshippingActive = mapped.stock > 0 && product.isDropshippingActive !== false;
+  product.isDropshippingActive = product.isDropshippingActive !== false;
 }
 
 async function syncSingleCjProduct(productId) {
-  const product = await Product.findOne({
-    _id: productId,
-    sourceType: 'DROPSHIPPING',
-    'supplier.platform': cjConfig.platformKey,
-  });
-  if (!product) {
+  const product = await Product.findOne({ _id: productId, sourceType: 'DROPSHIPPING' });
+  if (!product || !isCjDropshippingProduct(product)) {
     const err = new Error('Produit CJ introuvable.');
     err.status = 404;
     throw err;
@@ -69,13 +67,14 @@ async function syncSingleCjProduct(productId) {
 
   try {
     const detail = await getCJProductDetail(pid);
+    const inventory = await getCJInventoryByPid(pid);
     const listItem = {
       externalProductId: pid,
       name: product.name,
       supplierPrice: detail?.sellPrice,
       stock: detail?.warehouseInventoryNum,
     };
-    const mapped = await mapCJProductToDangoProduct(listItem, detail);
+    const mapped = await mapCJProductToDangoProduct(listItem, detail, inventory);
     let payload = mapToDropshippingPayload(mapped, { publish: product.isPublished });
     payload = await hydrateCjPayloadMedia(payload);
     applyMappedToProductDocument(product, mapped, payload);

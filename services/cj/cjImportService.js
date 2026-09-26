@@ -11,6 +11,7 @@ const {
 } = require('../dropshippingService');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
 const { hydrateCjPayloadMedia } = require('./cjMediaService');
+const { getCJInventoryByPid } = require('./cjInventoryService');
 const { resolveSkuForCreate } = require('../../utils/productIdentifiers');
 const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
 
@@ -45,15 +46,18 @@ async function upsertCJProductFromListItem(listItem, { fetchDetail = true, publi
   }
 
   let detail = null;
+  let inventory = null;
   if (fetchDetail) {
     try {
       detail = await getCJProductDetail(externalProductId);
+      inventory = await getCJInventoryByPid(externalProductId);
     } catch (error) {
       detail = null;
+      inventory = null;
     }
   }
 
-  const mapped = await mapCJProductToDangoProduct(listItem, detail);
+  const mapped = await mapCJProductToDangoProduct(listItem, detail, inventory);
   let payload = mapToDropshippingPayload(mapped, { publish });
   payload = await hydrateCjPayloadMedia(payload);
   const existing = await findExistingCjProduct(externalProductId, mapped.externalSourceKey);

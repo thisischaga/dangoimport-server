@@ -11,6 +11,7 @@ const {
   normalizeCjImageUrl,
 } = require('../../utils/cjCatalogHelpers');
 const { maybeTranslateCatalogText } = require('./cjLocalization');
+const { parseCjStockAndShippingOrigin } = require('./cjInventoryService');
 
 function buildExternalSourceKey(externalProductId) {
   return `${cjConfig.platformKey}:${String(externalProductId).trim()}`;
@@ -31,7 +32,15 @@ async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarg
         otherCosts: 0,
       }),
     );
-    const stock = toNumber(variant.variantInventory ?? variant.inventoryNum ?? variant.stock, 0);
+    const stock = toNumber(
+      variant.variantInventory
+      ?? variant.inventoryNum
+      ?? variant.cjInventoryNum
+      ?? variant.factoryInventory
+      ?? variant.totalInventory
+      ?? variant.stock,
+      0,
+    );
     mapped.push({
       name,
       sku: variant.variantSku || variant.vid || '',
@@ -49,7 +58,7 @@ async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarg
   return mapped;
 }
 
-async function mapCJProductToDangoProduct(cjProduct, detail = null) {
+async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPayload = null) {
   const externalProductId = String(cjProduct.externalProductId || cjProduct.id || detail?.pid || '').trim();
   const supplierPriceUsd = toNumber(
     cjProduct.supplierPrice ?? cjProduct.nowPrice ?? cjProduct.sellPrice ?? detail?.sellPrice,
@@ -77,7 +86,12 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null) {
     : [];
 
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  const stock = stockFromVariants || toNumber(cjProduct.stock, 0);
+  const logistics = parseCjStockAndShippingOrigin({
+    detail,
+    listItem: cjProduct,
+    inventoryPayload,
+  });
+  const stock = logistics.stock || stockFromVariants || toNumber(cjProduct.stock, 0);
 
   const images = extractCjImages(cjProduct, detail);
   const primaryImage = images[0]?.url || normalizeCjImageUrl(cjProduct.image) || '';
@@ -111,7 +125,7 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null) {
       ? `Expédition dropshipping estimée : ${deliveryDays} jour(s) ouvrés`
       : 'Expédition dropshipping internationale',
     supplier: {
-      name: cjConfig.supplierName,
+      name: logistics.manufacturerName || detail?.supplierName || cjConfig.supplierName,
       platform: cjConfig.platformKey,
       productId: externalProductId,
       productUrl: detail?.productUrl || '',
@@ -120,6 +134,12 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null) {
       shippingCost,
       estimatedDeliveryDays: deliveryDays,
       lastSyncedAt: new Date(),
+      shipFromCountryCode: logistics.shipFromCountryCode,
+      shipFromCountryName: logistics.shipFromCountryName,
+      shipFromWarehouseName: logistics.shipFromWarehouseName,
+      manufacturerName: logistics.manufacturerName,
+      warehouseInventories: logistics.warehouseInventories,
+      productNameEn: detail?.productNameEn || cjProduct.raw?.productNameEn || '',
     },
     pricing: {
       supplierPrice: supplierPriceUsd,
@@ -162,7 +182,7 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     shippingInfo: mapped.shippingInfo,
     importSourceType: 'CJ_API',
     isPublished: publish,
-    isDropshippingActive: mapped.stock > 0,
+    isDropshippingActive: true,
     otherCosts: 0,
     estimatedProfit: mapped.pricing.estimatedProfit,
     marginPercent: mapped.pricing.marginPercent,

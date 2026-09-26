@@ -1,20 +1,26 @@
+const { isPrimarilyChinese } = require('../../utils/cjCatalogHelpers');
+
 const translationCache = new Map();
 
-async function translateEnToFr(text) {
+async function translateToFr(text) {
   const source = String(text || '').trim();
   if (!source || source.length < 2) return source;
   if (translationCache.has(source)) return translationCache.get(source);
 
   const chunk = source.slice(0, 450);
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=en|fr`;
+  const langpair = isPrimarilyChinese(source) ? 'zh-CN|fr' : 'en|fr';
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langpair}`;
 
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
     const data = await response.json();
     const translated = data?.responseData?.translatedText;
     if (translated && typeof translated === 'string' && !translated.toUpperCase().includes('QUERY LENGTH')) {
-      translationCache.set(source, translated);
-      return translated;
+      const cleaned = translated.trim();
+      if (cleaned && cleaned !== source) {
+        translationCache.set(source, cleaned);
+        return cleaned;
+      }
     }
   } catch {
     /* garder l’original */
@@ -24,11 +30,19 @@ async function translateEnToFr(text) {
 
 async function maybeTranslateCatalogText(text) {
   const { cjConfig } = require('../../config/cj');
-  if (!cjConfig.translateToFr) return String(text || '').trim();
-  return translateEnToFr(text);
+  const source = String(text || '').trim();
+  if (!source) return source;
+  if (!cjConfig.translateToFr) return source;
+  if (!isPrimarilyChinese(source) && /^[\x00-\x7F\s]+$/.test(source)) {
+    return translateToFr(source);
+  }
+  if (isPrimarilyChinese(source)) {
+    return translateToFr(source);
+  }
+  return translateToFr(source);
 }
 
 module.exports = {
   maybeTranslateCatalogText,
-  translateEnToFr,
+  translateToFr,
 };

@@ -25,6 +25,67 @@ test('repairCjDisplayPricing fixes USD price stored as XOF when platform is manu
   assert.ok(repaired.price >= 3000, `expected FCFA price, got ${repaired.price}`);
 });
 
+test('prepareDropshippingProductForPublic restores gallery and sellable stock', () => {
+  const { prepareDropshippingProductForPublic } = require('../utils/cjCatalogHelpers');
+  const product = {
+    sourceType: 'DROPSHIPPING',
+    name: 'Winter Cardigan',
+    price: 4500,
+    stock: 0,
+    category: 'Général',
+    subCategory: "Women's Clothing",
+    image: '["https://cf.cjdropshipping.com/a.jpg","https://cf.cjdropshipping.com/b.jpg"',
+    images: [],
+    supplier: {
+      platform: 'manual',
+      name: 'CJdropshipping',
+      supplierPrice: 5,
+      supplierCurrency: 'USD',
+      estimatedDeliveryDays: 12,
+    },
+    externalSourceKey: 'cj:123',
+  };
+  const pub = prepareDropshippingProductForPublic(product);
+  assert.ok(pub.images.length >= 2);
+  assert.equal(pub.stock, 0);
+  assert.equal(pub.category, 'Mode & Vêtements');
+  assert.equal(pub.estimatedDeliveryDays, 12);
+  assert.match(pub.shippingInfo, /12/);
+});
+
+test('resolveDropshipSellableStock uses DB stock when variants are zero', () => {
+  const { resolveDropshipSellableStock, prepareDropshippingProductForPublic } = require('../utils/cjCatalogHelpers');
+  const product = {
+    sourceType: 'DROPSHIPPING',
+    stock: 240,
+    variants: [{ name: 'A', stock: 0 }, { name: 'B', stock: 0 }],
+    supplier: { platform: 'cj', name: 'CJdropshipping', warehouseInventories: [{ quantity: 0 }] },
+    price: 5000,
+    externalSourceKey: 'cj:999',
+  };
+  assert.equal(resolveDropshipSellableStock(product), 240);
+  const pub = prepareDropshippingProductForPublic(product);
+  assert.equal(pub.stock, 240);
+  assert.equal(pub.variants[0].stock, 240);
+});
+
+test('parseCjStockAndShippingOrigin reads warehouse inventory', () => {
+  const { parseCjStockAndShippingOrigin } = require('../services/cj/cjInventoryService');
+  const result = parseCjStockAndShippingOrigin({
+    detail: { supplierName: 'Shenzhen Textile Co.', warehouseInventoryNum: 10 },
+    inventoryPayload: {
+      inventories: [{
+        countryCode: 'CN',
+        areaEn: 'China Warehouse',
+        totalInventoryNum: 264,
+      }],
+    },
+  });
+  assert.equal(result.stock, 264);
+  assert.equal(result.shipFromCountryCode, 'CN');
+  assert.equal(result.manufacturerName, 'Shenzhen Textile Co.');
+});
+
 test('buildExternalSourceKey uses cj prefix', () => {
   assert.equal(buildExternalSourceKey('123456789'), 'cj:123456789');
 });

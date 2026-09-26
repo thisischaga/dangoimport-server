@@ -5,6 +5,7 @@ const Product = require('../Models/Product');
 const Review = require('../Models/Review');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { toPublicProduct, toPublicProducts, toPublicProductDetail } = require('../utils/publicProduct');
+const { enrichCatalogProductsStock } = require('../services/cj/catalogStockEnrichment');
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -49,7 +50,9 @@ router.get('/featured', async (req, res) => {
       products = [...products, ...extra];
     }
 
-    return res.status(200).json({ success: true, data: toPublicProducts(products), count: products.length });
+    products = await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 });
+
+    return res.status(200).json({ success: true, data: await toPublicProducts(products), count: products.length });
   } catch (error) {
     console.error('Erreur GET /api/products/featured :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération des produits en vedette' });
@@ -85,12 +88,14 @@ router.get('/similar/:id', async (req, res) => {
       filter.category = product.category;
     }
 
-    const similar = await Product.find(filter)
+    let similar = await Product.find(filter)
       .sort({ totalSales: -1, createdAt: -1 })
       .limit(limitNum)
       .lean();
 
-    return res.status(200).json({ success: true, data: toPublicProducts(similar) });
+    similar = await enrichCatalogProductsStock(similar, { maxLiveRefresh: 8 });
+
+    return res.status(200).json({ success: true, data: await toPublicProducts(similar) });
   } catch (error) {
     console.error('Erreur GET /api/products/similar/:id :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
@@ -114,7 +119,9 @@ router.get('/vendor/:vendorName', async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({ success: true, data: toPublicProducts(products), count: products.length });
+    const enriched = await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 });
+
+    return res.status(200).json({ success: true, data: await toPublicProducts(enriched), count: enriched.length });
   } catch (error) {
     console.error('Erreur GET /api/products/vendor/:vendorName :', error);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
@@ -213,7 +220,7 @@ router.get('/', async (req, res) => {
         sortOption = { isFeatured: -1, createdAt: -1 };
     }
 
-    const [products, total] = await Promise.all([
+    const [productsRaw, total] = await Promise.all([
       Product.find({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
         .sort(sortOption)
         .skip(skip)
@@ -222,9 +229,13 @@ router.get('/', async (req, res) => {
       Product.countDocuments({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
     ]);
 
+    const products = await enrichCatalogProductsStock(productsRaw, {
+      maxLiveRefresh: Math.min(limitNum, 15),
+    });
+
     return res.status(200).json({
       success: true,
-      data: toPublicProducts(products),
+      data: await toPublicProducts(products),
       pagination: {
         currentPage: pageNum,
         totalPages: Math.max(1, Math.ceil(total / limitNum)),

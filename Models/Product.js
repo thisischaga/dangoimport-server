@@ -293,6 +293,11 @@ const productSchema = new mongoose.Schema({
         shippingCost: { type: Number, min: 0, default: 0 },
         estimatedDeliveryDays: { type: Number, min: 0 },
         lastSyncedAt: Date,
+        shipFromCountryCode: { type: String, trim: true },
+        shipFromCountryName: { type: String, trim: true },
+        shipFromWarehouseName: { type: String, trim: true },
+        manufacturerName: { type: String, trim: true },
+        warehouseInventories: { type: [mongoose.Schema.Types.Mixed], default: undefined },
     },
     otherCosts: {
         type: Number,

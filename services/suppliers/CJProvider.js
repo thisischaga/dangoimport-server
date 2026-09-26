@@ -1,6 +1,7 @@
 const SupplierProvider = require('./SupplierProvider');
 const { assertCjConfigured } = require('../../config/cj');
 const { getCJProducts, getCJProductDetail } = require('../cj/cjProductService');
+const { getCJInventoryByPid } = require('../cj/cjInventoryService');
 const { mapCJProductToDangoProduct } = require('../cj/cjMapper');
 
 class CJProvider extends SupplierProvider {
@@ -16,13 +17,14 @@ class CJProvider extends SupplierProvider {
   async getProduct(productId) {
     assertCjConfigured();
     const detail = await getCJProductDetail(productId);
+    const inventory = await getCJInventoryByPid(productId);
     const listItem = {
       externalProductId: String(productId),
       name: detail?.productNameEn || detail?.productName,
       supplierPrice: detail?.sellPrice,
       stock: detail?.warehouseInventoryNum,
     };
-    return mapCJProductToDangoProduct(listItem, detail);
+    return mapCJProductToDangoProduct(listItem, detail, inventory);
   }
 
   async getVariants(productId) {

@@ -91,12 +91,20 @@ function normalizeDropshippingInput(body = {}) {
       shippingCost: supplierShippingCost,
       estimatedDeliveryDays: Math.max(0, toNumber(body.supplier?.estimatedDeliveryDays ?? body.estimatedDeliveryDays)),
       lastSyncedAt: body.supplier?.lastSyncedAt || null,
+      shipFromCountryCode: body.supplier?.shipFromCountryCode || '',
+      shipFromCountryName: body.supplier?.shipFromCountryName || '',
+      shipFromWarehouseName: body.supplier?.shipFromWarehouseName || '',
+      manufacturerName: body.supplier?.manufacturerName || '',
+      warehouseInventories: Array.isArray(body.supplier?.warehouseInventories)
+        ? body.supplier.warehouseInventories
+        : undefined,
     },
     externalSourceKey: body.externalSourceKey ? String(body.externalSourceKey).trim() : undefined,
     syncStatus: body.syncStatus || 'success',
   };
 
-  return finalizeNormalizedPayload(repairCjDisplayPricing(payload));
+  const { repairCjSupplierPid } = require('./cj/catalogStockEnrichment');
+  return repairCjSupplierPid(finalizeNormalizedPayload(repairCjDisplayPricing(payload)));
 }
 
 function finalizeNormalizedPayload(normalized) {
