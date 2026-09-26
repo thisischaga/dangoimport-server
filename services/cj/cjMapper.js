@@ -1,65 +1,96 @@
 const slugify = require('slugify');
 const { cjConfig } = require('../../config/cj');
 const { calculateMargin, calculateSellingPrice, toNumber } = require('../../utils/dropshippingCalculations');
+const {
+  extractCjImages,
+  pickCjTitle,
+  pickCjDescription,
+  pickCjCategory,
+  buildCjSpecifications,
+  convertUsdPriceToXof,
+  normalizeCjImageUrl,
+} = require('../../utils/cjCatalogHelpers');
+const { maybeTranslateCatalogText } = require('./cjLocalization');
 
 function buildExternalSourceKey(externalProductId) {
   return `${cjConfig.platformKey}:${String(externalProductId).trim()}`;
 }
 
-function mapCjVariants(variants = []) {
-  return variants.map((variant, index) => {
-    const name = variant.variantNameEn || variant.variantKey || variant.variantSku || `Variante ${index + 1}`;
-    const price = toNumber(variant.variantSellPrice ?? variant.variantSugSellPrice);
+async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarginPercent) {
+  const mapped = [];
+  for (let index = 0; index < variants.length; index += 1) {
+    const variant = variants[index];
+    const nameRaw = variant.variantNameEn || variant.variantKey || variant.variantSku || `Variante ${index + 1}`;
+    const name = await maybeTranslateCatalogText(nameRaw);
+    const supplierUsd = toNumber(variant.variantSellPrice ?? variant.variantSugSellPrice);
+    const priceXof = convertUsdPriceToXof(
+      calculateSellingPrice({
+        supplierPrice: supplierUsd,
+        shippingCost: 0,
+        marginPercent,
+        otherCosts: 0,
+      }),
+    );
     const stock = toNumber(variant.variantInventory ?? variant.inventoryNum ?? variant.stock, 0);
-    return {
+    mapped.push({
       name,
       sku: variant.variantSku || variant.vid || '',
-      price,
+      price: priceXof,
       stock,
-      image: variant.variantImage || '',
+      image: normalizeCjImageUrl(variant.variantImage || ''),
       attributes: {
         externalVariantId: variant.vid || variant.variantSku || '',
         variantKey: variant.variantKey || '',
+        supplierPriceUsd: supplierUsd,
       },
       isDefault: index === 0,
-    };
-  });
+    });
+  }
+  return mapped;
 }
 
-function mapCJProductToDangoProduct(cjProduct, detail = null) {
+async function mapCJProductToDangoProduct(cjProduct, detail = null) {
   const externalProductId = String(cjProduct.externalProductId || cjProduct.id || detail?.pid || '').trim();
-  const supplierPrice = toNumber(
+  const supplierPriceUsd = toNumber(
     cjProduct.supplierPrice ?? cjProduct.nowPrice ?? cjProduct.sellPrice ?? detail?.sellPrice,
   );
   const shippingCost = 0;
   const otherCosts = 0;
-  const sellingPrice = calculateSellingPrice({
-    supplierPrice,
+  const sellingPriceUsd = calculateSellingPrice({
+    supplierPrice: supplierPriceUsd,
     shippingCost,
     marginPercent: cjConfig.defaultMarginPercent,
     otherCosts,
   });
+  const sellingPrice = convertUsdPriceToXof(sellingPriceUsd);
+  const costPriceXof = convertUsdPriceToXof(supplierPriceUsd);
   const margin = calculateMargin({
     sellingPrice,
-    supplierPrice,
+    supplierPrice: costPriceXof,
     supplierShippingCost: shippingCost,
     otherCosts,
   });
 
   const detailVariants = detail?.variants || cjProduct.raw?.variants;
   const variants = Array.isArray(detailVariants) && detailVariants.length
-    ? mapCjVariants(detailVariants)
+    ? await mapCjVariants(detailVariants)
     : [];
 
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
   const stock = stockFromVariants || toNumber(cjProduct.stock, 0);
 
-  const images = Array.isArray(cjProduct.images) && cjProduct.images.length
-    ? cjProduct.images
-    : (detail?.productImageSet || []).map((url, idx) => ({ url, isPrimary: idx === 0 }));
+  const images = extractCjImages(cjProduct, detail);
+  const primaryImage = images[0]?.url || normalizeCjImageUrl(cjProduct.image) || '';
 
-  const name = String(cjProduct.name || detail?.productNameEn || 'Produit CJ').trim();
+  let name = pickCjTitle(cjProduct, detail);
+  let description = pickCjDescription(cjProduct, detail);
+  name = await maybeTranslateCatalogText(name);
+  description = await maybeTranslateCatalogText(description);
+
   const slug = `${slugify(name, { lower: true, strict: true }).slice(0, 80)}-${externalProductId.slice(0, 8).toLowerCase()}`;
+  const category = pickCjCategory(cjProduct, detail);
+  const specifications = buildCjSpecifications(detail);
+  const deliveryDays = parseDeliveryDays(cjProduct.shipping?.deliveryCycle || detail?.deliveryCycle);
 
   return {
     source: cjConfig.platformKey,
@@ -67,28 +98,33 @@ function mapCJProductToDangoProduct(cjProduct, detail = null) {
     externalSourceKey: buildExternalSourceKey(externalProductId),
     name,
     slug,
-    description: String(cjProduct.description || detail?.description || name).trim(),
-    shortDescription: String(cjProduct.description || name).slice(0, 180),
-    category: cjProduct.category || detail?.categoryName || 'Général',
-    subCategory: cjProduct.subCategory || '',
+    description,
+    shortDescription: description.slice(0, 220),
+    category,
+    subCategory: cjProduct.subCategory || detail?.twoCategoryName || '',
     images,
-    image: cjProduct.image || images[0]?.url || '',
+    image: primaryImage,
     variants,
+    specifications,
+    brand: detail?.supplierName || detail?.brandName || 'CJdropshipping',
+    shippingInfo: deliveryDays
+      ? `Expédition dropshipping estimée : ${deliveryDays} jour(s) ouvrés`
+      : 'Expédition dropshipping internationale',
     supplier: {
       name: cjConfig.supplierName,
       platform: cjConfig.platformKey,
       productId: externalProductId,
       productUrl: detail?.productUrl || '',
-      supplierPrice,
+      supplierPrice: supplierPriceUsd,
       supplierCurrency: 'USD',
       shippingCost,
-      estimatedDeliveryDays: parseDeliveryDays(cjProduct.shipping?.deliveryCycle || detail?.deliveryCycle),
+      estimatedDeliveryDays: deliveryDays,
       lastSyncedAt: new Date(),
     },
     pricing: {
-      supplierPrice,
+      supplierPrice: supplierPriceUsd,
       sellingPrice,
-      currency: 'USD',
+      currency: 'XOF',
       marginPercent: margin.marginPercent,
       estimatedProfit: margin.estimatedProfit,
     },
@@ -116,11 +152,14 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     category: mapped.category,
     subCategory: mapped.subCategory,
     price: mapped.pricing.sellingPrice,
-    costPrice: mapped.pricing.supplierPrice,
+    costPrice: convertUsdPriceToXof(mapped.supplier?.supplierPrice ?? mapped.pricing?.supplierPrice),
     stock: mapped.stock,
     image: mapped.image,
     images: mapped.images,
     variants: mapped.variants,
+    specifications: mapped.specifications,
+    brand: mapped.brand,
+    shippingInfo: mapped.shippingInfo,
     importSourceType: 'CJ_API',
     isPublished: publish,
     isDropshippingActive: mapped.stock > 0,

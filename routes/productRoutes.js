@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const Product = require('../Models/Product');
 const Review = require('../Models/Review');
 const verifyToken = require('../Middlewares/verifyTokens');
-const { toPublicProduct, toPublicProducts } = require('../utils/publicProduct');
+const { toPublicProduct, toPublicProducts, toPublicProductDetail } = require('../utils/publicProduct');
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -352,7 +352,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
-    const publicProduct = toPublicProduct(product);
+    const publicProduct = await toPublicProductDetail(product);
     return res.status(200).json({ success: true, data: publicProduct, product: publicProduct });
   } catch (error) {
     console.error('Erreur GET /api/products/:id :', error);

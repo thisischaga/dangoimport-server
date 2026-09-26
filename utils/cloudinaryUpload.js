@@ -37,4 +37,16 @@ async function uploadDataUrl(dataUrl, options = {}) {
   return result.secure_url;
 }
 
-module.exports = { uploadBuffer, uploadDataUrl, FOLDER };
+async function uploadRemoteUrl(remoteUrl, options = {}) {
+  ensureConfigured();
+  const result = await cloudinary.uploader.upload(remoteUrl, {
+    folder: options.folder || FOLDER,
+    resource_type: 'image',
+    fetch_format: 'auto',
+    quality: 'auto',
+    ...options,
+  });
+  return result.secure_url;
+}
+
+module.exports = { uploadBuffer, uploadDataUrl, uploadRemoteUrl, FOLDER };

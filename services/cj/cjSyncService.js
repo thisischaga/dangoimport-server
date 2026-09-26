@@ -2,20 +2,30 @@ const Product = require('../../Models/Product');
 const SupplierSyncJob = require('../../Models/SupplierSyncJob');
 const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const { getCJProductDetail } = require('./cjProductService');
-const { mapCJProductToDangoProduct } = require('./cjMapper');
+const { hydrateCjPayloadMedia } = require('./cjMediaService');
+const { mapToDropshippingPayload, mapCJProductToDangoProduct } = require('./cjMapper');
 const { appendJobLog } = require('./cjImportService');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
+const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
 
-function applyMappedToProductDocument(product, mapped) {
-  product.costPrice = mapped.supplier.supplierPrice;
+function applyMappedToProductDocument(product, mapped, hydratedPayload = null) {
+  const media = hydratedPayload || mapped;
+  product.costPrice = convertUsdPriceToXof(mapped.supplier?.supplierPrice ?? 0);
+  product.price = mapped.pricing?.sellingPrice ?? product.price;
   product.stock = mapped.stock;
-  product.variants = mapped.variants;
-  if (mapped.images?.length) {
-    product.images = mapped.images;
-    product.image = mapped.image || mapped.images[0]?.url || product.image;
+  product.variants = media.variants || mapped.variants;
+  product.description = mapped.description || product.description;
+  product.shortDescription = mapped.shortDescription || product.shortDescription;
+  product.specifications = mapped.specifications?.length ? mapped.specifications : product.specifications;
+  product.shippingInfo = mapped.shippingInfo || product.shippingInfo;
+  product.brand = mapped.brand || product.brand;
+  const images = media.images || mapped.images;
+  if (images?.length) {
+    product.images = images;
+    product.image = media.image || mapped.image || images[0]?.url || product.image;
   }
   product.supplier = {
-    ...product.supplier?.toObject?.() || product.supplier,
+    ...(product.supplier?.toObject?.() || product.supplier),
     ...mapped.supplier,
     lastSyncedAt: new Date(),
   };
@@ -25,7 +35,7 @@ function applyMappedToProductDocument(product, mapped) {
 
   const margin = calculateMargin({
     sellingPrice: product.price,
-    supplierPrice: product.supplier.supplierPrice,
+    supplierPrice: product.costPrice,
     supplierShippingCost: product.supplier.shippingCost,
     otherCosts: product.otherCosts,
   });
@@ -65,8 +75,10 @@ async function syncSingleCjProduct(productId) {
       supplierPrice: detail?.sellPrice,
       stock: detail?.warehouseInventoryNum,
     };
-    const mapped = mapCJProductToDangoProduct(listItem, detail);
-    applyMappedToProductDocument(product, mapped);
+    const mapped = await mapCJProductToDangoProduct(listItem, detail);
+    let payload = mapToDropshippingPayload(mapped, { publish: product.isPublished });
+    payload = await hydrateCjPayloadMedia(payload);
+    applyMappedToProductDocument(product, mapped, payload);
     await product.save();
     return { success: true, product: product.toObject() };
   } catch (error) {

@@ -1,11 +1,12 @@
 const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const { withRateLimit, sleep } = require('./cjRateLimiter');
+const { getValidAccessToken, invalidateSession } = require('./cjTokenService');
 
 function sanitizeForLog(value) {
-  const str = String(value || '');
-  if (cjConfig.accessToken && str.includes(cjConfig.accessToken)) {
-    return str.replaceAll(cjConfig.accessToken, '[REDACTED]');
-  }
+  let str = String(value || '');
+  [cjConfig.accessToken, cjConfig.apiKey, cjConfig.refreshToken].forEach((secret) => {
+    if (secret && str.includes(secret)) str = str.replaceAll(secret, '[REDACTED]');
+  });
   return str;
 }
 
@@ -37,13 +38,15 @@ async function parseResponse(response) {
 
   if (response.status === 401) {
     const err = new Error('Token CJ invalide ou expiré.');
-    err.status = 401;
+    err.status = 502;
+    err.code = 'CJ_AUTH';
     err.cj = data;
     throw err;
   }
   if (response.status === 403) {
     const err = new Error('Accès CJ refusé.');
-    err.status = 403;
+    err.status = 502;
+    err.code = 'CJ_FORBIDDEN';
     err.cj = data;
     throw err;
   }
@@ -76,7 +79,7 @@ async function parseResponse(response) {
   return data;
 }
 
-async function request(method, path, { query, body, retry = 0 } = {}) {
+async function request(method, path, { query, body, retry = 0, authRetry = 0 } = {}) {
   assertCjConfigured();
 
   const controller = new AbortController();
@@ -84,10 +87,11 @@ async function request(method, path, { query, body, retry = 0 } = {}) {
 
   try {
     return await withRateLimit(async () => {
+      const accessToken = await getValidAccessToken();
       const response = await fetch(buildUrl(path, query), {
         method,
         headers: {
-          'CJ-Access-Token': cjConfig.accessToken,
+          'CJ-Access-Token': accessToken,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
@@ -95,7 +99,15 @@ async function request(method, path, { query, body, retry = 0 } = {}) {
         signal: controller.signal,
       });
 
-      return parseResponse(response);
+      try {
+        return await parseResponse(response);
+      } catch (error) {
+        if (error.code === 'CJ_AUTH' && authRetry < 1 && cjConfig.apiKey) {
+          invalidateSession();
+          return request(method, path, { query, body, retry, authRetry: authRetry + 1 });
+        }
+        throw error;
+      }
     });
   } catch (error) {
     const isAbort = error.name === 'AbortError';
@@ -108,6 +120,18 @@ async function request(method, path, { query, body, retry = 0 } = {}) {
     if (isAbort) {
       const err = new Error('Timeout CJ API.');
       err.status = 504;
+      err.code = 'CJ_TIMEOUT';
+      throw err;
+    }
+
+    const networkMsg = error.cause?.message || error.message || '';
+    if (networkMsg.includes('fetch failed') || networkMsg.includes('ECONNREFUSED') || networkMsg.includes('ETIMEDOUT') || networkMsg.includes('Connect Timeout')) {
+      const err = new Error(
+        'Impossible de joindre l’API CJdropshipping depuis ce serveur (réseau, firewall ou région). '
+        + 'Testez avec le backend hébergé (Render) ou vérifiez l’accès à developers.cjdropshipping.com.',
+      );
+      err.status = 502;
+      err.code = 'CJ_NETWORK';
       throw err;
     }
     throw error;

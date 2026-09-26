@@ -1,15 +1,36 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+process.env.CJ_TRANSLATE_TO_FR = 'false';
 const { mapCJProductToDangoProduct, buildExternalSourceKey } = require('../services/cj/cjMapper');
 const { calculateSellingPrice } = require('../utils/dropshippingCalculations');
 const { flattenListV2Products, normalizeListItem } = require('../services/cj/cjProductService');
+
+test('repairCjDisplayPricing fixes USD price stored as XOF when platform is manual', () => {
+  const { repairCjDisplayPricing } = require('../utils/cjCatalogHelpers');
+  const product = {
+    sourceType: 'DROPSHIPPING',
+    price: 5,
+    supplier: {
+      platform: 'manual',
+      name: 'CJdropshipping',
+      supplierPrice: 5,
+      supplierCurrency: 'USD',
+      shippingCost: 0,
+    },
+    externalSourceKey: 'cj:1363726889776189440',
+    importSourceType: 'MANUAL',
+  };
+  const repaired = repairCjDisplayPricing(product);
+  assert.equal(repaired.supplier.platform, 'cj');
+  assert.ok(repaired.price >= 3000, `expected FCFA price, got ${repaired.price}`);
+});
 
 test('buildExternalSourceKey uses cj prefix', () => {
   assert.equal(buildExternalSourceKey('123456789'), 'cj:123456789');
 });
 
-test('mapCJProductToDangoProduct normalizes pricing and variants', () => {
-  const mapped = mapCJProductToDangoProduct(
+test('mapCJProductToDangoProduct normalizes pricing and variants', async () => {
+  const mapped = await mapCJProductToDangoProduct(
     {
       externalProductId: 'pid-1',
       name: 'Test Watch',
@@ -35,7 +56,7 @@ test('mapCJProductToDangoProduct normalizes pricing and variants', () => {
   assert.equal(mapped.supplier.platform, 'cj');
   assert.equal(mapped.variants.length, 1);
   assert.equal(mapped.variants[0].attributes.externalVariantId, 'v1');
-  assert.ok(mapped.pricing.sellingPrice > mapped.pricing.supplierPrice);
+  assert.ok(mapped.pricing.sellingPrice > 1000);
 });
 
 test('calculateSellingPrice applies margin percent', () => {

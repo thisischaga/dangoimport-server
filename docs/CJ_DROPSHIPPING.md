@@ -17,12 +17,13 @@ CJ_MAX_RETRIES=2
 
 Ne jamais exposer `CJ_ACCESS_TOKEN` au frontend ni le committer.
 
-## Obtenir un token
+Obtenir un token :
 
-1. Créer un compte sur [CJdropshipping](https://www.cjdropshipping.com/).
-2. Ouvrir le portail développeur : [developers.cjdropshipping.com](https://developers.cjdropshipping.com/).
-3. Générer un **Access Token** API et le coller dans `CJ_ACCESS_TOKEN` sur le serveur.
-4. Mettre `CJ_API_ENABLED=true` puis redémarrer le backend.
+1. Compte CJ → **My CJ → Authorization → API → API Key** (format `CJxxxx@api@…`).
+2. **Option A (recommandée)** : `CJ_API_KEY=…` — le serveur appelle `POST /authentication/getAccessToken` automatiquement.
+3. **Option B** : coller la clé dans `CJ_ACCESS_TOKEN` (détection `@api@`) — même comportement.
+4. **Option C** : coller l’**access token** renvoyé par CJ (sans `@api@`) dans `CJ_ACCESS_TOKEN`.
+5. Optionnel : `CJ_REFRESH_TOKEN` pour renouveler sans reclé.
 
 ## Endpoints admin (JWT admin requis)
 

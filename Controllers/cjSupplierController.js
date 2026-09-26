@@ -6,10 +6,15 @@ const { startImportJob, startSelectiveImportJob } = require('../services/cj/cjIm
 const { startSyncJob, getCjDashboardStats } = require('../services/cj/cjSyncService');
 
 function handleError(res, error) {
-  const status = error.status || 500;
+  let status = error.status || 500;
+  // Ne jamais renvoyer 401/403 admin : l’intercepteur axios déconnecte l’admin sur 401.
+  if (status === 401 || status === 403 || error.code?.startsWith?.('CJ_')) {
+    status = 502;
+  }
   return res.status(status).json({
     success: false,
     message: error.message || 'Erreur serveur.',
+    code: error.code || undefined,
   });
 }
 

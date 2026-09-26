@@ -1,4 +1,9 @@
 const { isDropshippingProduct, PLATFORM_VENDOR_NAME } = require('./dropshippingCalculations');
+const {
+  prepareDropshippingProductForPublic,
+  isCjDropshippingProduct,
+} = require('./cjCatalogHelpers');
+const { maybeTranslateCatalogText } = require('../services/cj/cjLocalization');
 
 const INTERNAL_FIELDS = [
   'costPrice',
@@ -14,13 +19,19 @@ const INTERNAL_FIELDS = [
   'rejectionReason',
   'changeRequestComment',
   'reviews',
+  'dropshipStockEstimated',
 ];
+
+function normalizePublicMedia(doc) {
+  if (!doc) return doc;
+  return doc;
+}
 
 function toPublicProduct(product) {
   if (!product) return null;
 
   const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
-  const publicDoc = { ...doc };
+  let publicDoc = { ...doc };
 
   INTERNAL_FIELDS.forEach((field) => {
     delete publicDoc[field];
@@ -29,13 +40,30 @@ function toPublicProduct(product) {
   delete publicDoc.supplier;
 
   if (isDropshippingProduct(doc)) {
+    publicDoc = prepareDropshippingProductForPublic(doc);
     publicDoc.vendorName = PLATFORM_VENDOR_NAME;
     publicDoc.isVendorCertified = true;
     publicDoc.vendorId = undefined;
     publicDoc.fulfillmentType = doc.fulfillmentType || 'DANGO_IMPORT';
+    delete publicDoc.supplier;
+  }
 
-    if (doc.supplier?.estimatedDeliveryDays != null) {
-      publicDoc.estimatedDeliveryDays = doc.supplier.estimatedDeliveryDays;
+  return publicDoc;
+}
+
+async function toPublicProductDetail(product) {
+  const publicDoc = toPublicProduct(product);
+  if (!publicDoc || !isDropshippingProduct(product)) return publicDoc;
+
+  if (isCjDropshippingProduct(product)) {
+    if (publicDoc.name) {
+      publicDoc.name = await maybeTranslateCatalogText(publicDoc.name);
+    }
+    if (publicDoc.description) {
+      publicDoc.description = await maybeTranslateCatalogText(publicDoc.description);
+    }
+    if (publicDoc.shortDescription) {
+      publicDoc.shortDescription = await maybeTranslateCatalogText(publicDoc.shortDescription);
     }
   }
 
@@ -54,6 +82,7 @@ function toAdminDropshippingProduct(product) {
 
 module.exports = {
   toPublicProduct,
+  toPublicProductDetail,
   toPublicProducts,
   toAdminDropshippingProduct,
   PLATFORM_VENDOR_NAME,

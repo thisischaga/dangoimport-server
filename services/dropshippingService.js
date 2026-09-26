@@ -1,12 +1,12 @@
 const slugify = require('slugify');
 const Product = require('../Models/Product');
 const {
-  calculateMargin,
   PLATFORM_VENDOR_NAME,
   toNumber,
 } = require('../utils/dropshippingCalculations');
 const { getSupplierProvider } = require('./suppliers');
 const { resolveSkuForCreate } = require('../utils/productIdentifiers');
+const { prepareDropshippingProductForAdmin, repairCjDisplayPricing, isCjDropshippingProduct, calculateDropshippingMarginXof, convertUsdPriceToXof } = require('../utils/cjCatalogHelpers');
 
 const ALLOWED_CURRENCIES = new Set(['XOF', 'USD', 'EUR', 'CNY', 'XAF']);
 
@@ -21,22 +21,31 @@ function isValidUrl(value) {
 }
 
 function normalizeDropshippingInput(body = {}) {
-  const sellingPrice = toNumber(body.price ?? body.sellingPrice);
+  const supplierCurrency = String(body.supplier?.supplierCurrency || body.supplierCurrency || 'XOF').toUpperCase();
   const supplierPrice = toNumber(body.supplier?.supplierPrice ?? body.supplierPrice);
   const supplierShippingCost = toNumber(body.supplier?.shippingCost ?? body.supplierShippingCost);
   const otherCosts = toNumber(body.otherCosts);
-  const margin = calculateMargin({
-    sellingPrice,
-    supplierPrice,
-    supplierShippingCost,
+  const sellingPrice = toNumber(body.price ?? body.sellingPrice);
+
+  const margin = calculateDropshippingMarginXof({
+    price: sellingPrice,
+    supplier: {
+      supplierPrice,
+      shippingCost: supplierShippingCost,
+      supplierCurrency,
+    },
     otherCosts,
   });
+
+  const costPrice = supplierCurrency === 'USD'
+    ? convertUsdPriceToXof(supplierPrice)
+    : supplierPrice;
 
   const name = String(body.name || '').trim();
   const slugBase = body.slug || name;
   const slug = slugify(String(slugBase), { lower: true, strict: true });
 
-  return {
+  const payload = {
     name,
     slug,
     sku: body.sku,
@@ -46,12 +55,14 @@ function normalizeDropshippingInput(body = {}) {
     subCategory: body.subCategory || '',
     price: sellingPrice,
     salePrice: body.salePrice != null ? toNumber(body.salePrice) : undefined,
-    costPrice: supplierPrice,
+    costPrice: body.costPrice != null ? toNumber(body.costPrice) : costPrice,
     stock: Math.max(0, toNumber(body.stock, 0)),
     minStock: Math.max(0, toNumber(body.minStock, 10)),
     images: Array.isArray(body.images) ? body.images : [],
     image: body.image || body.images?.[0]?.url || '',
     variants: Array.isArray(body.variants) ? body.variants : [],
+    specifications: Array.isArray(body.specifications) ? body.specifications : [],
+    shippingInfo: body.shippingInfo || '',
     tags: Array.isArray(body.tags) ? body.tags : [],
     brand: body.brand || PLATFORM_VENDOR_NAME,
     isPublished: Boolean(body.isPublished),
@@ -76,7 +87,7 @@ function normalizeDropshippingInput(body = {}) {
       productId: String(body.supplier?.productId || body.supplierProductId || '').trim(),
       productUrl: String(body.supplier?.productUrl || body.supplierProductUrl || '').trim(),
       supplierPrice,
-      supplierCurrency: String(body.supplier?.supplierCurrency || body.supplierCurrency || 'XOF').toUpperCase(),
+      supplierCurrency,
       shippingCost: supplierShippingCost,
       estimatedDeliveryDays: Math.max(0, toNumber(body.supplier?.estimatedDeliveryDays ?? body.estimatedDeliveryDays)),
       lastSyncedAt: body.supplier?.lastSyncedAt || null,
@@ -84,6 +95,18 @@ function normalizeDropshippingInput(body = {}) {
     externalSourceKey: body.externalSourceKey ? String(body.externalSourceKey).trim() : undefined,
     syncStatus: body.syncStatus || 'success',
   };
+
+  return finalizeNormalizedPayload(repairCjDisplayPricing(payload));
+}
+
+function finalizeNormalizedPayload(normalized) {
+  const margin = calculateDropshippingMarginXof(normalized);
+  normalized.estimatedProfit = margin.estimatedProfit;
+  normalized.marginPercent = margin.marginPercent;
+  if (normalized.supplier?.supplierCurrency === 'USD') {
+    normalized.costPrice = convertUsdPriceToXof(normalized.supplier.supplierPrice);
+  }
+  return normalized;
 }
 
 function validateDropshippingPayload(payload, { partial = false } = {}) {
@@ -100,6 +123,9 @@ function validateDropshippingPayload(payload, { partial = false } = {}) {
   }
   if (!partial || payload.price != null) {
     if (toNumber(payload.price) <= 0) errors.push('Le prix de vente doit être supérieur à 0.');
+    if (toNumber(payload.price) > 0 && toNumber(payload.price) < 100) {
+      errors.push('Le prix de vente doit être d\'au moins 100 FCFA.');
+    }
   }
   if (!partial || payload.stock != null) {
     if (toNumber(payload.stock) < 0) errors.push('Le stock doit être supérieur ou égal à 0.');
@@ -114,12 +140,7 @@ function validateDropshippingPayload(payload, { partial = false } = {}) {
     }
   }
 
-  const margin = calculateMargin({
-    sellingPrice: payload.price,
-    supplierPrice: payload.supplier?.supplierPrice,
-    supplierShippingCost: payload.supplier?.shippingCost,
-    otherCosts: payload.otherCosts,
-  });
+  const margin = calculateDropshippingMarginXof(payload);
 
   if (payload.price > 0 && margin.estimatedProfit < 0 && !partial) {
     errors.push('La marge estimée est négative. Ajustez le prix de vente ou les coûts.');
@@ -136,6 +157,9 @@ async function listDropshippingProducts(query = {}) {
   const filter = { sourceType: 'DROPSHIPPING' };
   if (query.active === 'true') filter.isDropshippingActive = true;
   if (query.active === 'false') filter.isDropshippingActive = false;
+  if (query.platform) {
+    filter['supplier.platform'] = String(query.platform).trim().toLowerCase();
+  }
   if (query.search) {
     const regex = new RegExp(String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     filter.$or = [
@@ -152,7 +176,7 @@ async function listDropshippingProducts(query = {}) {
   ]);
 
   return {
-    data: items,
+    data: items.map((item) => prepareDropshippingProductForAdmin(item)),
     pagination: {
       currentPage: page,
       totalPages: Math.max(1, Math.ceil(total / limit)),
@@ -163,7 +187,8 @@ async function listDropshippingProducts(query = {}) {
 }
 
 async function getDropshippingProductById(id) {
-  return Product.findOne({ _id: id, sourceType: 'DROPSHIPPING' }).lean();
+  const product = await Product.findOne({ _id: id, sourceType: 'DROPSHIPPING' }).lean();
+  return product ? prepareDropshippingProductForAdmin(product) : null;
 }
 
 async function createDropshippingProduct(body, adminUser) {
@@ -340,7 +365,7 @@ async function syncDropshippingProduct(productId) {
 
   const platform = String(product.supplier?.platform || 'manual').toLowerCase();
 
-  if (platform === 'cj') {
+  if (platform === 'cj' || isCjDropshippingProduct(product.toObject())) {
     const { syncSingleCjProduct } = require('./cj/cjSyncService');
     return syncSingleCjProduct(productId);
   }
@@ -389,5 +414,4 @@ module.exports = {
   updateDropshippingStatus,
   importDropshippingCsv,
   syncDropshippingProduct,
-  calculateMargin,
 };

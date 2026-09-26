@@ -10,7 +10,9 @@ const {
   updateDropshippingProduct,
 } = require('../dropshippingService');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
+const { hydrateCjPayloadMedia } = require('./cjMediaService');
 const { resolveSkuForCreate } = require('../../utils/productIdentifiers');
+const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
 
 async function appendJobLog(job, message, level = 'info') {
   job.logs.push({ at: new Date(), level, message });
@@ -51,21 +53,22 @@ async function upsertCJProductFromListItem(listItem, { fetchDetail = true, publi
     }
   }
 
-  const mapped = mapCJProductToDangoProduct(listItem, detail);
-  const payload = mapToDropshippingPayload(mapped, { publish });
+  const mapped = await mapCJProductToDangoProduct(listItem, detail);
+  let payload = mapToDropshippingPayload(mapped, { publish });
+  payload = await hydrateCjPayloadMedia(payload);
   const existing = await findExistingCjProduct(externalProductId, mapped.externalSourceKey);
 
   if (existing) {
     const merged = {
       ...payload,
-      price: existing.price,
+      price: payload.price,
       salePrice: existing.salePrice,
       isPublished: existing.isPublished,
       sku: existing.sku,
     };
     const margin = calculateMargin({
       sellingPrice: merged.price,
-      supplierPrice: merged.supplier?.supplierPrice,
+      supplierPrice: merged.costPrice ?? convertUsdPriceToXof(merged.supplier?.supplierPrice),
       supplierShippingCost: merged.supplier?.shippingCost,
       otherCosts: merged.otherCosts ?? existing.otherCosts,
     });

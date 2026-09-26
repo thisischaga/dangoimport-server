@@ -1,4 +1,5 @@
 const cjClient = require('./cjClient');
+const { normalizeCjImageUrl } = require('../../utils/cjCatalogHelpers');
 
 function flattenListV2Products(data) {
   const content = Array.isArray(data?.data?.content) ? data.data.content : [];
@@ -22,8 +23,8 @@ function normalizeListItem(item = {}) {
     description: item.description || item.nameEn || '',
     category: item.threeCategoryName || item.twoCategoryName || item.oneCategoryName || 'Général',
     subCategory: item.twoCategoryName || '',
-    images: item.bigImage ? [{ url: item.bigImage, isPrimary: true }] : [],
-    image: item.bigImage || '',
+    images: item.bigImage ? [{ url: normalizeCjImageUrl(item.bigImage), isPrimary: true }] : [],
+    image: normalizeCjImageUrl(item.bigImage || ''),
     supplierPrice: Number(item.nowPrice || item.sellPrice || item.discountPrice || 0),
     currency: 'USD',
     stock: Number(item.warehouseInventoryNum || item.totalVerifiedInventory || 0),
@@ -76,7 +77,7 @@ async function getCJProducts({
 }
 
 async function getCJProductDetail(pid, { countryCode } = {}) {
-  const query = { pid, features: ['enable_combine', 'enable_video'] };
+  const query = { pid, features: ['enable_combine', 'enable_video', 'enable_description', 'enable_category'] };
   if (countryCode) query.countryCode = countryCode;
   const data = await cjClient.get('/product/query', query);
   return data?.data || data?.result || data;
