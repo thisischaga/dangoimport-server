@@ -144,8 +144,13 @@ async function get(path, query) {
   return request('GET', path, { query });
 }
 
+async function post(path, body) {
+  return request('POST', path, { body });
+}
+
 module.exports = {
   get,
+  post,
   buildUrl,
   sanitizeForLog,
 };

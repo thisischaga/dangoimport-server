@@ -37,6 +37,10 @@ const cjConfig = {
   translateToFr: toBool(process.env.CJ_TRANSLATE_TO_FR, true),
   /** Stock affiché boutique si CJ ne remonte pas d’inventaire */
   defaultPublicStock: Math.max(1, toNumber(process.env.CJ_DEFAULT_PUBLIC_STOCK, 50)),
+  /** Copie des images CJ vers Cloudinary (sinon URLs CJ directes). */
+  mirrorImagesToCloudinary: toBool(process.env.CJ_MIRROR_IMAGES_TO_CLOUDINARY, true),
+  /** Marge % appliquée au fret CJ (USD) avant conversion FCFA — non exposée au client. */
+  shippingMarginPercent: Math.max(0, toNumber(process.env.CJ_SHIPPING_MARGIN_PERCENT, 0)),
   platformKey: 'cj',
   supplierName: 'CJdropshipping',
 };

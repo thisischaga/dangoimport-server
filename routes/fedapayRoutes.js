@@ -25,6 +25,9 @@ const { createLocalTransaction, findTransactionByProviderId, markTransactionFail
 const { calculateDeliveryForItems } = require('../services/deliveryService');
 const { alertIntrusion } = require('../utils/securityAlerts');
 const { validatePromotion } = require('../utils/promoValidation');
+const {
+  validateDropshippingCheckoutPayload,
+} = require('../services/dropshippingCheckoutService');
 
 const router = express.Router();
 
@@ -41,7 +44,9 @@ const normalizePhoneNumber = (value) => {
 
 const normalizeShippingMethod = (value) => {
   if (!value) return 'standard';
-  const normalized = String(value).trim().toLowerCase();
+  const raw = String(value).trim();
+  if (raw.startsWith('cj:')) return raw;
+  const normalized = raw.toLowerCase();
   if (['standard', 'livraison standard', 'livraison_standarde', 'livraison_standard', 'standard_delivery'].includes(normalized)) return 'standard';
   if (['express', 'livraison express', 'livraison_express', 'express_delivery'].includes(normalized)) return 'express';
   if (['pickup', 'retrait', 'pickup_point', 'pick-up', 'retrait_sur_place', 'retrait_en_magasin'].includes(normalized)) return 'pickup';
@@ -122,12 +127,9 @@ const orderDeliveryDate = (shippingMethod) => {
   return date;
 };
 
-const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippingCost, tax, discount, total, shippingMethod }) => ({
-  orderNumber: generateOrderNumber(),
-  customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
-  customerName: `${customer.firstname || 'Client'} ${customer.lastname || ''}`.trim(),
-  customerEmail: customer.email,
-  customerPhone: customer.phone_number?.number || '',
+const buildOrder = ({
+  userId,
+  customer,
   shippingAddress,
   items,
   subtotal,
@@ -136,7 +138,29 @@ const buildOrder = ({ userId, customer, shippingAddress, items, subtotal, shippi
   discount,
   total,
   shippingMethod,
-  estimatedDelivery: orderDeliveryDate(shippingMethod),
+  orderType = 'local',
+  estimatedDeliveryLabel,
+  cjShipping,
+}) => ({
+  orderNumber: generateOrderNumber(),
+  customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
+  customerName: `${customer.firstname || 'Client'} ${customer.lastname || ''}`.trim(),
+  customerEmail: customer.email,
+  customerPhone: customer.phone_number?.number || customer.phone || '',
+  shippingAddress,
+  items,
+  subtotal,
+  shippingCost,
+  tax,
+  discount,
+  total,
+  shippingMethod,
+  orderType,
+  estimatedDelivery: estimatedDeliveryLabel
+    ? new Date(Date.now() + 7 * 86400000)
+    : orderDeliveryDate(shippingMethod),
+  notes: estimatedDeliveryLabel ? `Livraison estimée : ${estimatedDeliveryLabel}` : undefined,
+  cjShipping: cjShipping || undefined,
 });
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
@@ -163,7 +187,9 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
       quantity: item.quantity,
       selectedOptions: item.selectedOptions || {},
     });
-    built.fulfillmentStatus = 'PAID';
+    built.fulfillmentStatus = built.sourceType === 'DROPSHIPPING'
+      ? 'SUPPLIER_ORDER_PENDING'
+      : 'PAID';
     orderItems.push(built);
   }
 
@@ -177,6 +203,8 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     existingOrder.total = total;
     existingOrder.shippingMethod = shippingMethod;
     existingOrder.shippingAddress = shippingAddress;
+    existingOrder.orderType = metadata.orderType || existingOrder.orderType || 'local';
+    existingOrder.cjShipping = metadata.cjShipping || existingOrder.cjShipping;
     existingOrder.paymentMethod = 'FedaPay';
     existingOrder.status = 'confirmed';
     existingOrder.paymentStatus = 'completed';
@@ -197,6 +225,9 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     discount,
     total,
     shippingMethod,
+    orderType: metadata.orderType || 'local',
+    estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
+    cjShipping: metadata.cjShipping,
   });
 
   orderPayload.status = 'confirmed';
@@ -221,6 +252,7 @@ const createPendingShopOrder = async ({ transaction }) => {
   const discount = metadata.discount || 0;
   const total = metadata.total || Math.max(0, subtotal + shippingCost + tax - discount);
   const shippingMethod = normalizeShippingMethod(metadata.shippingMethod || 'standard');
+  const orderType = metadata.orderType || 'local';
 
   const orderPayload = buildOrder({
     userId,
@@ -233,6 +265,9 @@ const createPendingShopOrder = async ({ transaction }) => {
     discount,
     total,
     shippingMethod,
+    orderType,
+    estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
+    cjShipping: metadata.cjShipping,
   });
 
   orderPayload.status = 'pending';
@@ -332,8 +367,10 @@ router.post('/checkout', verifyToken, async (req, res) => {
   const shippingAddress = payload.shippingAddress || {
     country: payload.selectedCountry || payload.country || 'Togo',
     city: payload.city || '',
-    neighborhood: payload.neighborhood || '',
+    neighborhood: payload.neighborhood || payload.district || '',
+    district: payload.district || payload.neighborhood || '',
     fullAddress: payload.address || payload.fullAddress || '',
+    landmark: payload.landmark || '',
     postalCode: payload.postalCode || payload.postalCode || '',
     instructions: payload.instructions || '',
   };
@@ -343,36 +380,74 @@ router.post('/checkout', verifyToken, async (req, res) => {
   }
 
   try {
-    const orderItems = [];
-    let subtotal = 0;
-    for (const item of items) {
-      const product = await Product.findById(item.productId || item._id || item.id);
-      if (!product) {
-        return res.status(404).json({ message: `Produit introuvable: ${item.productId || item._id || item.id}` });
-      }
-      const unitPrice = Number(product.salePrice || product.price || 0);
-      if (item.price != null && Math.abs(Number(item.price) - unitPrice) > 0.01) {
-        return res.status(400).json({ message: `Prix invalide pour ${product.name}.` });
-      }
-      const quantity = Number(item.quantity || 1);
-      try {
-        assertProductPurchasable(product, quantity);
-      } catch (stockError) {
-        return res.status(400).json({ message: stockError.message });
-      }
-      const built = buildShopOrderItem(product, {
-        quantity,
-        selectedOptions: item.selectedOptions || {},
-        unitPriceOverride: unitPrice,
+    const productDocs = await Promise.all(
+      items.map((item) => Product.findById(item.productId || item._id || item.id).lean()),
+    );
+    if (productDocs.some((p) => !p)) {
+      return res.status(404).json({ message: 'Produit introuvable dans le panier.' });
+    }
+    const hasDropship = productDocs.some((p) => p.sourceType === 'DROPSHIPPING');
+    const hasLocal = productDocs.some((p) => p.sourceType !== 'DROPSHIPPING');
+    if (hasDropship && hasLocal) {
+      return res.status(400).json({
+        message: 'Panier mixte non supporté. Finalisez séparément les produits locaux et dropshipping.',
       });
-      subtotal += built.subtotal;
-      orderItems.push(built);
+    }
+    const isDropshippingCheckout = payload.checkoutMode === 'dropshipping' || hasDropship;
+
+    let orderItems = [];
+    let subtotal = 0;
+    let shippingCost = Number(payload.shippingCost || payload.deliveryFee || 0);
+    let shippingMethod = normalizeShippingMethod(payload.shippingMethod || payload.shippingLabel || 'standard');
+    let estimatedDeliveryLabel = payload.estimatedDeliveryLabel || null;
+    let orderType = 'local';
+    let cjShipping = null;
+
+    if (isDropshippingCheckout) {
+      orderType = 'dropshipping';
+      const validated = await validateDropshippingCheckoutPayload({
+        items,
+        shippingOptionId: payload.shippingOptionId || payload.shippingMethod,
+        shippingCost,
+        destination: {
+          country: shippingAddress.country || payload.countryCode || payload.selectedCountry,
+          city: shippingAddress.city || payload.city,
+        },
+        shippingAddress,
+      });
+      orderItems = validated.orderItems;
+      subtotal = validated.subtotal;
+      shippingCost = validated.shippingCost;
+      shippingMethod = validated.shippingMethod;
+      estimatedDeliveryLabel = validated.estimatedDeliveryLabel;
+      cjShipping = validated.cjShipping;
+    } else {
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        const product = productDocs[i];
+        const unitPrice = Number(product.salePrice || product.price || 0);
+        if (item.price != null && Math.abs(Number(item.price) - unitPrice) > 0.01) {
+          return res.status(400).json({ message: `Prix invalide pour ${product.name}.` });
+        }
+        const quantity = Number(item.quantity || 1);
+        try {
+          assertProductPurchasable(product, quantity);
+        } catch (stockError) {
+          return res.status(400).json({ message: stockError.message });
+        }
+        const built = buildShopOrderItem(product, {
+          quantity,
+          selectedOptions: item.selectedOptions || {},
+          unitPriceOverride: unitPrice,
+        });
+        subtotal += built.subtotal;
+        orderItems.push(built);
+      }
     }
 
-    // Compute shipping cost from payload if not provided explicitly
-    let shippingCost = Number(payload.shippingCost || payload.deliveryFee || 0);
+    // Compute shipping cost from payload if not provided explicitly (local only)
     try {
-      if ((!shippingCost || shippingCost === 0) && (payload.lat || payload.lng || payload.clientLocation)) {
+      if (!isDropshippingCheckout && (!shippingCost || shippingCost === 0) && (payload.lat || payload.lng || payload.clientLocation)) {
         const clientLocation = payload.clientLocation || (payload.lat && payload.lng ? { lat: Number(payload.lat), lng: Number(payload.lng) } : null);
         if (clientLocation) {
           try {
@@ -406,8 +481,6 @@ router.post('/checkout', verifyToken, async (req, res) => {
     if (clientTotal > 0 && Math.abs(clientTotal - total) > 1) {
       return res.status(400).json({ message: 'Total de commande invalide.' });
     }
-    const shippingMethod = normalizeShippingMethod(payload.shippingMethod || payload.shippingLabel || 'standard');
-
     const customer = {
       firstname: customerName || 'Client',
       lastname: customerLastName || 'Dango',
@@ -422,7 +495,10 @@ router.post('/checkout', verifyToken, async (req, res) => {
       description: `Paiement Dango Import pour achat de produit(s) sur la marketplace de Dangoimport par ${customer.firstname} ${customer.lastname}`,
       amount: Math.round(total),
       currency: { iso: 'XOF' },
-      callback_url: process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout',
+      callback_url: payload.callback_url
+        || (isDropshippingCheckout
+          ? `${process.env.FRONTEND_URL || 'https://dangoimport.com'}/checkout/result?checkoutMode=dropshipping`
+          : (process.env.FEDAPAY_RETURN_URL || 'https://dangoimport.com/checkout')),
       custom_metadata: {
         cartSource: process.env.FRONTEND_URL || "dangoimport.com",
         promoCode: payload.promoCode || 'Pas de code promo',
@@ -442,7 +518,12 @@ router.post('/checkout', verifyToken, async (req, res) => {
           discount,
           total,
           shippingMethod,
+          orderType,
+          estimatedDeliveryLabel,
+          cjShipping,
+          shippingOptionId: payload.shippingOptionId || shippingMethod,
           promoCode: payload.promoCode || '',
+          checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',
         },
         customer,
       },
@@ -467,7 +548,12 @@ router.post('/checkout', verifyToken, async (req, res) => {
         discount,
         total,
         shippingMethod,
+        orderType,
+        estimatedDeliveryLabel,
+        cjShipping,
+        shippingOptionId: payload.shippingOptionId || shippingMethod,
         promoCode: payload.promoCode || 'Pas de code promo',
+        checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',
       },
       orderId: pendingOrder._id,
     });

@@ -1,15 +1,24 @@
 const { isCloudinaryConfigured } = require('../../config/cloudinary');
-const { uploadRemoteUrl } = require('../../utils/cloudinaryUpload');
+const { cjConfig } = require('../../config/cj');
+const { uploadRemoteUrl, describeCloudinaryError } = require('../../utils/cloudinaryUpload');
 const { normalizeCjImageUrl } = require('../../utils/cjCatalogHelpers');
+
+function shouldMirrorToCloudinary(url) {
+  if (!isCloudinaryConfigured) return false;
+  if (cjConfig.mirrorImagesToCloudinary === false) return false;
+  const lower = String(url || '').toLowerCase();
+  if (lower.includes('res.cloudinary.com/')) return false;
+  return true;
+}
 
 async function mirrorOne(url) {
   const normalized = normalizeCjImageUrl(url);
   if (!normalized) return '';
-  if (!isCloudinaryConfigured) return normalized;
+  if (!shouldMirrorToCloudinary(normalized)) return normalized;
   try {
     return await uploadRemoteUrl(normalized, { folder: 'dangoimport/cj' });
   } catch (error) {
-    console.warn('[cjMediaService] Cloudinary mirror failed:', error.message);
+    console.warn('[cjMediaService] Cloudinary mirror failed:', describeCloudinaryError(error), '→', normalized.slice(0, 120));
     return normalized;
   }
 }

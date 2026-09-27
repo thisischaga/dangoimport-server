@@ -298,6 +298,7 @@ const productSchema = new mongoose.Schema({
         shipFromWarehouseName: { type: String, trim: true },
         manufacturerName: { type: String, trim: true },
         warehouseInventories: { type: [mongoose.Schema.Types.Mixed], default: undefined },
+        cjProductProps: { type: [String], default: undefined },
     },
     otherCosts: {
         type: Number,

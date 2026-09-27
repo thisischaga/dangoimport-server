@@ -212,20 +212,15 @@ async function runSelectiveImportJob(jobId) {
 
   try {
     assertCjConfigured();
+    const publishDefault = job.params?.publish !== false;
     for (const pid of productIds) {
       try {
-        const detail = await getCJProductDetail(pid);
         const listItem = {
-          externalProductId: String(pid),
-          name: detail?.productNameEn,
-          supplierPrice: detail?.sellPrice,
-          stock: detail?.warehouseInventoryNum,
-          images: detail?.productImage ? [{ url: detail.productImage, isPrimary: true }] : [],
-          image: detail?.productImage,
+          externalProductId: String(pid).trim(),
         };
         const upsert = await upsertCJProductFromListItem(listItem, {
-          fetchDetail: false,
-          publish: Boolean(job.params?.publish),
+          fetchDetail: true,
+          publish: publishDefault,
           adminUser,
         });
         if (upsert.action === 'created') job.progress.imported += 1;

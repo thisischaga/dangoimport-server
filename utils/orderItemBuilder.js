@@ -4,6 +4,7 @@ const {
   PLATFORM_VENDOR_NAME,
   toNumber,
 } = require('./dropshippingCalculations');
+const { resolveDropshipSellableStock } = require('./cjCatalogHelpers');
 
 function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitPriceOverride } = {}) {
   if (!product) {
@@ -46,11 +47,25 @@ function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitP
   };
 
   if (dropship) {
+    const variant = selectedOptions?.selectedVariant || selectedOptions?.variant;
     item.supplierProductId = product.supplier?.productId || '';
-    item.supplierPlatform = product.supplier?.platform || '';
+    item.supplierPlatform = product.supplier?.platform || 'cj';
+    item.supplierName = product.supplier?.name || 'CJdropshipping';
     item.supplierCost = margin.totalCost;
     item.supplierShippingCost = supplierShipping;
     item.estimatedProfit = margin.estimatedProfit * qty;
+    item.externalVariantId = String(
+      variant?.attributes?.externalVariantId
+      || selectedOptions?.externalVariantId
+      || variant?.sku
+      || '',
+    ).trim();
+    item.variantLabel = String(
+      variant?.name
+      || selectedOptions?.selectedColor
+      || selectedOptions?.selectedSize
+      || '',
+    ).trim();
   }
 
   return item;
@@ -71,7 +86,10 @@ function assertProductPurchasable(product, quantity = 1) {
   }
 
   const qty = Math.max(1, toNumber(quantity, 1));
-  if (toNumber(product.stock) < qty) {
+  const available = product.sourceType === 'DROPSHIPPING'
+    ? resolveDropshipSellableStock(product)
+    : toNumber(product.stock, 0);
+  if (available < qty) {
     throw new Error(`Stock insuffisant pour le produit ${product.name}`);
   }
 }

@@ -116,6 +116,10 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
     shortDescription: description.slice(0, 220),
     category,
     subCategory: cjProduct.subCategory || detail?.twoCategoryName || '',
+    weight: detail?.productWeight != null ? String(detail.productWeight) : '',
+    length: detail?.productLength != null ? String(detail.productLength) : '',
+    width: detail?.productWidth != null ? String(detail.productWidth) : '',
+    height: detail?.productHeight != null ? String(detail.productHeight) : '',
     images,
     image: primaryImage,
     variants,
@@ -140,6 +144,9 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
       manufacturerName: logistics.manufacturerName,
       warehouseInventories: logistics.warehouseInventories,
       productNameEn: detail?.productNameEn || cjProduct.raw?.productNameEn || '',
+      cjProductProps: Array.isArray(detail?.productProEnSet)
+        ? detail.productProEnSet.map(String)
+        : (detail?.productProEnSet ? [String(detail.productProEnSet)] : ['COMMON']),
     },
     pricing: {
       supplierPrice: supplierPriceUsd,
@@ -174,6 +181,10 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     price: mapped.pricing.sellingPrice,
     costPrice: convertUsdPriceToXof(mapped.supplier?.supplierPrice ?? mapped.pricing?.supplierPrice),
     stock: mapped.stock,
+    weight: mapped.weight || '',
+    length: mapped.length || '',
+    width: mapped.width || '',
+    height: mapped.height || '',
     image: mapped.image,
     images: mapped.images,
     variants: mapped.variants,

@@ -203,6 +203,31 @@ function mapCjCategoryToFrenchStore(rawCategory) {
   return raw;
 }
 
+/** Catégories boutique Dango (alignées vendeurs locaux / admin ProductForm). */
+const DANGO_STORE_CATEGORIES = [
+  'Montres', 'Électronique', 'Beauté', 'Vêtements',
+  'Accessoires', 'Maison', 'Sport', 'Alimentation', 'Parfum', 'Evènement',
+];
+
+function mapCjCategoryToDangoStore(rawCategory) {
+  const fr = mapCjCategoryToFrenchStore(String(rawCategory || '').trim() || 'Général');
+  const byFrenchLabel = {
+    'Mode & Vêtements': 'Vêtements',
+    'Électronique & High-Tech': 'Électronique',
+    'Téléphones & Tablettes': 'Électronique',
+    'Informatique': 'Électronique',
+    'Maison & Cuisine': 'Maison',
+    'Beauté & Santé': 'Beauté',
+    'Chaussures & Accessoires': 'Accessoires',
+    'Jouets & Enfants': 'Accessoires',
+    'Général': 'Accessoires',
+  };
+  if (byFrenchLabel[fr]) return byFrenchLabel[fr];
+  const lower = fr.toLowerCase();
+  const hit = DANGO_STORE_CATEGORIES.find((c) => lower.includes(c.toLowerCase()));
+  return hit || 'Accessoires';
+}
+
 function pickCjCategory(cjProduct = {}, detail = null) {
   const raw = cjProduct.category
     || detail?.categoryName
@@ -210,7 +235,7 @@ function pickCjCategory(cjProduct = {}, detail = null) {
     || detail?.twoCategoryName
     || detail?.oneCategoryName
     || 'Général';
-  return mapCjCategoryToFrenchStore(String(raw).trim() || 'Général');
+  return mapCjCategoryToDangoStore(String(raw).trim() || 'Général');
 }
 
 function buildCjSpecifications(detail = null) {

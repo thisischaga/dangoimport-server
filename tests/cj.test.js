@@ -146,6 +146,34 @@ test('flattenListV2Products extracts nested productList', () => {
   assert.equal(normalized.source, 'cj');
 });
 
+test('normalizeCJShippingOptions maps CJ freight rows to Dango format', () => {
+  const { normalizeCJShippingOptions, parseAgingLabel } = require('../services/cj/cjFreightService');
+  const aging = parseAgingLabel('3-6');
+  assert.equal(aging.minDays, 3);
+  assert.equal(aging.maxDays, 6);
+
+  const options = normalizeCJShippingOptions([
+    {
+      optionId: '1564849338719199233',
+      arrivalTime: '10-18',
+      wrapPostage: 4.8,
+      option: { enName: 'CJPacket Postal', id: '1564849338719199233' },
+    },
+    {
+      optionId: '999',
+      postage: 18.5,
+      logisticName: 'DHL',
+      arrivalTime: '3-6',
+    },
+  ]);
+  assert.equal(options.length, 2);
+  assert.equal(options[0].logisticName, 'CJPacket Postal');
+  assert.equal(options[0].id, 'cj:1564849338719199233');
+  assert.equal(options[0].currency, 'USD');
+  assert.ok(options[0].customerPrice > 0);
+  assert.equal(options[1].logisticName, 'DHL');
+});
+
 test('cj rate limiter serializes when max concurrent is 1', async () => {
   const { withRateLimit } = require('../services/cj/cjRateLimiter');
   const order = [];
