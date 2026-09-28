@@ -2,16 +2,16 @@ const DEFAULT_IMPORT_PRICING = {
   productMarkupMultiplier: 1.3,
   shippingMarkup: 3000,
   shippingRates: {
-    normal: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
-    fragile: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
-    special: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
-    medical: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
-    telephone: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
-    ordinateur: { ratePerKg: 100000, minDays: 20, maxDays: 30 },
+    normal: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    fragile: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    special: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    medical: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    telephone: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    ordinateur: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
   },
 };
 
-const LEGACY_RATE_PER_KG = new Set([9000, 10500, 11500, 15000, 25000]);
+const LEGACY_RATE_PER_KG = new Set([9000, 10500, 11500, 15000, 25000, 100000]);
 
 const SHIPPING_CATEGORIES = Object.keys(DEFAULT_IMPORT_PRICING.shippingRates);
 
