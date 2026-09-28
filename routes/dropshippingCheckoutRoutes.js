@@ -52,6 +52,7 @@ router.post('/validate', verifyToken, async (req, res) => {
         estimatedDeliveryLabel: result.estimatedDeliveryLabel,
         productTotal: result.subtotal,
         importShippingCost: result.shippingCost,
+        importBreakdown: result.quote?.importBreakdown || null,
       },
     });
   } catch (error) {

@@ -61,6 +61,35 @@ function mapTransitOption(quote) {
     estimatedDelivery: quote.estimatedDeliveryLabel,
     estimatedDeliveryMin: quote.estimatedDays.min,
     estimatedDeliveryMax: quote.estimatedDays.max,
+    billedWeight: quote.billedWeight,
+    ratePerKg: quote.ratePerKg,
+    shippingBaseCost: quote.shippingBaseCost,
+    shippingMarkup: quote.shippingMarkup,
+  };
+}
+
+function publicImportBreakdown(quote) {
+  return {
+    productTotal: quote.productTotal,
+    billedWeight: quote.billedWeight,
+    ratePerKg: quote.ratePerKg,
+    shippingBaseCost: quote.shippingBaseCost,
+    shippingMarkup: quote.shippingMarkup,
+    shippingCost: quote.shippingCost,
+    total: quote.total,
+    estimatedDays: quote.estimatedDays,
+    estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+    items: (quote.items || []).map((row) => ({
+      productPrice: row.productPrice,
+      quantity: row.quantity,
+      productLineTotal: row.productLineTotal,
+      weight: row.weight,
+      billedWeight: row.shipping?.billedWeight,
+      ratePerKg: row.shipping?.ratePerKg,
+      shippingBaseCost: row.shippingBaseCost,
+      shippingMarkup: row.shippingMarkup,
+      shippingCost: row.shippingCost,
+    })),
   };
 }
 
@@ -95,7 +124,7 @@ async function getImportShippingQuote({ items = [], destination = {} } = {}) {
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
     options: [option],
     supplierName: PLATFORM_VENDOR_NAME,
-    quote,
+    importBreakdown: publicImportBreakdown(quote),
   };
 }
 

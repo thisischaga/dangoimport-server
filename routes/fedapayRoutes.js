@@ -22,6 +22,7 @@ const { buildShopOrderItem, assertProductPurchasable } = require('../utils/order
 const emailService = require('../utils/emailService');
 const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
+const { retrieveTransaction, getTransactionStatus } = require('../services/fedapayService');
 const { calculateDeliveryForItems } = require('../services/deliveryService');
 const { alertIntrusion } = require('../utils/securityAlerts');
 const { validatePromotion } = require('../utils/promoValidation');
@@ -847,9 +848,7 @@ router.post('/webhook', async (req, res) => handleFedapayWebhook(req, res));
 router.get('/transaction/:id', verifyToken, async (req, res) => {
   try {
     const id = req.params.id;
-    let transaction = null;
-
-    transaction = await TransactionModel.findOne({ transactionId: String(id) });
+    let transaction = await TransactionModel.findOne({ transactionId: String(id) });
 
     if (!transaction && /^[0-9a-fA-F]{24}$/.test(String(id))) {
       transaction = await TransactionModel.findById(id);
@@ -871,15 +870,53 @@ router.get('/transaction/:id', verifyToken, async (req, res) => {
       return res.status(403).json({ message: 'Accès refusé.' });
     }
 
+    let providerStatus = null;
+    try {
+      const remote = await retrieveTransaction(transaction.transactionId);
+      providerStatus = getTransactionStatus(remote);
+      if (providerStatus === 'failed' && transaction.status === 'pending') {
+        transaction.status = 'failed';
+        transaction.metadata = {
+          ...(transaction.metadata || {}),
+          failureReason: 'Paiement FedaPay non abouti',
+        };
+        await transaction.save();
+        if (transaction.orderId) {
+          const pendingOrder = await ShopOrder.findById(transaction.orderId);
+          if (pendingOrder && pendingOrder.paymentStatus === 'pending') {
+            pendingOrder.paymentStatus = 'failed';
+            pendingOrder.status = 'cancelled';
+            pendingOrder.history = [
+              ...(pendingOrder.history || []),
+              'Paiement FedaPay non abouti — commande annulée',
+            ];
+            await pendingOrder.save();
+          }
+        }
+      }
+    } catch (remoteError) {
+      console.warn('[fedapayRoutes] retrieve FedaPay status failed:', remoteError.message);
+    }
+
+    const order = transaction.orderId
+      ? await ShopOrder.findById(transaction.orderId).lean()
+      : null;
+    const paid = transaction.status === 'approved'
+      && String(order?.paymentStatus || '').toLowerCase() === 'completed';
+
     return res.json({
       success: true,
       data: {
         id: transaction._id,
         transactionId: transaction.transactionId,
         status: transaction.status,
+        providerStatus,
         amount: transaction.amount,
         currency: transaction.currency,
-        orderId: transaction.orderId,
+        paid,
+        paymentStatus: order?.paymentStatus || 'pending',
+        orderId: paid ? transaction.orderId : null,
+        orderNumber: paid ? (order?.orderNumber || null) : null,
       },
     });
   } catch (error) {

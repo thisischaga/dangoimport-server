@@ -133,12 +133,20 @@ function calculateImportQuote(lines = [], config) {
     config: cfg,
   }));
   const productTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
+  const shippingBaseCost = itemQuotes.reduce((sum, row) => sum + row.shippingBaseCost, 0);
+  const shippingMarkup = itemQuotes.reduce((sum, row) => sum + row.shippingMarkup, 0);
   const shippingCost = itemQuotes.reduce((sum, row) => sum + row.shippingCost, 0);
+  const billedWeight = itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0);
   const minDays = Math.min(...itemQuotes.map((row) => row.estimatedDays.min));
   const maxDays = Math.max(...itemQuotes.map((row) => row.estimatedDays.max));
+  const ratePerKg = itemQuotes[0]?.shipping.ratePerKg ?? cfg.shippingRates.normal.ratePerKg;
   return {
     currency: 'XOF',
     productTotal: Math.round(productTotal),
+    billedWeight: Math.round(billedWeight * 1000) / 1000,
+    ratePerKg,
+    shippingBaseCost: Math.round(shippingBaseCost),
+    shippingMarkup: Math.round(shippingMarkup),
     shippingCost: Math.round(shippingCost),
     total: Math.round(productTotal + shippingCost),
     estimatedDays: { min: minDays, max: maxDays },

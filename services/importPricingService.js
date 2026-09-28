@@ -1,5 +1,5 @@
 const ImportPricingConfig = require('../Models/ImportPricingConfig');
-const { cloneImportPricingDefaults } = require('../config/importPricing');
+const { cloneImportPricingDefaults, hasLegacyTransitRates } = require('../config/importPricing');
 const { mergeImportPricingConfig, calculateImportPricing, calculateImportQuote } = require('../utils/importPricing');
 
 let cachedConfig = mergeImportPricingConfig();
@@ -17,6 +17,14 @@ async function getImportPricingConfigDoc() {
       key: 'default',
       ...cloneImportPricingDefaults(),
     });
+    return doc;
+  }
+  if (hasLegacyTransitRates(doc.toObject())) {
+    const next = cloneImportPricingDefaults();
+    doc.productMarkupMultiplier = doc.productMarkupMultiplier || next.productMarkupMultiplier;
+    doc.shippingMarkup = next.shippingMarkup;
+    doc.shippingRates = next.shippingRates;
+    await doc.save();
   }
   return doc;
 }
