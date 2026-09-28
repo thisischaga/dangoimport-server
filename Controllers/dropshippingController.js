@@ -116,13 +116,44 @@ exports.markSupplierOrdered = async (req, res) => {
 
 exports.previewMargin = async (req, res) => {
   try {
-    const margin = dropshippingService.calculateMargin({
-      sellingPrice: req.body?.price ?? req.body?.sellingPrice,
-      supplierPrice: req.body?.supplierPrice ?? req.body?.supplier?.supplierPrice,
-      supplierShippingCost: req.body?.supplierShippingCost ?? req.body?.supplier?.shippingCost,
-      otherCosts: req.body?.otherCosts,
-    });
-    return res.json({ success: true, data: margin });
+    const { calculateImportPricing } = require('../utils/importPricing');
+    const { getImportPricingConfig } = require('../services/importPricingService');
+    const config = await getImportPricingConfig();
+    const pricing = calculateImportPricing({
+      supplier: {
+        supplierPrice: req.body?.supplierPrice ?? req.body?.supplier?.supplierPrice,
+        supplierCurrency: req.body?.supplierCurrency ?? req.body?.supplier?.supplierCurrency ?? 'XOF',
+        productId: req.body?.supplierProductId,
+        platform: req.body?.supplierPlatform,
+      },
+      convertedSupplierPriceFCFA: req.body?.convertedSupplierPriceFCFA,
+      productMarkupMultiplier: req.body?.productMarkupMultiplier,
+      weight: req.body?.weight,
+      shippingCategory: req.body?.shippingCategory,
+      category: req.body?.category,
+      name: req.body?.name,
+    }, { config, quantity: req.body?.quantity || 1 });
+    return res.json({ success: true, data: pricing });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.getImportPricingConfig = async (req, res) => {
+  try {
+    const { getImportPricingConfig } = require('../services/importPricingService');
+    const data = await getImportPricingConfig();
+    return res.json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.updateImportPricingConfig = async (req, res) => {
+  try {
+    const { updateImportPricingConfig } = require('../services/importPricingService');
+    const data = await updateImportPricingConfig(req.body || {});
+    return res.json({ success: true, data });
   } catch (error) {
     return handleError(res, error);
   }

@@ -8,7 +8,19 @@ function flattenListV2Products(data) {
   content.forEach((block) => {
     const list = Array.isArray(block?.productList) ? block.productList : [];
     list.forEach((item) => products.push(item));
+    if (!list.length && block && (block.id || block.pid || block.nameEn || block.productNameEn)) {
+      products.push(block);
+    }
   });
+
+  if (!products.length) {
+    const altLists = [
+      data?.data?.productList,
+      data?.data?.list,
+      data?.data?.records,
+    ].filter(Array.isArray);
+    altLists.forEach((list) => list.forEach((item) => products.push(item)));
+  }
 
   return products;
 }
@@ -58,8 +70,13 @@ async function getCJProducts({
   if (minPrice != null) query.startSellPrice = minPrice;
   if (maxPrice != null) query.endSellPrice = maxPrice;
   if (country) query.countryCode = country;
-  if (sort) query.sort = sort;
-  if (orderBy != null) query.orderBy = orderBy;
+  if (sort) {
+    query.sort = sort;
+    if (orderBy == null || orderBy === '') {
+      query.orderBy = 2;
+    }
+  }
+  if (orderBy != null && orderBy !== '') query.orderBy = orderBy;
 
   const data = await cjClient.get('/product/listV2', query);
   const items = flattenListV2Products(data).map(normalizeListItem);
@@ -83,9 +100,89 @@ async function getCJProductDetail(pid, { countryCode } = {}) {
   return data?.data || data?.result || data;
 }
 
+const CATEGORY_CACHE_TTL_MS = Math.max(60_000, Number(process.env.CJ_CATEGORY_CACHE_TTL_MS) || 3_600_000);
+let categoryCache = { expiresAt: 0, categories: [] };
+
+function flattenCategoryTree(nodes, trail = []) {
+  const out = [];
+  const list = Array.isArray(nodes) ? nodes : [];
+
+  list.forEach((node) => {
+    const firstName = String(node.categoryFirstName || '').trim();
+    if (firstName && Array.isArray(node.categoryFirstList)) {
+      node.categoryFirstList.forEach((second) => {
+        const secondName = String(second.categorySecondName || '').trim();
+        const thirdList = second.categorySecondList || second.categoryThirdList || [];
+        thirdList.forEach((third) => {
+          const id = String(third.categoryId || third.id || '').trim();
+          const name = String(third.categoryName || third.categoryNameEn || '').trim();
+          if (id && name) {
+            out.push({
+              id,
+              name,
+              label: [firstName, secondName, name].filter(Boolean).join(' › '),
+              level: 3,
+            });
+          }
+        });
+      });
+      return;
+    }
+
+    const id = String(node.categoryId || node.id || '').trim();
+    const name = String(
+      node.categoryNameEn
+      || node.categoryName
+      || node.nameEn
+      || node.name
+      || '',
+    ).trim();
+    const pathParts = name ? [...trail, name] : [...trail];
+    const children = node.children
+      || node.childList
+      || node.categoryFirstList
+      || node.categorySecondList
+      || node.categoryThirdList
+      || node.subCategories
+      || [];
+    if (id && name) {
+      out.push({
+        id,
+        name,
+        label: pathParts.join(' › '),
+        level: pathParts.length,
+      });
+    }
+    if (Array.isArray(children) && children.length) {
+      out.push(...flattenCategoryTree(children, pathParts));
+    }
+  });
+  return out;
+}
+
+async function getCJCategories({ refresh = false } = {}) {
+  if (!refresh && categoryCache.categories.length && Date.now() < categoryCache.expiresAt) {
+    return categoryCache.categories;
+  }
+  const data = await cjClient.get('/product/getCategory');
+  const root = data?.data || data?.result || data?.categoryList || [];
+  const flat = flattenCategoryTree(Array.isArray(root) ? root : [root]);
+  const deduped = [];
+  const seen = new Set();
+  flat.forEach((cat) => {
+    if (!cat.id || seen.has(cat.id)) return;
+    seen.add(cat.id);
+    deduped.push(cat);
+  });
+  deduped.sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+  categoryCache = { categories: deduped, expiresAt: Date.now() + CATEGORY_CACHE_TTL_MS };
+  return deduped;
+}
+
 module.exports = {
   getCJProducts,
   getCJProductDetail,
+  getCJCategories,
   flattenListV2Products,
   normalizeListItem,
 };

@@ -2,9 +2,11 @@ const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const {
   isCjDropshippingProduct,
   resolveCjProductId,
-  isPrimarilyChinese,
+  isGenericProductPlaceholder,
+  resolveCjPublicDisplayName,
   resolveDropshipSellableStock,
   normalizePublicVariantStocks,
+  isInvalidTranslationText,
 } = require('../../utils/cjCatalogHelpers');
 const { toNumber } = require('../../utils/dropshippingCalculations');
 const { getCJProductDetail } = require('./cjProductService');
@@ -53,7 +55,7 @@ async function refreshCjProductForPublicView(product = {}) {
       stock: detail?.warehouseInventoryNum ?? product.stock,
       raw: detail,
     };
-    const mapped = await mapCJProductToDangoProduct(listItem, detail, inventory);
+    const mapped = await mapCJProductToDangoProduct(listItem, detail, inventory, { skipTranslation: true });
     const dbStock = toNumber(product.stock, 0);
     const liveStock = toNumber(mapped.stock, 0);
     const warehouseStock = (mapped.supplier?.warehouseInventories || []).reduce(
@@ -72,18 +74,39 @@ async function refreshCjProductForPublicView(product = {}) {
       supplier: mergedSupplier,
     });
     mergedVariants = normalizePublicVariantStocks(mergedVariants, stock);
-
-    let name = mapped.name || product.name;
-    if (isPrimarilyChinese(name) && mapped.supplier?.productNameEn) {
-      name = mapped.supplier.productNameEn;
+    if (Array.isArray(product.variants) && product.variants.length && Array.isArray(mergedVariants)) {
+      mergedVariants = mergedVariants.map((variant, index) => {
+        const stored = product.variants[index] || {};
+        const storedName = String(stored.name || '').trim();
+        const liveName = String(variant.name || '').trim();
+        const name = !isInvalidTranslationText(storedName) && storedName
+          ? storedName
+          : (!isInvalidTranslationText(liveName) && liveName ? liveName : `Option ${index + 1}`);
+        return { ...variant, name };
+      });
     }
+
+    const keepStoredName = String(product.name || '').trim()
+      && !isGenericProductPlaceholder(product.name)
+      && !isInvalidTranslationText(product.name);
+
+    const keepStoredDescription = String(product.description || '').trim()
+      && !isInvalidTranslationText(product.description);
 
     return {
       ...product,
       stock,
-      name,
-      description: mapped.description || product.description,
-      shortDescription: mapped.shortDescription || product.shortDescription,
+      name: keepStoredName
+        ? product.name
+        : (resolveCjPublicDisplayName({
+          ...product,
+          supplier: mergedSupplier,
+          variants: mergedVariants,
+        }) || mapped.name || 'Article Dango Import'),
+      description: keepStoredDescription ? product.description : (mapped.description || product.name),
+      shortDescription: keepStoredDescription
+        ? (product.shortDescription || String(product.description).slice(0, 220))
+        : String((mapped.shortDescription || mapped.description || '')).slice(0, 220),
       variants: mergedVariants,
       supplier: mergedSupplier,
       specifications: mapped.specifications?.length ? mapped.specifications : product.specifications,

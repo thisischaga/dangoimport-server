@@ -59,6 +59,7 @@ const orderItemSchema = new mongoose.Schema({
   externalVariantId: String,
   variantLabel: String,
   supplierName: String,
+  importPricing: mongoose.Schema.Types.Mixed,
   delivered: {
     type: Boolean,
     default: false,
@@ -149,6 +150,24 @@ const orderSchema = new mongoose.Schema({
       maxDays: Number,
       label: String,
     },
+  },
+  importShipping: {
+    category: String,
+    weight: Number,
+    billedWeight: Number,
+    ratePerKg: Number,
+    baseCost: Number,
+    markup: Number,
+    customerCost: Number,
+    productPrice: Number,
+    productTotal: Number,
+    total: Number,
+    productMarkupMultiplier: Number,
+    estimatedDays: {
+      min: Number,
+      max: Number,
+    },
+    items: { type: [mongoose.Schema.Types.Mixed], default: undefined },
   },
   estimatedDelivery: Date,
   status: {

@@ -1,5 +1,4 @@
 const Product = require('../Models/Product');
-const { cjConfig } = require('../config/cj');
 const {
   isDropshippingProduct,
   toNumber,
@@ -7,12 +6,11 @@ const {
 } = require('../utils/dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 const { assertProductPurchasable, buildShopOrderItem } = require('../utils/orderItemBuilder');
-const {
-  fetchCjShippingOptionsForLines,
-  findShippingOptionById,
-} = require('./cj/cjFreightService');
+const { calculateImportPricing, calculateImportQuote } = require('../utils/importPricing');
+const { getImportPricingConfig } = require('./importPricingService');
 
 const SUPPORTED_COUNTRIES = new Set(['TG', 'BJ', 'TOGO', 'BÉNIN', 'BENIN']);
+const DANGO_TRANSIT_OPTION_ID = 'dango-import:transit';
 
 function normalizeCountryCode(value) {
   const raw = String(value || '').trim().toLowerCase()
@@ -20,29 +18,6 @@ function normalizeCountryCode(value) {
   if (raw === 'tg' || raw === 'togo') return 'TG';
   if (raw === 'bj' || raw === 'benin') return 'BJ';
   return String(value || '').trim().toUpperCase().slice(0, 2);
-}
-
-function isCjSupplierProduct(product) {
-  const platform = String(product?.supplier?.platform || '').toLowerCase();
-  return platform === 'cj' || product?.importSourceType === 'CJ_API';
-}
-
-function mapOptionsForClient(options = []) {
-  return options.map((opt) => ({
-    id: opt.id,
-    provider: opt.provider,
-    logisticName: opt.logisticName,
-    label: opt.logisticName,
-    cost: opt.customerPrice,
-    currency: opt.customerCurrency,
-    supplierCurrency: opt.currency,
-    supplierPrice: opt.price,
-    estimatedDelivery: opt.estimatedDelivery?.label || null,
-    estimatedDeliveryMin: opt.estimatedDelivery?.minDays ?? null,
-    estimatedDeliveryMax: opt.estimatedDelivery?.maxDays ?? null,
-    channelId: opt.channelId,
-    optionId: opt.optionId,
-  }));
 }
 
 async function loadCheckoutProducts(items = []) {
@@ -75,16 +50,21 @@ async function loadCheckoutProducts(items = []) {
   return lines;
 }
 
-function computeSubtotal(lines) {
-  let subtotal = 0;
-  for (const line of lines) {
-    const unit = toNumber(line.product.salePrice || line.product.price, 0);
-    subtotal += unit * line.quantity;
-  }
-  return Math.round(subtotal);
+function mapTransitOption(quote) {
+  return {
+    id: DANGO_TRANSIT_OPTION_ID,
+    provider: 'Dango Import',
+    logisticName: 'Importation / livraison',
+    label: 'Importation / livraison',
+    cost: quote.shippingCost,
+    currency: 'XOF',
+    estimatedDelivery: quote.estimatedDeliveryLabel,
+    estimatedDeliveryMin: quote.estimatedDays.min,
+    estimatedDeliveryMax: quote.estimatedDays.max,
+  };
 }
 
-async function getCjShippingOptions({ items = [], destination = {} } = {}) {
+async function getImportShippingQuote({ items = [], destination = {} } = {}) {
   const countryCode = normalizeCountryCode(destination.country || destination.countryCode);
   const city = String(destination.city || '').trim();
   if (!SUPPORTED_COUNTRIES.has(countryCode) && !['TG', 'BJ'].includes(countryCode)) {
@@ -93,64 +73,35 @@ async function getCjShippingOptions({ items = [], destination = {} } = {}) {
     throw err;
   }
   if (!city) {
-    const err = new Error('Ville requise pour calculer les modes de livraison.');
+    const err = new Error('Ville requise pour calculer les frais d’importation.');
     err.status = 400;
     throw err;
   }
 
   const lines = await loadCheckoutProducts(items);
-  if (!lines.every((l) => isCjSupplierProduct(l.product))) {
-    const err = new Error('Le calcul CJ ne s’applique qu’aux produits CJdropshipping.');
-    err.status = 400;
-    throw err;
-  }
-
-  if (!cjConfig.enabled) {
-    const err = new Error('L’intégration CJdropshipping est désactivée sur le serveur.');
-    err.status = 503;
-    throw err;
-  }
-
-  let freightResult;
-  try {
-    freightResult = await fetchCjShippingOptionsForLines(lines, { countryCode, city });
-  } catch (error) {
-    const err = new Error('Impossible de récupérer les modes de livraison. Réessayez plus tard.');
-    err.status = 502;
-    err.cause = error;
-    throw err;
-  }
-
-  const options = mapOptionsForClient(freightResult.options);
-  const subtotal = computeSubtotal(lines);
+  const config = await getImportPricingConfig();
+  const quote = calculateImportQuote(lines, config);
+  const option = mapTransitOption(quote);
 
   return {
     success: true,
     countryCode,
     city,
     currency: 'XOF',
-    subtotal,
-    options,
+    subtotal: quote.productTotal,
+    shippingCost: quote.shippingCost,
+    total: quote.total,
+    estimatedDays: quote.estimatedDays,
+    estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+    options: [option],
     supplierName: PLATFORM_VENDOR_NAME,
-    message: options.length
-      ? undefined
-      : 'Aucun mode de livraison disponible pour cette destination.',
+    quote,
   };
 }
 
-async function resolveSelectedShippingOption({ items, destination, shippingOptionId }) {
-  const quote = await getCjShippingOptions({ items, destination });
-  const lines = await loadCheckoutProducts(items);
-  const freight = await fetchCjShippingOptionsForLines(lines, destination);
-  const selected = findShippingOptionById(freight.options, shippingOptionId);
-
-  if (!selected) {
-    const err = new Error('Les frais de livraison ont changé. Veuillez vérifier votre mode de livraison.');
-    err.status = 409;
-    throw err;
-  }
-
-  return { quote, selected };
+/** Conservé pour compatibilité des routes existantes — n’expose plus les méthodes CJ. */
+async function getCjShippingOptions(params) {
+  return getImportShippingQuote(params);
 }
 
 async function validateDropshippingCheckoutPayload({
@@ -166,42 +117,50 @@ async function validateDropshippingCheckoutPayload({
     destination.country || destination.countryCode || destinationCountry,
   );
   const city = String(destination.city || shippingAddress.city || '').trim();
-  const optionId = shippingOptionId || (String(shippingMethod || '').startsWith('cj:') ? shippingMethod : null);
+  const optionId = shippingOptionId || shippingMethod || DANGO_TRANSIT_OPTION_ID;
 
-  if (!optionId) {
-    const err = new Error('Mode de livraison requis.');
+  if (optionId && optionId !== DANGO_TRANSIT_OPTION_ID && String(optionId).startsWith('cj:')) {
+    const err = new Error('Les modes d’expédition fournisseur ne sont plus disponibles. Utilisez l’importation Dango Import.');
     err.status = 400;
     throw err;
   }
 
-  const { quote, selected } = await resolveSelectedShippingOption({
+  const quoteResult = await getImportShippingQuote({
     items,
-    destination: { countryCode, city },
-    shippingOptionId: optionId,
+    destination: { country: countryCode, city },
   });
-
-  const expectedShipping = toNumber(selected.customerPrice, 0);
   const providedShipping = toNumber(shippingCost, 0);
-  if (providedShipping > 0 && Math.abs(expectedShipping - providedShipping) > 1) {
-    const err = new Error('Les frais de livraison ont changé. Veuillez vérifier votre mode de livraison.');
+  if (providedShipping > 0 && Math.abs(quoteResult.shippingCost - providedShipping) > 1) {
+    const err = new Error('Les frais d’importation ont changé. Veuillez actualiser le checkout.');
     err.status = 409;
     throw err;
   }
 
   const lines = await loadCheckoutProducts(items);
+  const config = await getImportPricingConfig();
   let subtotal = 0;
   const orderItems = [];
+  const itemSnapshots = [];
 
   for (const line of lines) {
+    const pricing = calculateImportPricing(line.product, { quantity: line.quantity, config });
     const built = buildShopOrderItem(line.product, {
       quantity: line.quantity,
       selectedOptions: line.selectedOptions,
+      unitPriceOverride: pricing.productPrice,
     });
+    built.importPricing = {
+      productPrice: pricing.productPrice,
+      shipping: pricing.shipping,
+      total: pricing.total,
+    };
     subtotal += built.subtotal;
     orderItems.push(built);
+    itemSnapshots.push(pricing);
   }
 
-  const total = Math.round(subtotal + expectedShipping);
+  const shippingCostFinal = quoteResult.shippingCost;
+  const total = Math.round(subtotal + shippingCostFinal);
 
   if (!String(shippingAddress.fullAddress || '').trim()) {
     const err = new Error('Adresse de livraison incomplète.');
@@ -220,38 +179,44 @@ async function validateDropshippingCheckoutPayload({
     throw err;
   }
 
-  const cjShipping = {
-    provider: 'CJdropshipping',
-    logisticName: selected.logisticName,
-    optionId: selected.optionId || selected.id,
-    channelId: selected.channelId || null,
-    customerPrice: expectedShipping,
-    supplierPrice: selected.price,
-    supplierCurrency: 'USD',
-    currency: 'XOF',
-    estimatedDelivery: {
-      minDays: selected.estimatedDelivery?.minDays ?? null,
-      maxDays: selected.estimatedDelivery?.maxDays ?? null,
-      label: selected.estimatedDelivery?.label || null,
-    },
+  const primary = itemSnapshots[0] || {};
+  const importShipping = {
+    category: primary.shipping?.category,
+    weight: primary.shipping?.weight,
+    billedWeight: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shipping?.billedWeight), 0),
+    ratePerKg: primary.shipping?.ratePerKg,
+    baseCost: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shippingBaseCost), 0),
+    markup: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shippingMarkup), 0),
+    customerCost: shippingCostFinal,
+    productPrice: primary.productPrice,
+    productTotal: subtotal,
+    total,
+    productMarkupMultiplier: primary.productMarkupMultiplier,
+    estimatedDays: quoteResult.estimatedDays,
+    items: itemSnapshots.map((row) => ({
+      productPrice: row.productPrice,
+      quantity: row.quantity,
+      shipping: row.shipping,
+      total: row.total,
+    })),
   };
 
   return {
     orderItems,
     subtotal: Math.round(subtotal),
-    shippingCost: expectedShipping,
+    shippingCost: shippingCostFinal,
     total,
-    shippingMethod: selected.id,
-    shippingOptionId: selected.id,
-    estimatedDeliveryLabel: selected.estimatedDelivery?.label || null,
-    cjShipping,
-    quote,
+    shippingMethod: DANGO_TRANSIT_OPTION_ID,
+    shippingOptionId: DANGO_TRANSIT_OPTION_ID,
+    estimatedDeliveryLabel: quoteResult.estimatedDeliveryLabel,
+    importShipping,
+    cjShipping: undefined,
+    quote: quoteResult,
   };
 }
 
-/** @deprecated Utiliser getCjShippingOptions */
 async function getDropshippingShippingQuote(params) {
-  return getCjShippingOptions({
+  return getImportShippingQuote({
     items: params.items,
     destination: {
       country: params.destinationCountry,
@@ -265,6 +230,8 @@ function cartIsDropshippingOnly(items = []) {
 }
 
 module.exports = {
+  DANGO_TRANSIT_OPTION_ID,
+  getImportShippingQuote,
   getCjShippingOptions,
   getDropshippingShippingQuote,
   validateDropshippingCheckoutPayload,

@@ -111,6 +111,8 @@ test('mapCJProductToDangoProduct normalizes pricing and variants', async () => {
         },
       ],
     },
+    null,
+    { skipTranslation: true },
   );
 
   assert.equal(mapped.externalSourceKey, 'cj:pid-1');
@@ -144,6 +146,39 @@ test('flattenListV2Products extracts nested productList', () => {
   const normalized = normalizeListItem(flat[0]);
   assert.equal(normalized.externalProductId, 'a');
   assert.equal(normalized.source, 'cj');
+});
+
+test('pickBestStoredProductName replaces generic Produit with productNameEn', () => {
+  const { pickBestStoredProductName } = require('../utils/cjCatalogHelpers');
+  const name = pickBestStoredProductName({
+    sourceType: 'DROPSHIPPING',
+    name: 'Produit',
+    supplier: { platform: 'cj', productNameEn: 'Women Platform Sandals' },
+    externalSourceKey: 'cj:abc123',
+  });
+  assert.equal(name, 'Women Platform Sandals');
+});
+
+test('isInvalidTranslationText catches MyMemory quota URLs', () => {
+  const { isInvalidTranslationText } = require('../utils/cjCatalogHelpers');
+  assert.equal(isInvalidTranslationText('MYMEMORY ...'), true);
+  assert.equal(
+    isInvalidTranslationText('VISIT HTTPS://MYMEMORY.TRANSLATED.NET/DOC/USAGELIMITS.PHP TO TRANSLATE MORE'),
+    true,
+  );
+});
+
+test('pickBestStoredProductName uses variant when title is a translation warning', () => {
+  const { pickBestStoredProductName } = require('../utils/cjCatalogHelpers');
+  const name = pickBestStoredProductName({
+    sourceType: 'DROPSHIPPING',
+    name: 'MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY',
+    slug: 'article-dango-import-abc123',
+    variants: [{ name: 'K6 USB Version Black', sku: 'K6-BLK' }],
+    supplier: { platform: 'cj' },
+    externalSourceKey: 'cj:pid-mic',
+  });
+  assert.equal(name, 'K6 USB Version Black');
 });
 
 test('normalizeCJShippingOptions maps CJ freight rows to Dango format', () => {
@@ -183,4 +218,21 @@ test('cj rate limiter serializes when max concurrent is 1', async () => {
     withRateLimit(async () => { order.push(3); }),
   ]);
   assert.deepEqual(order, [1, 2, 3]);
+});
+
+test('catalog translation is skipped outside admin import', async () => {
+  const { maybeTranslateCatalogText } = require('../services/cj/cjLocalization');
+  let fetchCalled = false;
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    fetchCalled = true;
+    return { json: async () => ({}) };
+  };
+  try {
+    const out = await maybeTranslateCatalogText('Women Platform Sandals', { forImport: false });
+    assert.equal(out, 'Women Platform Sandals');
+    assert.equal(fetchCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });

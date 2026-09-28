@@ -1,5 +1,6 @@
 const { cjConfig } = require('../config/cj');
-const { toNumber, calculateSellingPrice, calculateMargin } = require('./dropshippingCalculations');
+const { toNumber, calculateMargin, applyProductMarkup } = require('./dropshippingCalculations');
+const { DEFAULT_IMPORT_PRICING } = require('../config/importPricing');
 
 function normalizeCjImageUrl(raw) {
   if (!raw || typeof raw !== 'string') return '';
@@ -102,9 +103,10 @@ function pickCjTitle(cjProduct = {}, detail = null) {
     .map((c) => String(c || '').trim())
     .filter(Boolean);
 
-  const preferred = candidates.find((c) => !isPrimarilyChinese(c));
+  const filtered = candidates.filter((c) => !isGenericProductPlaceholder(c));
+  const preferred = filtered.find((c) => !isPrimarilyChinese(c));
   if (preferred) return preferred;
-  return candidates[0] || 'Produit';
+  return filtered[0] || candidates[0] || '';
 }
 
 function resolveCjProductId(product = {}) {
@@ -116,7 +118,103 @@ function resolveCjProductId(product = {}) {
   return String(product.supplier?.externalProductId || '').trim();
 }
 
+function isInvalidTranslationText(text) {
+  const s = String(text || '').trim();
+  if (!s) return true;
+  const upper = s.toUpperCase();
+  if (upper.includes('MYMEMORY')) return true;
+  if (upper.includes('TRANSLATED.NET')) return true;
+  if (upper.includes('YOU USED ALL AVAILABLE')) return true;
+  if (upper.includes('FREE TRANSLATION')) return true;
+  if (upper.includes('QUERY LENGTH')) return true;
+  if (upper.includes('USAGE LIMITS')) return true;
+  if (upper.includes('TO TRANSLATE MORE')) return true;
+  return false;
+}
+
+function sanitizeVariantDisplayName(variant = {}, index = 0) {
+  const raw = String(variant?.name || '').trim();
+  const fallbacks = [
+    variant?.attributes?.variantKey,
+    variant?.attributes?.variantNameEn,
+    variant?.sku,
+    `Option ${index + 1}`,
+  ];
+  if (!isInvalidTranslationText(raw) && !isGenericProductPlaceholder(raw)) return raw;
+  const next = fallbacks
+    .map((c) => String(c || '').trim())
+    .find((c) => c && !isInvalidTranslationText(c) && !isGenericProductPlaceholder(c));
+  return next || `Option ${index + 1}`;
+}
+
+function sanitizePublicVariants(variants = []) {
+  if (!Array.isArray(variants)) return [];
+  return variants.map((variant, index) => ({
+    ...variant,
+    name: sanitizeVariantDisplayName(variant, index),
+  }));
+}
+
+function isGenericProductPlaceholder(text) {
+  const s = String(text || '').trim().toLowerCase();
+  if (!s) return true;
+  return s === 'produit'
+    || s === 'produit cj'
+    || s === 'product'
+    || s === 'article'
+    || s === 'article dango import';
+}
+
+function titleFromSlug(slug) {
+  const raw = String(slug || '').trim();
+  if (!raw) return '';
+  const withoutPid = raw.replace(/-[a-f0-9]{6,}$/i, '').replace(/-/g, ' ').trim();
+  if (withoutPid.length < 4) return '';
+  return withoutPid.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function resolveCjPublicDisplayName(doc = {}) {
+  const supplier = doc.supplier || {};
+  const variantNames = (Array.isArray(doc.variants) ? doc.variants : [])
+    .map((v) => String(v?.name || v?.attributes?.variantKey || v?.sku || '').trim())
+    .filter((n) => n && !isGenericProductPlaceholder(n) && !isInvalidTranslationText(n));
+
+  const storedName = String(doc.name || '').trim();
+  const storedIsBad = !storedName
+    || isInvalidTranslationText(storedName)
+    || isGenericProductPlaceholder(storedName);
+
+  const candidates = [
+    supplier.productNameEn,
+    supplier.nameEn,
+    supplier.productName,
+    ...(storedIsBad ? variantNames : [storedName, ...variantNames]),
+    pickCjTitle({
+      name: storedIsBad ? '' : storedName,
+      raw: {
+        productNameEn: supplier.productNameEn,
+        nameEn: supplier.productNameEn || supplier.nameEn,
+      },
+    }, null),
+    parseCjLocalizedName(storedIsBad ? '' : storedName),
+    doc.shortDescription,
+    titleFromSlug(doc.slug),
+  ]
+    .map((c) => String(c || '').trim())
+    .filter(Boolean)
+    .filter((c) => !isInvalidTranslationText(c))
+    .filter((c) => !isGenericProductPlaceholder(c));
+
+  const preferred = candidates.find((c) => !isPrimarilyChinese(c));
+  return preferred || candidates[0] || '';
+}
+
 function pickBestStoredProductName(doc = {}) {
+  if (doc.sourceType === 'DROPSHIPPING' && isCjDropshippingProduct(doc)) {
+    const resolved = resolveCjPublicDisplayName(doc);
+    if (resolved) return resolved;
+  }
+
   const supplier = doc.supplier || {};
   const candidates = [
     supplier.productNameEn,
@@ -126,9 +224,11 @@ function pickBestStoredProductName(doc = {}) {
     doc.shortDescription,
   ]
     .map((c) => String(c || '').trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((c) => !isInvalidTranslationText(c))
+    .filter((c) => !isGenericProductPlaceholder(c));
   const preferred = candidates.find((c) => !isPrimarilyChinese(c));
-  return preferred || candidates[0] || 'Produit';
+  return preferred || candidates[0] || '';
 }
 
 function pickCjDescription(cjProduct = {}, detail = null) {
@@ -327,17 +427,16 @@ function repairCjDisplayPricing(product = {}) {
   }
 
   const supplierUsd = toNumber(doc.supplier?.supplierPrice, 0);
-  if (looksLikeUnconvertedUsdSellingPrice(doc)) {
-    const sellingXof = convertUsdPriceToXof(
-      calculateSellingPrice({
-        supplierPrice: supplierUsd,
-        shippingCost: toNumber(doc.supplier?.shippingCost, 0),
-        marginPercent: toNumber(cjConfig.defaultMarginPercent, 30),
-        otherCosts: toNumber(doc.otherCosts, 0),
-      }),
-    );
-    doc.price = sellingXof;
-    doc.costPrice = convertUsdPriceToXof(supplierUsd);
+  if (looksLikeUnconvertedUsdSellingPrice(doc) || (isCjDropshippingProduct(doc) && supplierUsd > 0)) {
+    const converted = convertUsdPriceToXof(supplierUsd);
+    const multiplier = toNumber(doc.productMarkupMultiplier, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
+    if (looksLikeUnconvertedUsdSellingPrice(doc) || !toNumber(doc.price, 0)) {
+      doc.price = applyProductMarkup(converted, multiplier);
+    }
+    doc.costPrice = converted;
+    doc.convertedSupplierPriceFCFA = converted;
+    doc.productMarkupMultiplier = multiplier;
+    if (doc.supplier) doc.supplier.convertedSupplierPriceFCFA = converted;
   } else if (isCjDropshippingProduct(doc) && supplierUsd > 0 && !doc.costPrice) {
     doc.costPrice = convertUsdPriceToXof(supplierUsd);
   }
@@ -346,14 +445,13 @@ function repairCjDisplayPricing(product = {}) {
     doc.variants = doc.variants.map((variant) => {
       const variantUsd = toNumber(variant?.attributes?.supplierPriceUsd, 0);
       const variantPrice = toNumber(variant?.price, 0);
-      if (variantUsd > 0 && variantPrice < usdToXof(variantUsd) * 0.6) {
+      const convertedVariant = usdToXof(variantUsd);
+      if (variantUsd > 0 && variantPrice < convertedVariant * 0.6) {
         return {
           ...variant,
-          price: convertUsdPriceToXof(
-            calculateSellingPrice({
-              supplierPrice: variantUsd,
-              marginPercent: toNumber(cjConfig.defaultMarginPercent, 30),
-            }),
+          price: applyProductMarkup(
+            convertedVariant,
+            toNumber(doc.productMarkupMultiplier, DEFAULT_IMPORT_PRICING.productMarkupMultiplier),
           ),
         };
       }
@@ -531,14 +629,26 @@ function prepareDropshippingProductForPublic(product = {}) {
   doc = attachPublicFulfillmentFields(doc, product);
   doc.stock = resolveDropshipSellableStock({ ...product, variants: doc.variants ?? product.variants });
   if (Array.isArray(doc.variants) && doc.variants.length) {
-    doc.variants = normalizePublicVariantStocks(doc.variants, doc.stock);
+    doc.variants = sanitizePublicVariants(normalizePublicVariantStocks(doc.variants, doc.stock));
   }
   doc.name = pickBestStoredProductName(doc);
+  if (!String(doc.name || '').trim() || isInvalidTranslationText(doc.name) || isGenericProductPlaceholder(doc.name)) {
+    doc.name = resolveCjPublicDisplayName(doc) || doc.name || '';
+  }
+  if (!String(doc.name || '').trim() || isGenericProductPlaceholder(doc.name) || isInvalidTranslationText(doc.name)) {
+    const fromVariant = (doc.variants || [])
+      .map((v) => String(v?.name || '').trim())
+      .find((n) => n && !isInvalidTranslationText(n) && !isGenericProductPlaceholder(n));
+    doc.name = fromVariant || titleFromSlug(doc.slug) || 'Article Dango Import';
+  }
   if (isPrimarilyChinese(doc.name)) {
     doc.name = parseCjLocalizedName(doc.name) || doc.name;
   }
   if (doc.description) {
     doc.description = stripHtml(doc.description) || doc.description;
+    if (isInvalidTranslationText(doc.description)) {
+      doc.description = doc.name || '';
+    }
   }
   if (!String(doc.description || '').trim()) {
     doc.description = stripHtml(doc.shortDescription) || doc.shortDescription || doc.name || '';
@@ -591,6 +701,11 @@ module.exports = {
   normalizePublicVariantStocks,
   isPrimarilyChinese,
   pickBestStoredProductName,
+  resolveCjPublicDisplayName,
+  isGenericProductPlaceholder,
+  isInvalidTranslationText,
+  sanitizePublicVariants,
+  sanitizeVariantDisplayName,
   calculateDropshippingMarginXof,
   repairCjDisplayPricing,
 };

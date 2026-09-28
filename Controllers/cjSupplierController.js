@@ -1,8 +1,15 @@
 const SupplierSyncJob = require('../Models/SupplierSyncJob');
 const { cjConfig } = require('../config/cj');
 const { getAuthStatus, testConnection } = require('../services/cj/cjAuthService');
-const { getCJProducts } = require('../services/cj/cjProductService');
+const { getCJProducts, getCJCategories } = require('../services/cj/cjProductService');
 const { startImportJob, startSelectiveImportJob } = require('../services/cj/cjImportService');
+const {
+  searchCJProducts,
+  getCJProductForAdmin,
+  getImportStatus,
+  importCJProductForAdmin,
+  buildPricingPreview,
+} = require('../services/cj/cjExplorerService');
 const { startSyncJob, getCjDashboardStats } = require('../services/cj/cjSyncService');
 
 function handleError(res, error) {
@@ -63,7 +70,8 @@ exports.test = async (req, res) => {
 
 exports.searchProducts = async (req, res) => {
   try {
-    const result = await getCJProducts({
+    const useExplorer = req.query.enriched === '1' || req.query.enriched === 'true';
+    const params = {
       page: req.query.page,
       size: req.query.size,
       keyword: req.query.keyword,
@@ -72,9 +80,120 @@ exports.searchProducts = async (req, res) => {
       maxPrice: req.query.maxPrice,
       country: req.query.country,
       sort: req.query.sort,
-    });
+      orderBy: req.query.orderBy,
+    };
+    const result = useExplorer
+      ? await searchCJProducts(params)
+      : await getCJProducts(params);
     return res.json({ success: true, ...result });
   } catch (error) {
+    console.error('[cjSupplier] searchProducts:', error.cause?.message || error.message);
+    return handleError(res, error);
+  }
+};
+
+exports.getCategories = async (req, res) => {
+  try {
+    const categories = await getCJCategories({ refresh: req.query.refresh === '1' });
+    return res.json({ success: true, data: categories });
+  } catch (error) {
+    console.error('[cjSupplier] getCategories:', error.message);
+    return handleError(res, error);
+  }
+};
+
+exports.getProductDetail = async (req, res) => {
+  try {
+    const data = await getCJProductForAdmin(req.params.pid, {
+      countryCode: req.query.country,
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[cjSupplier] getProductDetail:', error.cause?.message || error.message);
+    return handleError(res, error);
+  }
+};
+
+exports.getProductImportStatus = async (req, res) => {
+  try {
+    const data = await getImportStatus(req.params.pid);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.previewProductPricing = async (req, res) => {
+  try {
+    const data = buildPricingPreview({
+      supplierPriceUsd: req.body?.supplierPriceUsd ?? req.body?.supplierPrice,
+      marginPercent: req.body?.marginPercent,
+      shippingCostUsd: req.body?.shippingCostUsd ?? req.body?.shippingCost,
+      otherCostsXof: req.body?.otherCosts,
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.importProduct = async (req, res) => {
+  try {
+    const result = await importCJProductForAdmin(
+      req.params.pid,
+      {
+        publish: req.body?.publish === true,
+        update: req.body?.update === true,
+        variantIds: req.body?.variantIds || req.body?.externalVariantIds,
+      },
+      { email: adminId(req), adminName: adminId(req) },
+    );
+    if (result.alreadyImported) {
+      return res.json({
+        success: true,
+        alreadyImported: true,
+        message: 'Ce produit est déjà importé.',
+        data: {
+          productId: result.product._id,
+          isPublished: result.product.isPublished,
+          name: result.product.name,
+        },
+      });
+    }
+    return res.status(result.action === 'created' ? 201 : 200).json({
+      success: true,
+      alreadyImported: false,
+      message: result.action === 'created' ? 'Produit importé en brouillon.' : 'Produit mis à jour.',
+      data: {
+        action: result.action,
+        productId: result.product._id || result.product.id,
+        product: result.product,
+      },
+    });
+  } catch (error) {
+    console.error('[cjSupplier] importProduct:', error.message);
+    return handleError(res, error);
+  }
+};
+
+exports.updateImportedProduct = async (req, res) => {
+  try {
+    const result = await importCJProductForAdmin(
+      req.params.pid,
+      {
+        publish: req.body?.publish === true,
+        update: true,
+        variantIds: req.body?.variantIds || req.body?.externalVariantIds,
+      },
+      { email: adminId(req), adminName: adminId(req) },
+    );
+    return res.json({
+      success: true,
+      message: 'Produit resynchronisé depuis CJ.',
+      data: result,
+    });
+  } catch (error) {
+    console.error('[cjSupplier] updateImportedProduct:', error.message);
     return handleError(res, error);
   }
 };

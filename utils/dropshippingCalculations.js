@@ -1,4 +1,5 @@
 const PLATFORM_VENDOR_NAME = 'DANGO IMPORT';
+const CJ_CATALOG_VENDOR_LABEL = 'À importer';
 
 function toNumber(value, fallback = 0) {
   const n = Number(value);
@@ -24,6 +25,12 @@ function calculateMargin({
     estimatedProfit,
     marginPercent,
   };
+}
+
+function applyProductMarkup(supplierPriceFcfa, productMarkupMultiplier = 1.3) {
+  const supplier = Math.max(0, toNumber(supplierPriceFcfa, 0));
+  const multiplier = Math.max(1, toNumber(productMarkupMultiplier, 1.3));
+  return Math.max(0, Math.round(supplier * multiplier));
 }
 
 function calculateSellingPrice({
@@ -66,8 +73,10 @@ function getSupplierSnapshot(product) {
 
 module.exports = {
   PLATFORM_VENDOR_NAME,
+  CJ_CATALOG_VENDOR_LABEL,
   toNumber,
   calculateMargin,
+  applyProductMarkup,
   calculateSellingPrice,
   isDropshippingProduct,
   getSupplierSnapshot,

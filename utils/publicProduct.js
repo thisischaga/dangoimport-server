@@ -1,10 +1,13 @@
 const { isDropshippingProduct, PLATFORM_VENDOR_NAME } = require('./dropshippingCalculations');
+const { calculateImportPricing } = require('./importPricing');
+const { getImportPricingConfigSync } = require('../services/importPricingService');
 const {
   prepareDropshippingProductForPublic,
   isCjDropshippingProduct,
-  isPrimarilyChinese,
+  isInvalidTranslationText,
+  pickBestStoredProductName,
+  sanitizePublicVariants,
 } = require('./cjCatalogHelpers');
-const { maybeTranslateCatalogText } = require('../services/cj/cjLocalization');
 
 const INTERNAL_FIELDS = [
   'costPrice',
@@ -21,11 +24,39 @@ const INTERNAL_FIELDS = [
   'changeRequestComment',
   'reviews',
   'dropshipStockEstimated',
+  'convertedSupplierPriceFCFA',
+  'productMarkupMultiplier',
+  'shippingCategory',
 ];
 
 function normalizePublicMedia(doc) {
   if (!doc) return doc;
   return doc;
+}
+
+function resolveLocalOriginLabel(doc = {}) {
+  const zones = Array.isArray(doc.deliveryZones) ? doc.deliveryZones : [];
+  const parts = [
+    doc.country,
+    doc.origin,
+    doc.vendorCountry,
+    doc.sellerCountry,
+    doc.shippingOrigin?.countryName,
+    doc.shippingOrigin?.countryCode,
+    ...zones.map((zone) => zone?.country),
+    doc.pickupAddress,
+    doc.sellerAddress,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (/\btogo\b|\btg\b/.test(parts)) return 'Togo';
+  if (/\bbenin\b|\bbj\b/.test(parts)) return 'Bénin';
+  return '';
 }
 
 function toPublicProduct(product) {
@@ -44,62 +75,59 @@ function toPublicProduct(product) {
     publicDoc = prepareDropshippingProductForPublic(doc);
     publicDoc.vendorName = PLATFORM_VENDOR_NAME;
     publicDoc.isVendorCertified = true;
+    publicDoc.originLabel = 'Chine';
     publicDoc.vendorId = undefined;
     publicDoc.fulfillmentType = doc.fulfillmentType || 'DANGO_IMPORT';
+    const pricing = calculateImportPricing(doc, { config: getImportPricingConfigSync() });
+    publicDoc.price = pricing.productPrice;
+    publicDoc.salePrice = 0;
+    publicDoc.importFeesAtCheckout = true;
+    publicDoc.estimatedImportDays = pricing.estimatedDays;
     INTERNAL_FIELDS.forEach((field) => {
       delete publicDoc[field];
     });
     delete publicDoc.supplier;
+  } else {
+    publicDoc.originLabel = resolveLocalOriginLabel(doc);
   }
 
   return publicDoc;
 }
 
-async function translateCjPublicDoc(publicDoc, sourceDoc) {
+function sanitizeStoredCjPublicDoc(publicDoc, sourceDoc) {
   if (!publicDoc || !isCjDropshippingProduct(sourceDoc)) return publicDoc;
-  if (publicDoc.name) {
-    publicDoc.name = await maybeTranslateCatalogText(publicDoc.name);
-    if (isPrimarilyChinese(publicDoc.name) && sourceDoc.supplier?.productNameEn) {
-      publicDoc.name = await maybeTranslateCatalogText(sourceDoc.supplier.productNameEn);
-    }
+
+  if (isInvalidTranslationText(publicDoc.name) || !String(publicDoc.name || '').trim()) {
+    publicDoc.name = pickBestStoredProductName(sourceDoc) || 'Article Dango Import';
   }
-  const descSource = String(publicDoc.description || '').trim();
-  if (descSource.length > 2) {
-    publicDoc.description = await maybeTranslateCatalogText(descSource);
+  if (isInvalidTranslationText(publicDoc.description)) {
+    publicDoc.description = publicDoc.name || '';
   }
-  const shortSource = String(publicDoc.shortDescription || '').trim();
-  if (shortSource.length > 2 && shortSource !== descSource) {
-    publicDoc.shortDescription = await maybeTranslateCatalogText(shortSource);
+  if (isInvalidTranslationText(publicDoc.shortDescription)) {
+    publicDoc.shortDescription = String(publicDoc.description || publicDoc.name || '').slice(0, 220);
+  }
+  if (Array.isArray(publicDoc.variants)) {
+    publicDoc.variants = sanitizePublicVariants(publicDoc.variants);
   }
   return publicDoc;
 }
 
-async function toPublicProductDetail(product) {
+function toPublicProductDetail(product) {
   let doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
-  if (isDropshippingProduct(doc) && isCjDropshippingProduct(doc)) {
-    const { repairCjSupplierPid } = require('../services/cj/catalogStockEnrichment');
-    const { refreshCjProductForPublicView } = require('../services/cj/cjLiveProductRefresh');
-    doc = repairCjSupplierPid(doc);
-    doc = await refreshCjProductForPublicView(doc);
-  }
-
   const publicDoc = toPublicProduct(doc);
   if (!publicDoc || !isDropshippingProduct(doc)) return publicDoc;
-
-  return translateCjPublicDoc(publicDoc, doc);
+  return sanitizeStoredCjPublicDoc(publicDoc, doc);
 }
 
-async function toPublicProducts(products = []) {
-  const list = products || [];
-  const results = await Promise.all(
-    list.map(async (product) => {
+function toPublicProducts(products = []) {
+  return (products || [])
+    .map((product) => {
       const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
       const publicDoc = toPublicProduct(doc);
       if (!publicDoc) return null;
-      return translateCjPublicDoc(publicDoc, doc);
-    }),
-  );
-  return results.filter(Boolean);
+      return sanitizeStoredCjPublicDoc(publicDoc, doc);
+    })
+    .filter(Boolean);
 }
 
 function toAdminDropshippingProduct(product) {

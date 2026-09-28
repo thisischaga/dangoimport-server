@@ -37,7 +37,12 @@ function buildAdminActor(createdBy) {
   return { email: createdBy || 'admin', adminName: createdBy || 'admin' };
 }
 
-async function upsertCJProductFromListItem(listItem, { fetchDetail = true, publish = false, adminUser } = {}) {
+async function upsertCJProductFromListItem(listItem, {
+  fetchDetail = true,
+  publish = false,
+  adminUser,
+  selectedVariantIds,
+} = {}) {
   const externalProductId = String(listItem.externalProductId || listItem.id || '').trim();
   if (!externalProductId) {
     const err = new Error('Produit CJ sans identifiant.');
@@ -58,6 +63,18 @@ async function upsertCJProductFromListItem(listItem, { fetchDetail = true, publi
   }
 
   const mapped = await mapCJProductToDangoProduct(listItem, detail, inventory);
+  if (Array.isArray(selectedVariantIds) && selectedVariantIds.length) {
+    const allowed = new Set(selectedVariantIds.map((v) => String(v).trim()).filter(Boolean));
+    mapped.variants = (mapped.variants || []).filter(
+      (v) => allowed.has(String(v.attributes?.externalVariantId || '').trim()),
+    );
+    if (!mapped.variants.length) {
+      const err = new Error('Aucune variante sélectionnée valide pour ce produit CJ.');
+      err.skippable = true;
+      throw err;
+    }
+    mapped.stock = mapped.variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
+  }
   let payload = mapToDropshippingPayload(mapped, { publish });
   payload = await hydrateCjPayloadMedia(payload);
   const existing = await findExistingCjProduct(externalProductId, mapped.externalSourceKey);
@@ -212,7 +229,7 @@ async function runSelectiveImportJob(jobId) {
 
   try {
     assertCjConfigured();
-    const publishDefault = job.params?.publish !== false;
+    const publishDefault = job.params?.publish === true;
     for (const pid of productIds) {
       try {
         const listItem = {
@@ -281,6 +298,7 @@ async function startSelectiveImportJob(productIds, options, createdBy) {
 }
 
 module.exports = {
+  findExistingCjProduct,
   upsertCJProductFromListItem,
   runImportJob,
   runSelectiveImportJob,

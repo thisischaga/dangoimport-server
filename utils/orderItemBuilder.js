@@ -5,6 +5,8 @@ const {
   toNumber,
 } = require('./dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('./cjCatalogHelpers');
+const { calculateImportPricing } = require('./importPricing');
+const { getImportPricingConfigSync } = require('../services/importPricingService');
 
 function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitPriceOverride } = {}) {
   if (!product) {
@@ -12,11 +14,15 @@ function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitP
   }
 
   const qty = Math.max(1, toNumber(quantity, 1));
+  const dropship = isDropshippingProduct(product);
+  const importPricing = dropship
+    ? calculateImportPricing(product, { quantity: qty, config: getImportPricingConfigSync() })
+    : null;
   const unitPrice = unitPriceOverride != null
     ? toNumber(unitPriceOverride)
-    : toNumber(product.salePrice || product.price);
-
-  const dropship = isDropshippingProduct(product);
+    : (importPricing
+      ? importPricing.productPrice
+      : toNumber(product.salePrice || product.price));
   const supplierPrice = toNumber(product.supplier?.supplierPrice || product.costPrice);
   const supplierShipping = toNumber(product.supplier?.shippingCost);
   const otherCosts = toNumber(product.otherCosts);

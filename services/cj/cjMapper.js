@@ -1,6 +1,8 @@
 const slugify = require('slugify');
 const { cjConfig } = require('../../config/cj');
-const { calculateMargin, calculateSellingPrice, toNumber } = require('../../utils/dropshippingCalculations');
+const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
+const { applyProductMarkup, inferShippingCategory } = require('../../utils/importPricing');
+const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const {
   extractCjImages,
   pickCjTitle,
@@ -9,28 +11,25 @@ const {
   buildCjSpecifications,
   convertUsdPriceToXof,
   normalizeCjImageUrl,
+  isInvalidTranslationText,
 } = require('../../utils/cjCatalogHelpers');
-const { maybeTranslateCatalogText } = require('./cjLocalization');
+const { translateCatalogTextForImport } = require('./cjLocalization');
 const { parseCjStockAndShippingOrigin } = require('./cjInventoryService');
 
 function buildExternalSourceKey(externalProductId) {
   return `${cjConfig.platformKey}:${String(externalProductId).trim()}`;
 }
 
-async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarginPercent) {
+async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarginPercent, { skipTranslation = false } = {}) {
   const mapped = [];
   for (let index = 0; index < variants.length; index += 1) {
     const variant = variants[index];
     const nameRaw = variant.variantNameEn || variant.variantKey || variant.variantSku || `Variante ${index + 1}`;
-    const name = await maybeTranslateCatalogText(nameRaw);
+    const name = skipTranslation ? nameRaw : await translateCatalogTextForImport(nameRaw);
     const supplierUsd = toNumber(variant.variantSellPrice ?? variant.variantSugSellPrice);
-    const priceXof = convertUsdPriceToXof(
-      calculateSellingPrice({
-        supplierPrice: supplierUsd,
-        shippingCost: 0,
-        marginPercent,
-        otherCosts: 0,
-      }),
+    const priceXof = applyProductMarkup(
+      convertUsdPriceToXof(supplierUsd),
+      DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
     );
     const stock = toNumber(
       variant.variantInventory
@@ -58,21 +57,15 @@ async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarg
   return mapped;
 }
 
-async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPayload = null) {
+async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPayload = null, { skipTranslation = false } = {}) {
   const externalProductId = String(cjProduct.externalProductId || cjProduct.id || detail?.pid || '').trim();
   const supplierPriceUsd = toNumber(
     cjProduct.supplierPrice ?? cjProduct.nowPrice ?? cjProduct.sellPrice ?? detail?.sellPrice,
   );
   const shippingCost = 0;
   const otherCosts = 0;
-  const sellingPriceUsd = calculateSellingPrice({
-    supplierPrice: supplierPriceUsd,
-    shippingCost,
-    marginPercent: cjConfig.defaultMarginPercent,
-    otherCosts,
-  });
-  const sellingPrice = convertUsdPriceToXof(sellingPriceUsd);
   const costPriceXof = convertUsdPriceToXof(supplierPriceUsd);
+  const sellingPrice = applyProductMarkup(costPriceXof, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
   const margin = calculateMargin({
     sellingPrice,
     supplierPrice: costPriceXof,
@@ -82,7 +75,7 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
 
   const detailVariants = detail?.variants || cjProduct.raw?.variants;
   const variants = Array.isArray(detailVariants) && detailVariants.length
-    ? await mapCjVariants(detailVariants)
+    ? await mapCjVariants(detailVariants, cjConfig.defaultMarginPercent, { skipTranslation })
     : [];
 
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
@@ -96,15 +89,43 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
   const images = extractCjImages(cjProduct, detail);
   const primaryImage = images[0]?.url || normalizeCjImageUrl(cjProduct.image) || '';
 
-  let name = pickCjTitle(cjProduct, detail);
+  const nameEn = pickCjTitle(cjProduct, detail);
+  let name = nameEn;
   let description = pickCjDescription(cjProduct, detail);
-  name = await maybeTranslateCatalogText(name);
-  description = await maybeTranslateCatalogText(description);
+  if (!skipTranslation) {
+    name = await translateCatalogTextForImport(nameEn);
+    if (!String(name || '').trim() || isInvalidTranslationText(name)) {
+      name = nameEn;
+    }
+    description = await translateCatalogTextForImport(description);
+    if (isInvalidTranslationText(description)) {
+      description = pickCjDescription(cjProduct, detail);
+    }
+  }
 
   const slug = `${slugify(name, { lower: true, strict: true }).slice(0, 80)}-${externalProductId.slice(0, 8).toLowerCase()}`;
-  const category = pickCjCategory(cjProduct, detail);
-  const specifications = buildCjSpecifications(detail);
+  let category = pickCjCategory(cjProduct, detail);
+  let subCategory = cjProduct.subCategory || detail?.twoCategoryName || '';
+  let specifications = buildCjSpecifications(detail);
+  if (!skipTranslation) {
+    category = await translateCatalogTextForImport(category);
+    subCategory = await translateCatalogTextForImport(subCategory);
+    specifications = await Promise.all(specifications.map(async (row) => ({
+      ...row,
+      value: await translateCatalogTextForImport(row.value),
+    })));
+  }
   const deliveryDays = parseDeliveryDays(cjProduct.shipping?.deliveryCycle || detail?.deliveryCycle);
+  const weightRaw = detail?.productWeight != null ? String(detail.productWeight) : '';
+  const shippingCategory = inferShippingCategory({
+    name,
+    category,
+    subCategory,
+    weight: weightRaw,
+    supplier: { platform: cjConfig.platformKey, supplierPrice: supplierPriceUsd, supplierCurrency: 'USD' },
+    convertedSupplierPriceFCFA: costPriceXof,
+    productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
+  });
 
   return {
     source: cjConfig.platformKey,
@@ -115,8 +136,8 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
     description,
     shortDescription: description.slice(0, 220),
     category,
-    subCategory: cjProduct.subCategory || detail?.twoCategoryName || '',
-    weight: detail?.productWeight != null ? String(detail.productWeight) : '',
+    subCategory,
+    weight: weightRaw,
     length: detail?.productLength != null ? String(detail.productLength) : '',
     width: detail?.productWidth != null ? String(detail.productWidth) : '',
     height: detail?.productHeight != null ? String(detail.productHeight) : '',
@@ -125,9 +146,11 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
     variants,
     specifications,
     brand: detail?.supplierName || detail?.brandName || 'CJdropshipping',
-    shippingInfo: deliveryDays
-      ? `Expédition dropshipping estimée : ${deliveryDays} jour(s) ouvrés`
-      : 'Expédition dropshipping internationale',
+    shippingInfo: 'Frais d\'importation calculés au checkout',
+    convertedSupplierPriceFCFA: costPriceXof,
+    productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
+    shippingCategory,
+    estimatedImportDays: { min: 20, max: 30 },
     supplier: {
       name: logistics.manufacturerName || detail?.supplierName || cjConfig.supplierName,
       platform: cjConfig.platformKey,
@@ -147,6 +170,7 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
       cjProductProps: Array.isArray(detail?.productProEnSet)
         ? detail.productProEnSet.map(String)
         : (detail?.productProEnSet ? [String(detail.productProEnSet)] : ['COMMON']),
+      convertedSupplierPriceFCFA: costPriceXof,
     },
     pricing: {
       supplierPrice: supplierPriceUsd,
@@ -197,6 +221,10 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     otherCosts: 0,
     estimatedProfit: mapped.pricing.estimatedProfit,
     marginPercent: mapped.pricing.marginPercent,
+    convertedSupplierPriceFCFA: mapped.convertedSupplierPriceFCFA,
+    productMarkupMultiplier: mapped.productMarkupMultiplier || DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
+    shippingCategory: mapped.shippingCategory || 'normal',
+    estimatedImportDays: mapped.estimatedImportDays,
     supplier: mapped.supplier,
     externalSourceKey: mapped.externalSourceKey,
     syncStatus: mapped.syncStatus,

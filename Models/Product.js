@@ -299,6 +299,19 @@ const productSchema = new mongoose.Schema({
         manufacturerName: { type: String, trim: true },
         warehouseInventories: { type: [mongoose.Schema.Types.Mixed], default: undefined },
         cjProductProps: { type: [String], default: undefined },
+        convertedSupplierPriceFCFA: { type: Number, min: 0 },
+    },
+    convertedSupplierPriceFCFA: { type: Number, min: 0 },
+    productMarkupMultiplier: { type: Number, min: 1, default: 1.3 },
+    shippingCategory: {
+        type: String,
+        enum: ['normal', 'fragile', 'special', 'medical', 'telephone', 'ordinateur'],
+        default: 'normal',
+        index: true,
+    },
+    estimatedImportDays: {
+        min: { type: Number, min: 1 },
+        max: { type: Number, min: 1 },
     },
     otherCosts: {
         type: Number,

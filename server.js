@@ -1103,6 +1103,7 @@ const startServer = async () => {
     app.use('/api/checkout/dropshipping', dropshippingCheckoutRoutes);
     const adminCjSupplierRoutes = require('./routes/adminCjSupplierRoutes');
     app.use('/api/admin/suppliers/cj', adminCjSupplierRoutes);
+    app.use('/api/admin/cj', adminCjSupplierRoutes);
 
     // Vendor Routes
     const vendorRoutes = require('./routes/vendorRoutes');

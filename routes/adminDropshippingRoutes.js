@@ -10,6 +10,8 @@ router.use(verifyToken, adminOnly);
 
 router.get('/', dropshippingController.list);
 router.post('/preview-margin', dropshippingController.previewMargin);
+router.get('/import-pricing', dropshippingController.getImportPricingConfig);
+router.put('/import-pricing', dropshippingController.updateImportPricingConfig);
 router.post('/import/csv', dropshippingController.importCsv);
 router.post('/orders/:orderId/items/:itemIndex/supplier-order', dropshippingController.markSupplierOrdered);
 router.post('/', dropshippingController.create);

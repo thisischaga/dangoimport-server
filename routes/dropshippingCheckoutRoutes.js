@@ -50,6 +50,8 @@ router.post('/validate', verifyToken, async (req, res) => {
         currency: 'XOF',
         shippingOptionId: result.shippingOptionId,
         estimatedDeliveryLabel: result.estimatedDeliveryLabel,
+        productTotal: result.subtotal,
+        importShippingCost: result.shippingCost,
       },
     });
   } catch (error) {

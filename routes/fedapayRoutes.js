@@ -46,6 +46,7 @@ const normalizeShippingMethod = (value) => {
   if (!value) return 'standard';
   const raw = String(value).trim();
   if (raw.startsWith('cj:')) return raw;
+  if (raw.startsWith('dango-import:')) return raw;
   const normalized = raw.toLowerCase();
   if (['standard', 'livraison standard', 'livraison_standarde', 'livraison_standard', 'standard_delivery'].includes(normalized)) return 'standard';
   if (['express', 'livraison express', 'livraison_express', 'express_delivery'].includes(normalized)) return 'express';
@@ -141,6 +142,7 @@ const buildOrder = ({
   orderType = 'local',
   estimatedDeliveryLabel,
   cjShipping,
+  importShipping,
 }) => ({
   orderNumber: generateOrderNumber(),
   customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
@@ -161,6 +163,7 @@ const buildOrder = ({
     : orderDeliveryDate(shippingMethod),
   notes: estimatedDeliveryLabel ? `Livraison estimée : ${estimatedDeliveryLabel}` : undefined,
   cjShipping: cjShipping || undefined,
+  importShipping: importShipping || undefined,
 });
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
@@ -205,6 +208,7 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     existingOrder.shippingAddress = shippingAddress;
     existingOrder.orderType = metadata.orderType || existingOrder.orderType || 'local';
     existingOrder.cjShipping = metadata.cjShipping || existingOrder.cjShipping;
+    existingOrder.importShipping = metadata.importShipping || existingOrder.importShipping;
     existingOrder.paymentMethod = 'FedaPay';
     existingOrder.status = 'confirmed';
     existingOrder.paymentStatus = 'completed';
@@ -228,6 +232,7 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     orderType: metadata.orderType || 'local',
     estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
     cjShipping: metadata.cjShipping,
+    importShipping: metadata.importShipping,
   });
 
   orderPayload.status = 'confirmed';
@@ -268,6 +273,7 @@ const createPendingShopOrder = async ({ transaction }) => {
     orderType,
     estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
     cjShipping: metadata.cjShipping,
+    importShipping: metadata.importShipping,
   });
 
   orderPayload.status = 'pending';
@@ -402,6 +408,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
     let estimatedDeliveryLabel = payload.estimatedDeliveryLabel || null;
     let orderType = 'local';
     let cjShipping = null;
+    let importShipping = null;
 
     if (isDropshippingCheckout) {
       orderType = 'dropshipping';
@@ -421,6 +428,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
       shippingMethod = validated.shippingMethod;
       estimatedDeliveryLabel = validated.estimatedDeliveryLabel;
       cjShipping = validated.cjShipping;
+      importShipping = validated.importShipping;
     } else {
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
@@ -521,6 +529,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
           orderType,
           estimatedDeliveryLabel,
           cjShipping,
+          importShipping,
           shippingOptionId: payload.shippingOptionId || shippingMethod,
           promoCode: payload.promoCode || '',
           checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',
@@ -551,6 +560,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
         orderType,
         estimatedDeliveryLabel,
         cjShipping,
+        importShipping,
         shippingOptionId: payload.shippingOptionId || shippingMethod,
         promoCode: payload.promoCode || 'Pas de code promo',
         checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',

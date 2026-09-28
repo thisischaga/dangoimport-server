@@ -4,6 +4,8 @@ const {
   isCjDropshippingProduct,
   resolveCjProductId,
   resolveDropshipSellableStock,
+  isGenericProductPlaceholder,
+  resolveCjPublicDisplayName,
 } = require('../../utils/cjCatalogHelpers');
 const { refreshCjProductForPublicView } = require('./cjLiveProductRefresh');
 
@@ -21,16 +23,29 @@ function repairCjSupplierPid(product = {}) {
   return { ...product, supplier };
 }
 
+function needsCjNameRepair(product = {}) {
+  if (!isCjDropshippingProduct(product)) return false;
+  const resolved = resolveCjPublicDisplayName(product);
+  if (resolved && !isGenericProductPlaceholder(resolved)) return false;
+  return isGenericProductPlaceholder(product.name) || !String(product.name || '').trim();
+}
+
 function schedulePersistStock(productId, payload = {}) {
   const stock = resolveDropshipSellableStock(payload);
-  if (stock <= 0) return;
-  const update = { stock };
+  const update = {};
+  if (stock > 0) update.stock = stock;
+  if (payload.name && !isGenericProductPlaceholder(payload.name)) {
+    update.name = payload.name;
+  }
+  if (payload.description) update.description = payload.description;
+  if (payload.shortDescription) update.shortDescription = payload.shortDescription;
   if (Array.isArray(payload.variants) && payload.variants.length) {
     update.variants = payload.variants;
   }
   if (payload.supplier) {
     update.supplier = payload.supplier;
   }
+  if (!Object.keys(update).length) return;
   Product.updateOne({ _id: productId }, { $set: update }).catch(() => {});
 }
 
@@ -47,8 +62,9 @@ async function enrichCatalogProductsStock(products = [], { maxLiveRefresh = 10 }
     products.map(async (raw) => {
       let product = repairCjSupplierPid(raw);
       let sellable = resolveDropshipSellableStock(product);
+      const nameBroken = needsCjNameRepair(product);
 
-      if (sellable > 0) {
+      if (sellable > 0 && !nameBroken) {
         return product;
       }
 
@@ -57,15 +73,15 @@ async function enrichCatalogProductsStock(products = [], { maxLiveRefresh = 10 }
         && isCjDropshippingProduct(product)
         && resolveCjProductId(product)
         && liveRefreshUsed < maxLiveRefresh
+        && (sellable <= 0 || nameBroken)
       ) {
         try {
           assertCjConfigured();
           liveRefreshUsed += 1;
           const refreshed = await refreshCjProductForPublicView(product);
           sellable = resolveDropshipSellableStock(refreshed);
-          if (sellable > 0) {
+          if (sellable > 0 || (refreshed.name && !isGenericProductPlaceholder(refreshed.name))) {
             schedulePersistStock(product._id, refreshed);
-            return refreshed;
           }
           return refreshed;
         } catch {

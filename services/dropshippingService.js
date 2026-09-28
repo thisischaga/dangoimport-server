@@ -7,6 +7,9 @@ const {
 const { getSupplierProvider } = require('./suppliers');
 const { resolveSkuForCreate } = require('../utils/productIdentifiers');
 const { prepareDropshippingProductForAdmin, repairCjDisplayPricing, isCjDropshippingProduct, calculateDropshippingMarginXof, convertUsdPriceToXof } = require('../utils/cjCatalogHelpers');
+const { calculateImportPricing } = require('../utils/importPricing');
+const { getImportPricingConfig } = require('./importPricingService');
+const { SHIPPING_CATEGORIES } = require('../config/importPricing');
 
 const ALLOWED_CURRENCIES = new Set(['XOF', 'USD', 'EUR', 'CNY', 'XAF']);
 
@@ -65,6 +68,13 @@ function normalizeDropshippingInput(body = {}) {
     shippingInfo: body.shippingInfo || '',
     tags: Array.isArray(body.tags) ? body.tags : [],
     brand: body.brand || PLATFORM_VENDOR_NAME,
+    weight: body.weight != null ? String(body.weight) : '',
+    convertedSupplierPriceFCFA: toNumber(body.convertedSupplierPriceFCFA, 0) || undefined,
+    productMarkupMultiplier: toNumber(body.productMarkupMultiplier, 0) || undefined,
+    shippingCategory: SHIPPING_CATEGORIES.includes(String(body.shippingCategory || '').toLowerCase())
+      ? String(body.shippingCategory).toLowerCase()
+      : undefined,
+    estimatedImportDays: body.estimatedImportDays,
     isPublished: Boolean(body.isPublished),
     isFeatured: Boolean(body.isFeatured),
     isPromo: Boolean(body.isPromo),
@@ -105,6 +115,22 @@ function normalizeDropshippingInput(body = {}) {
 
   const { repairCjSupplierPid } = require('./cj/catalogStockEnrichment');
   return repairCjSupplierPid(finalizeNormalizedPayload(repairCjDisplayPricing(payload)));
+}
+
+async function stampOfficialImportPricing(payload) {
+  const config = await getImportPricingConfig();
+  const pricing = calculateImportPricing(payload, { config });
+  payload.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
+  payload.productMarkupMultiplier = pricing.productMarkupMultiplier;
+  payload.shippingCategory = pricing.shippingCategory;
+  payload.estimatedImportDays = pricing.estimatedImportDays;
+  payload.price = pricing.productPrice;
+  payload.costPrice = pricing.convertedSupplierPriceFCFA;
+  if (payload.supplier) {
+    payload.supplier.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
+    payload.supplier.shippingCost = 0;
+  }
+  return finalizeNormalizedPayload(payload);
 }
 
 function finalizeNormalizedPayload(normalized) {
@@ -200,7 +226,7 @@ async function getDropshippingProductById(id) {
 }
 
 async function createDropshippingProduct(body, adminUser) {
-  const payload = normalizeDropshippingInput(body);
+  const payload = await stampOfficialImportPricing(normalizeDropshippingInput(body));
   const errors = validateDropshippingPayload(payload);
   if (errors.length) {
     const err = new Error(errors.join(' '));
@@ -229,7 +255,9 @@ async function updateDropshippingProduct(id, body, adminUser) {
     throw err;
   }
 
-  const payload = normalizeDropshippingInput({ ...existing.toObject(), ...body });
+  const payload = await stampOfficialImportPricing(
+    normalizeDropshippingInput({ ...existing.toObject(), ...body }),
+  );
   const errors = validateDropshippingPayload(payload, { partial: true });
   if (errors.length) {
     const err = new Error(errors.join(' '));

@@ -9,6 +9,12 @@ router.use(verifyToken, requireAdminFromDb);
 
 router.get('/status', cjSupplierController.status);
 router.post('/test', cjSupplierController.test);
+router.get('/categories', cjSupplierController.getCategories);
+router.post('/products/preview-pricing', cjSupplierController.previewProductPricing);
+router.get('/products/:pid/import-status', cjSupplierController.getProductImportStatus);
+router.get('/products/:pid', cjSupplierController.getProductDetail);
+router.post('/products/:pid/import', cjSupplierController.importProduct);
+router.post('/products/:pid/update', cjSupplierController.updateImportedProduct);
 router.get('/products', cjSupplierController.searchProducts);
 router.post('/import', cjSupplierController.importCatalog);
 router.post('/import-selected', cjSupplierController.importSelected);

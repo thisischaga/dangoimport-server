@@ -44,6 +44,39 @@ test('public product hides supplier data for dropshipping', () => {
   assert.equal(publicProduct.estimatedProfit, undefined);
 });
 
+test('public CJ product keeps Dango Import certified and China origin', () => {
+  const publicProduct = toPublicProduct({
+    _id: '64abc12345678901234567890',
+    name: 'Who Wear Leggings',
+    price: 8000,
+    sourceType: 'DROPSHIPPING',
+    importSourceType: 'CJ_API',
+    externalSourceKey: 'cj:123',
+    supplier: {
+      platform: 'cj',
+      productId: '123',
+      supplierPrice: 4.8,
+      productNameEn: 'Who Wear Leggings',
+    },
+  });
+
+  assert.equal(publicProduct.vendorName, PLATFORM_VENDOR_NAME);
+  assert.equal(publicProduct.isVendorCertified, true);
+  assert.equal(publicProduct.originLabel, 'Chine');
+  assert.equal(publicProduct.supplier, undefined);
+});
+
+test('local product origin uses seller country', () => {
+  const publicProduct = toPublicProduct({
+    _id: '64abc12345678901234567891',
+    name: 'Pagne',
+    price: 5000,
+    sourceType: 'LOCAL_SELLER',
+    deliveryZones: [{ country: 'Togo', zoneName: 'Lomé' }],
+  });
+  assert.equal(publicProduct.originLabel, 'Togo');
+});
+
 test('buildShopOrderItem snapshots dropshipping fields', () => {
   const item = buildShopOrderItem(
     {
@@ -68,6 +101,6 @@ test('buildShopOrderItem snapshots dropshipping fields', () => {
   assert.equal(item.supplierProductId, 'SKU-1');
   assert.equal(item.supplierPlatform, 'manual');
   assert.equal(item.vendorName, PLATFORM_VENDOR_NAME);
-  assert.equal(item.estimatedProfit, 18000);
+  assert.equal(item.price, 15600);
   assert.equal(isDropshippingProduct({ sourceType: 'DROPSHIPPING' }), true);
 });
