@@ -1,7 +1,7 @@
 const slugify = require('slugify');
 const { cjConfig } = require('../../config/cj');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
-const { applyProductMarkup, inferShippingCategory } = require('../../utils/importPricing');
+const { applyProductMarkup, inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
 const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const {
   extractCjImages,
@@ -116,7 +116,8 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
     })));
   }
   const deliveryDays = parseDeliveryDays(cjProduct.shipping?.deliveryCycle || detail?.deliveryCycle);
-  const weightRaw = detail?.productWeight != null ? String(detail.productWeight) : '';
+  const weightKg = parseWeightToKg(detail?.productWeight ?? cjProduct.productWeight ?? cjProduct.weight);
+  const weightRaw = weightKg > 0 ? String(weightKg) : '';
   const shippingCategory = inferShippingCategory({
     name,
     category,

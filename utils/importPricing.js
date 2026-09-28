@@ -30,15 +30,52 @@ function mergeImportPricingConfig(overrides = {}) {
   };
 }
 
+function roundKg(value) {
+  return Math.round(Math.max(0, toNumber(value, 0)) * 1000) / 1000;
+}
+
+function parseWeightToKg(raw) {
+  if (raw == null || raw === '') return 0;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    if (raw <= 0) return 0;
+    return raw > 30 ? roundKg(raw / 1000) : roundKg(raw);
+  }
+  const text = String(raw).trim().toLowerCase().replace(',', '.');
+  if (!text) return 0;
+  const match = text.match(/([\d.]+)\s*(kg|kgs|kilo|kilogrammes?|g|gr|grammes?|lbs?)?/);
+  if (!match) return 0;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const unit = String(match[2] || '');
+  if (unit === 'g' || unit === 'gr' || unit.startsWith('gram')) return roundKg(n / 1000);
+  if (unit.startsWith('lb')) return roundKg(n * 0.453592);
+  if (unit.startsWith('kg') || unit.startsWith('kilo')) return roundKg(n);
+  return n > 30 ? roundKg(n / 1000) : roundKg(n);
+}
+
+function weightFromSpecifications(product = {}) {
+  const rows = Array.isArray(product.specifications) ? product.specifications : [];
+  const row = rows.find((entry) => /poids|weight|masse/i.test(String(entry?.key || '')));
+  return row?.value;
+}
+
 function parseProductWeightKg(product = {}) {
-  const raw = product.weightKg
-    ?? product.weight
-    ?? product.supplier?.weight
-    ?? product.productWeight;
-  const n = toNumber(raw, 0);
-  if (n <= 0) return 0.5;
-  if (n > 30) return Math.round((n / 1000) * 1000) / 1000;
-  return Math.round(n * 1000) / 1000;
+  const candidates = [
+    product.weightKg,
+    product.weight,
+    product.productWeight,
+    product.supplier?.weight,
+    product.supplier?.productWeight,
+    product.supplier?.cjProductWeight,
+    product.variants?.[0]?.weight,
+    product.variants?.[0]?.attributes?.weight,
+    weightFromSpecifications(product),
+  ];
+  for (const candidate of candidates) {
+    const kg = parseWeightToKg(candidate);
+    if (kg > 0) return kg;
+  }
+  return 0.5;
 }
 
 function inferShippingCategory(product = {}) {
@@ -69,7 +106,7 @@ function convertSupplierPriceFcfa(product = {}) {
   return Math.round(supplierPrice);
 }
 
-function calculateImportPricing(product = {}, { quantity = 1, config } = {}) {
+function calculateImportPricing(product = {}, { quantity = 1, config, includeShippingMarkup = true } = {}) {
   const cfg = mergeImportPricingConfig(config || {});
   const qty = Math.max(1, Math.round(toNumber(quantity, 1)));
   const multiplier = Math.max(
@@ -81,9 +118,9 @@ function calculateImportPricing(product = {}, { quantity = 1, config } = {}) {
   const category = inferShippingCategory(product);
   const rate = cfg.shippingRates[category] || cfg.shippingRates.normal;
   const unitWeight = parseProductWeightKg(product);
-  const billedWeight = Math.round(unitWeight * qty * 1000) / 1000;
+  const billedWeight = roundKg(unitWeight * qty);
   const shippingBaseCost = Math.round(toNumber(rate.ratePerKg) * billedWeight);
-  const shippingMarkup = Math.round(cfg.shippingMarkup);
+  const shippingMarkup = includeShippingMarkup ? Math.round(cfg.shippingMarkup) : 0;
   const shippingCost = shippingBaseCost + shippingMarkup;
   const productLineTotal = productPrice * qty;
   const total = productLineTotal + shippingCost;
@@ -131,23 +168,25 @@ function calculateImportQuote(lines = [], config) {
   const itemQuotes = lines.map((line) => calculateImportPricing(line.product, {
     quantity: line.quantity,
     config: cfg,
+    includeShippingMarkup: false,
   }));
   const productTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
-  const shippingBaseCost = itemQuotes.reduce((sum, row) => sum + row.shippingBaseCost, 0);
-  const shippingMarkup = itemQuotes.reduce((sum, row) => sum + row.shippingMarkup, 0);
-  const shippingCost = itemQuotes.reduce((sum, row) => sum + row.shippingCost, 0);
-  const billedWeight = itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0);
-  const minDays = Math.min(...itemQuotes.map((row) => row.estimatedDays.min));
-  const maxDays = Math.max(...itemQuotes.map((row) => row.estimatedDays.max));
-  const ratePerKg = itemQuotes[0]?.shipping.ratePerKg ?? cfg.shippingRates.normal.ratePerKg;
+  const billedWeight = roundKg(itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0));
+  const ratePerKg = toNumber(cfg.shippingRates.normal?.ratePerKg, 10000);
+  const shippingBaseCost = Math.round(ratePerKg * billedWeight);
+  const shippingMarkup = itemQuotes.length ? Math.round(cfg.shippingMarkup) : 0;
+  const shippingCost = shippingBaseCost + shippingMarkup;
+  const days = itemQuotes.map((row) => row.estimatedDays);
+  const minDays = days.length ? Math.min(...days.map((row) => row.min)) : 20;
+  const maxDays = days.length ? Math.max(...days.map((row) => row.max)) : 30;
   return {
     currency: 'XOF',
     productTotal: Math.round(productTotal),
-    billedWeight: Math.round(billedWeight * 1000) / 1000,
+    billedWeight,
     ratePerKg,
-    shippingBaseCost: Math.round(shippingBaseCost),
-    shippingMarkup: Math.round(shippingMarkup),
-    shippingCost: Math.round(shippingCost),
+    shippingBaseCost,
+    shippingMarkup,
+    shippingCost,
     total: Math.round(productTotal + shippingCost),
     estimatedDays: { min: minDays, max: maxDays },
     estimatedDeliveryLabel: `${minDays}–${maxDays} jours`,
@@ -158,6 +197,7 @@ function calculateImportQuote(lines = [], config) {
 module.exports = {
   mergeImportPricingConfig,
   applyProductMarkup,
+  parseWeightToKg,
   parseProductWeightKg,
   inferShippingCategory,
   convertSupplierPriceFcfa,

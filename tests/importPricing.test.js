@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { calculateImportPricing } = require('../utils/importPricing');
+const { calculateImportPricing, calculateImportQuote, parseProductWeightKg } = require('../utils/importPricing');
 const { DANGO_TRANSIT_OPTION_ID } = require('../services/dropshippingCheckoutService');
 const { toPublicProduct } = require('../utils/publicProduct');
 
@@ -69,3 +69,41 @@ test('Test 5: public product card price excludes import fees', () => {
   assert.equal(publicProduct.importFeesAtCheckout, true);
   assert.ok(publicProduct.price < 34000);
 });
+
+test('parses CJ gram weights and specification Poids', () => {
+  assert.equal(parseProductWeightKg({ weight: '350' }), 0.35);
+  assert.equal(parseProductWeightKg({ weight: '350 g' }), 0.35);
+  assert.equal(parseProductWeightKg({
+    weight: '',
+    specifications: [{ key: 'Poids', value: '800 g' }],
+  }), 0.8);
+  assert.equal(parseProductWeightKg({ weight: '1.2 kg' }), 1.2);
+});
+
+test('grouped cart sums kg then applies 10000/kg + one 3000 markup', () => {
+  const quote = calculateImportQuote([
+    {
+      quantity: 2,
+      product: {
+        supplier: { supplierPrice: 20000, supplierCurrency: 'XOF' },
+        convertedSupplierPriceFCFA: 20000,
+        weight: '400 g',
+      },
+    },
+    {
+      quantity: 1,
+      product: {
+        supplier: { supplierPrice: 10000, supplierCurrency: 'XOF' },
+        convertedSupplierPriceFCFA: 10000,
+        weight: 0.3,
+      },
+    },
+  ]);
+  assert.equal(quote.billedWeight, 1.1);
+  assert.equal(quote.shippingBaseCost, 11000);
+  assert.equal(quote.shippingMarkup, 3000);
+  assert.equal(quote.shippingCost, 14000);
+  assert.equal(quote.productTotal, 65000);
+  assert.equal(quote.total, 79000);
+});
+

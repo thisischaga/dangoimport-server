@@ -209,13 +209,14 @@ async function validateDropshippingCheckoutPayload({
   }
 
   const primary = itemSnapshots[0] || {};
+  const breakdown = quoteResult.importBreakdown || {};
   const importShipping = {
-    category: primary.shipping?.category,
-    weight: primary.shipping?.weight,
-    billedWeight: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shipping?.billedWeight), 0),
-    ratePerKg: primary.shipping?.ratePerKg,
-    baseCost: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shippingBaseCost), 0),
-    markup: itemSnapshots.reduce((sum, row) => sum + toNumber(row.shippingMarkup), 0),
+    category: 'normal',
+    weight: breakdown.billedWeight,
+    billedWeight: breakdown.billedWeight,
+    ratePerKg: breakdown.ratePerKg,
+    baseCost: breakdown.shippingBaseCost,
+    markup: breakdown.shippingMarkup,
     customerCost: shippingCostFinal,
     productPrice: primary.productPrice,
     productTotal: subtotal,
@@ -225,8 +226,9 @@ async function validateDropshippingCheckoutPayload({
     items: itemSnapshots.map((row) => ({
       productPrice: row.productPrice,
       quantity: row.quantity,
+      weight: row.weight,
+      billedWeight: row.shipping?.billedWeight,
       shipping: row.shipping,
-      total: row.total,
     })),
   };
 

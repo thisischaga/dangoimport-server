@@ -126,6 +126,7 @@ async function stampOfficialImportPricing(payload) {
   payload.estimatedImportDays = pricing.estimatedImportDays;
   payload.price = pricing.productPrice;
   payload.costPrice = pricing.convertedSupplierPriceFCFA;
+  payload.weight = String(pricing.weight);
   if (payload.supplier) {
     payload.supplier.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
     payload.supplier.shippingCost = 0;
