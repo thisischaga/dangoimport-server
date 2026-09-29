@@ -198,21 +198,51 @@ async function listDropshippingProducts(query = {}) {
   const filter = { sourceType: 'DROPSHIPPING' };
   if (query.active === 'true') filter.isDropshippingActive = true;
   if (query.active === 'false') filter.isDropshippingActive = false;
+  if (query.published === 'true') filter.isPublished = true;
+  if (query.published === 'false') filter.isPublished = false;
+  if (query.visible === 'true') {
+    filter.isPublished = true;
+    filter.isDropshippingActive = true;
+  }
+  if (query.visible === 'false') {
+    filter.$or = [
+      { isPublished: false },
+      { isDropshippingActive: false },
+    ];
+  }
   if (query.platform) {
     filter['supplier.platform'] = String(query.platform).trim().toLowerCase();
   }
   if (query.search) {
     const regex = new RegExp(String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    filter.$or = [
-      { name: regex },
-      { sku: regex },
-      { 'supplier.productId': regex },
-      { 'supplier.platform': regex },
-    ];
+    const searchClause = {
+      $or: [
+        { name: regex },
+        { sku: regex },
+        { 'supplier.productId': regex },
+        { 'supplier.platform': regex },
+      ],
+    };
+    if (filter.$or) {
+      filter.$and = [{ $or: filter.$or }, searchClause];
+      delete filter.$or;
+    } else {
+      Object.assign(filter, searchClause);
+    }
   }
 
+  const sortKey = String(query.sort || 'updated').toLowerCase();
+  const sort = {
+    updated: { updatedAt: -1 },
+    name: { name: 1 },
+    price: { price: -1 },
+    stock: { stock: -1 },
+    published: { isPublished: -1, updatedAt: -1 },
+    visible: { isPublished: -1, isDropshippingActive: -1, updatedAt: -1 },
+  }[sortKey] || { updatedAt: -1 };
+
   const [items, total] = await Promise.all([
-    Product.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    Product.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     Product.countDocuments(filter),
   ]);
 
@@ -315,6 +345,39 @@ async function updateDropshippingStatus(id, { isDropshippingActive, isPublished 
 
   await product.save();
   return product.toObject();
+}
+
+async function bulkUpdateDropshippingStatus(ids = [], patch = {}) {
+  const productIds = (Array.isArray(ids) ? ids : []).map((id) => String(id)).filter(Boolean);
+  if (!productIds.length) {
+    const err = new Error('Aucun produit sélectionné.');
+    err.status = 400;
+    throw err;
+  }
+  const update = {};
+  if (typeof patch.isDropshippingActive === 'boolean') update.isDropshippingActive = patch.isDropshippingActive;
+  if (typeof patch.isPublished === 'boolean') update.isPublished = patch.isPublished;
+  if (!Object.keys(update).length) {
+    const err = new Error('Aucun statut à mettre à jour.');
+    err.status = 400;
+    throw err;
+  }
+  const result = await Product.updateMany(
+    { _id: { $in: productIds }, sourceType: 'DROPSHIPPING' },
+    { $set: update },
+  );
+  return { matched: result.matchedCount ?? result.n, modified: result.modifiedCount ?? result.nModified };
+}
+
+async function bulkDeleteDropshippingProducts(ids = []) {
+  const productIds = (Array.isArray(ids) ? ids : []).map((id) => String(id)).filter(Boolean);
+  if (!productIds.length) {
+    const err = new Error('Aucun produit sélectionné.');
+    err.status = 400;
+    throw err;
+  }
+  const result = await Product.deleteMany({ _id: { $in: productIds }, sourceType: 'DROPSHIPPING' });
+  return { deleted: result.deletedCount || 0 };
 }
 
 function parseCsvLine(line) {
@@ -455,6 +518,8 @@ module.exports = {
   updateDropshippingProduct,
   deleteDropshippingProduct,
   updateDropshippingStatus,
+  bulkUpdateDropshippingStatus,
+  bulkDeleteDropshippingProducts,
   importDropshippingCsv,
   syncDropshippingProduct,
 };

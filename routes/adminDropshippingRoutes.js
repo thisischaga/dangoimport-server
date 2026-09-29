@@ -13,6 +13,8 @@ router.post('/preview-margin', dropshippingController.previewMargin);
 router.get('/import-pricing', dropshippingController.getImportPricingConfig);
 router.put('/import-pricing', dropshippingController.updateImportPricingConfig);
 router.post('/import/csv', dropshippingController.importCsv);
+router.post('/bulk-status', dropshippingController.bulkStatus);
+router.post('/bulk-delete', dropshippingController.bulkDelete);
 router.post('/orders/:orderId/items/:itemIndex/supplier-order', dropshippingController.markSupplierOrdered);
 router.post('/', dropshippingController.create);
 router.get('/:id', dropshippingController.getById);

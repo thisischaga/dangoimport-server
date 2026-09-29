@@ -66,6 +66,30 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
+exports.bulkStatus = async (req, res) => {
+  try {
+    const data = await dropshippingService.bulkUpdateDropshippingStatus(
+      req.body?.ids || req.body?.productIds,
+      {
+        isPublished: req.body?.isPublished,
+        isDropshippingActive: req.body?.isDropshippingActive,
+      },
+    );
+    return res.json({ success: true, data, message: 'Statuts mis à jour.' });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.bulkDelete = async (req, res) => {
+  try {
+    const data = await dropshippingService.bulkDeleteDropshippingProducts(req.body?.ids || req.body?.productIds);
+    return res.json({ success: true, data, message: `${data.deleted} produit(s) supprimé(s).` });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
 exports.importCsv = async (req, res) => {
   try {
     const csvText = req.body?.csv || req.body?.content || '';
