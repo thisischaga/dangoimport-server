@@ -4,28 +4,54 @@ const { cjConfig } = require('../config/cj');
 
 function mergeImportPricingConfig(overrides = {}) {
   const base = cloneImportPricingDefaults();
-  const productMarkupMultiplier = toNumber(
-    overrides.productMarkupMultiplier,
-    base.productMarkupMultiplier,
+  const productMarkupMultiplier = Math.max(
+    1,
+    toNumber(overrides.productMarkupMultiplier, base.productMarkupMultiplier),
   );
-  const shippingMarkup = toNumber(overrides.shippingMarkup, base.shippingMarkup);
+  const minimumProductPrice = Math.max(
+    0,
+    Math.round(toNumber(overrides.minimumProductPrice, base.minimumProductPrice)),
+  );
+  const defaultMinimumOrderQuantity = Math.max(
+    1,
+    Math.round(toNumber(overrides.defaultMinimumOrderQuantity, base.defaultMinimumOrderQuantity)),
+  );
+  const shippingMarkup = Math.max(0, Math.round(toNumber(overrides.shippingMarkup, 0)));
+  const estimatedImportDays = {
+    min: Math.max(1, toNumber(overrides.estimatedImportDays?.min, base.estimatedImportDays.min)),
+    max: Math.max(1, toNumber(overrides.estimatedImportDays?.max, base.estimatedImportDays.max)),
+  };
+  if (estimatedImportDays.max < estimatedImportDays.min) {
+    estimatedImportDays.max = estimatedImportDays.min;
+  }
+
   const incomingRates = overrides.shippingRates && typeof overrides.shippingRates === 'object'
     ? (overrides.shippingRates instanceof Map
       ? Object.fromEntries(overrides.shippingRates)
       : overrides.shippingRates)
     : {};
+  const fallbackRate = toNumber(
+    overrides.shippingRatePerKg,
+    toNumber(incomingRates.normal?.ratePerKg, base.shippingRatePerKg),
+  );
   const shippingRates = { ...base.shippingRates };
   SHIPPING_CATEGORIES.forEach((key) => {
     const row = incomingRates[key] || {};
     shippingRates[key] = {
-      ratePerKg: toNumber(row.ratePerKg, shippingRates[key].ratePerKg),
-      minDays: toNumber(row.minDays, shippingRates[key].minDays),
-      maxDays: toNumber(row.maxDays, shippingRates[key].maxDays),
+      ratePerKg: toNumber(row.ratePerKg, fallbackRate),
+      minDays: toNumber(row.minDays, estimatedImportDays.min),
+      maxDays: toNumber(row.maxDays, estimatedImportDays.max),
     };
   });
+  const shippingRatePerKg = toNumber(shippingRates.normal?.ratePerKg, fallbackRate);
+
   return {
-    productMarkupMultiplier: Math.max(1, productMarkupMultiplier),
-    shippingMarkup: Math.max(0, Math.round(shippingMarkup)),
+    productMarkupMultiplier,
+    minimumProductPrice,
+    shippingRatePerKg,
+    shippingMarkup,
+    defaultMinimumOrderQuantity,
+    estimatedImportDays,
     shippingRates,
   };
 }
@@ -60,22 +86,25 @@ function weightFromSpecifications(product = {}) {
 }
 
 function parseProductWeightKg(product = {}) {
-  const candidates = [
-    product.weightKg,
-    product.weight,
-    product.productWeight,
-    product.supplier?.weight,
-    product.supplier?.productWeight,
-    product.supplier?.cjProductWeight,
-    product.variants?.[0]?.weight,
-    product.variants?.[0]?.attributes?.weight,
-    weightFromSpecifications(product),
-  ];
-  for (const candidate of candidates) {
-    const kg = parseWeightToKg(candidate);
-    if (kg > 0) return kg;
-  }
-  return 0.5;
+  const storedWeight = product.weightKg ?? product.weight;
+  const storedKg = parseWeightToKg(storedWeight);
+  const specKg = parseWeightToKg(weightFromSpecifications(product));
+  const supplierKg = parseWeightToKg(
+    product.supplier?.productWeight
+    ?? product.productWeight
+    ?? product.supplier?.weight
+    ?? product.supplier?.cjProductWeight
+    ?? product.variants?.[0]?.weight
+    ?? product.variants?.[0]?.attributes?.weight,
+  );
+
+  if (specKg > 0 && (storedKg <= 0 || storedKg === 0.5)) return specKg;
+  if (supplierKg > 0 && (storedKg <= 0 || storedKg === 0.5)) return supplierKg;
+  if (storedKg > 0 && storedKg !== 0.5) return storedKg;
+  if (specKg > 0) return specKg;
+  if (supplierKg > 0) return supplierKg;
+  if (storedKg > 0) return storedKg;
+  return 0;
 }
 
 function inferShippingCategory(product = {}) {
@@ -106,37 +135,87 @@ function convertSupplierPriceFcfa(product = {}) {
   return Math.round(supplierPrice);
 }
 
-function calculateImportPricing(product = {}, { quantity = 1, config, includeShippingMarkup = true } = {}) {
+function resolveMoqRules(product = {}, config = {}) {
+  const cfg = mergeImportPricingConfig(config || {});
+  const moq = Math.max(
+    1,
+    Math.round(toNumber(product.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
+  );
+  const hasExplicitIncrement = product.quantityIncrement != null && product.quantityIncrement !== '';
+  const increment = Math.max(
+    1,
+    Math.round(toNumber(
+      hasExplicitIncrement ? product.quantityIncrement : moq,
+      moq,
+    )),
+  );
+  return {
+    minimumOrderQuantity: moq,
+    quantityIncrement: increment,
+    soldAsLot: moq > 1 && increment === moq,
+  };
+}
+
+function isValidOrderQuantity(quantity, rules) {
+  const qty = Math.round(toNumber(quantity, 0));
+  if (qty < rules.minimumOrderQuantity) return false;
+  return (qty - rules.minimumOrderQuantity) % rules.quantityIncrement === 0;
+}
+
+function assertValidOrderQuantity(product, quantity, config) {
+  const rules = resolveMoqRules(product, config);
+  const qty = Math.round(toNumber(quantity, 0));
+  if (isValidOrderQuantity(qty, rules)) return { ...rules, quantity: qty };
+  const err = new Error(
+    rules.soldAsLot
+      ? `Quantité invalide pour ${product.name || 'ce produit'} : vente par lots de ${rules.minimumOrderQuantity}.`
+      : `Quantité minimale : ${rules.minimumOrderQuantity} pour ${product.name || 'ce produit'}.`,
+  );
+  err.status = 400;
+  throw err;
+}
+
+function calculateImportPricing(product = {}, { quantity = 1, config, includeShippingMarkup = false } = {}) {
   const cfg = mergeImportPricingConfig(config || {});
   const qty = Math.max(1, Math.round(toNumber(quantity, 1)));
   const multiplier = Math.max(
     1,
     toNumber(product.productMarkupMultiplier, cfg.productMarkupMultiplier),
   );
+  const minUnitPrice = Math.max(
+    0,
+    Math.round(toNumber(product.minimumProductPrice, cfg.minimumProductPrice)),
+  );
   const convertedSupplierPriceFCFA = convertSupplierPriceFcfa(product);
-  const productPrice = applyProductMarkup(convertedSupplierPriceFCFA, multiplier);
+  const unitPrice = applyProductMarkup(convertedSupplierPriceFCFA, multiplier, minUnitPrice);
+  const moq = resolveMoqRules(product, cfg);
+  const packSize = moq.soldAsLot ? moq.minimumOrderQuantity : 1;
+  const packPrice = unitPrice * packSize;
   const category = inferShippingCategory(product);
   const rate = cfg.shippingRates[category] || cfg.shippingRates.normal;
+  const ratePerKg = toNumber(cfg.shippingRatePerKg, rate.ratePerKg);
   const unitWeight = parseProductWeightKg(product);
   const billedWeight = roundKg(unitWeight * qty);
-  const shippingBaseCost = Math.round(toNumber(rate.ratePerKg) * billedWeight);
+  const shippingBaseCost = Math.round(ratePerKg * billedWeight);
   const shippingMarkup = includeShippingMarkup ? Math.round(cfg.shippingMarkup) : 0;
   const shippingCost = shippingBaseCost + shippingMarkup;
-  const productLineTotal = productPrice * qty;
-  const total = productLineTotal + shippingCost;
+  const productLineTotal = unitPrice * qty;
   const estimatedDays = {
-    min: toNumber(rate.minDays, 20),
-    max: toNumber(rate.maxDays, 30),
+    min: toNumber(cfg.estimatedImportDays?.min, rate.minDays || 20),
+    max: toNumber(cfg.estimatedImportDays?.max, rate.maxDays || 30),
   };
 
   return {
-    productPrice,
+    productPrice: unitPrice,
+    unitPrice,
+    packPrice,
+    packSize,
     quantity: qty,
     productLineTotal,
     shippingBaseCost,
     shippingMarkup,
     shippingCost,
-    total,
+    total: productLineTotal + shippingCost,
     estimatedDays,
     supplier: String(product.supplier?.platform || product.supplier?.name || 'CJ').toUpperCase().startsWith('CJ')
       ? 'CJ'
@@ -146,15 +225,20 @@ function calculateImportPricing(product = {}, { quantity = 1, config, includeShi
     currency: String(product.supplier?.supplierCurrency || 'XOF').toUpperCase(),
     convertedSupplierPriceFCFA,
     productMarkupMultiplier: multiplier,
-    sellingPrice: productPrice,
+    minimumProductPrice: minUnitPrice,
+    minimumOrderQuantity: moq.minimumOrderQuantity,
+    quantityIncrement: moq.quantityIncrement,
+    soldAsLot: moq.soldAsLot,
+    sellingPrice: unitPrice,
     weight: unitWeight,
+    unitWeight,
     shippingCategory: category,
     estimatedImportDays: estimatedDays,
     shipping: {
       category,
       weight: unitWeight,
       billedWeight,
-      ratePerKg: toNumber(rate.ratePerKg),
+      ratePerKg,
       baseCost: shippingBaseCost,
       markup: shippingMarkup,
       customerCost: shippingCost,
@@ -163,35 +247,46 @@ function calculateImportPricing(product = {}, { quantity = 1, config, includeShi
   };
 }
 
-function calculateImportQuote(lines = [], config) {
+function calculateImportOrderPricing(lines = [], config) {
   const cfg = mergeImportPricingConfig(config || {});
-  const itemQuotes = lines.map((line) => calculateImportPricing(line.product, {
-    quantity: line.quantity,
-    config: cfg,
-    includeShippingMarkup: false,
-  }));
-  const productTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
-  const billedWeight = roundKg(itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0));
-  const ratePerKg = toNumber(cfg.shippingRates.normal?.ratePerKg, 10000);
-  const shippingBaseCost = Math.round(ratePerKg * billedWeight);
-  const shippingMarkup = itemQuotes.length ? Math.round(cfg.shippingMarkup) : 0;
-  const shippingCost = shippingBaseCost + shippingMarkup;
+  const itemQuotes = (lines || []).map((line) => {
+    const product = line.product || line;
+    const quantity = line.quantity != null ? line.quantity : 1;
+    assertValidOrderQuantity(product, quantity, cfg);
+    return calculateImportPricing(product, {
+      quantity,
+      config: cfg,
+      includeShippingMarkup: false,
+    });
+  });
+  const itemsTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
+  const totalWeightKg = roundKg(itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0));
+  const ratePerKg = toNumber(cfg.shippingRatePerKg, 13500);
+  const shippingCost = Math.round(ratePerKg * totalWeightKg);
   const days = itemQuotes.map((row) => row.estimatedDays);
-  const minDays = days.length ? Math.min(...days.map((row) => row.min)) : 20;
-  const maxDays = days.length ? Math.max(...days.map((row) => row.max)) : 30;
+  const minDays = days.length ? Math.min(...days.map((row) => row.min)) : cfg.estimatedImportDays.min;
+  const maxDays = days.length ? Math.max(...days.map((row) => row.max)) : cfg.estimatedImportDays.max;
   return {
     currency: 'XOF',
-    productTotal: Math.round(productTotal),
-    billedWeight,
+    itemsTotal: Math.round(itemsTotal),
+    productTotal: Math.round(itemsTotal),
+    totalWeightKg,
+    billedWeight: totalWeightKg,
     ratePerKg,
-    shippingBaseCost,
-    shippingMarkup,
+    shippingRatePerKg: ratePerKg,
+    shippingBaseCost: shippingCost,
+    shippingMarkup: 0,
     shippingCost,
-    total: Math.round(productTotal + shippingCost),
+    total: Math.round(itemsTotal + shippingCost),
     estimatedDays: { min: minDays, max: maxDays },
+    estimatedDelivery: { minDays, maxDays },
     estimatedDeliveryLabel: `${minDays}–${maxDays} jours`,
     items: itemQuotes,
   };
+}
+
+function calculateImportQuote(lines = [], config) {
+  return calculateImportOrderPricing(lines, config);
 }
 
 module.exports = {
@@ -201,6 +296,10 @@ module.exports = {
   parseProductWeightKg,
   inferShippingCategory,
   convertSupplierPriceFcfa,
+  resolveMoqRules,
+  isValidOrderQuantity,
+  assertValidOrderQuantity,
   calculateImportPricing,
   calculateImportQuote,
+  calculateImportOrderPricing,
 };

@@ -71,6 +71,9 @@ function normalizeDropshippingInput(body = {}) {
     weight: body.weight != null ? String(body.weight) : '',
     convertedSupplierPriceFCFA: toNumber(body.convertedSupplierPriceFCFA, 0) || undefined,
     productMarkupMultiplier: toNumber(body.productMarkupMultiplier, 0) || undefined,
+    minimumProductPrice: toNumber(body.minimumProductPrice, 0) || undefined,
+    minimumOrderQuantity: Math.max(1, Math.round(toNumber(body.minimumOrderQuantity, 1))),
+    quantityIncrement: Math.max(1, Math.round(toNumber(body.quantityIncrement, body.minimumOrderQuantity || 1))),
     shippingCategory: SHIPPING_CATEGORIES.includes(String(body.shippingCategory || '').toLowerCase())
       ? String(body.shippingCategory).toLowerCase()
       : undefined,
@@ -122,9 +125,12 @@ async function stampOfficialImportPricing(payload) {
   const pricing = calculateImportPricing(payload, { config });
   payload.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
   payload.productMarkupMultiplier = pricing.productMarkupMultiplier;
+  payload.minimumProductPrice = pricing.minimumProductPrice;
+  payload.minimumOrderQuantity = pricing.minimumOrderQuantity;
+  payload.quantityIncrement = pricing.quantityIncrement;
+  payload.price = pricing.unitPrice;
   payload.shippingCategory = pricing.shippingCategory;
   payload.estimatedImportDays = pricing.estimatedImportDays;
-  payload.price = pricing.productPrice;
   payload.costPrice = pricing.convertedSupplierPriceFCFA;
   payload.weight = String(pricing.weight);
   if (payload.supplier) {

@@ -303,6 +303,9 @@ const productSchema = new mongoose.Schema({
     },
     convertedSupplierPriceFCFA: { type: Number, min: 0 },
     productMarkupMultiplier: { type: Number, min: 1, default: 1.3 },
+    minimumProductPrice: { type: Number, min: 0 },
+    minimumOrderQuantity: { type: Number, min: 1, default: 1 },
+    quantityIncrement: { type: Number, min: 1, default: 1 },
     shippingCategory: {
         type: String,
         enum: ['normal', 'fragile', 'special', 'medical', 'telephone', 'ordinateur'],

@@ -27,10 +27,12 @@ function calculateMargin({
   };
 }
 
-function applyProductMarkup(supplierPriceFcfa, productMarkupMultiplier = 1.3) {
+function applyProductMarkup(supplierPriceFcfa, productMarkupMultiplier = 1.3, minimumProductPrice = 0) {
   const supplier = Math.max(0, toNumber(supplierPriceFcfa, 0));
   const multiplier = Math.max(1, toNumber(productMarkupMultiplier, 1.3));
-  return Math.max(0, Math.round(supplier * multiplier));
+  const marked = Math.max(0, Math.round(supplier * multiplier));
+  const floor = Math.max(0, Math.round(toNumber(minimumProductPrice, 0)));
+  return Math.max(marked, floor);
 }
 
 function calculateSellingPrice({

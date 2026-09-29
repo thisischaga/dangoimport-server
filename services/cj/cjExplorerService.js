@@ -261,7 +261,10 @@ function buildPricingPreview({
     supplierPriceUsd: supplierUsd,
     convertedSupplierPriceFCFA,
     productMarkupMultiplier: pricing.productMarkupMultiplier,
-    sellingPriceXof: pricing.productPrice,
+    sellingPriceXof: pricing.unitPrice,
+    packPriceXof: pricing.packPrice,
+    packSize: pricing.packSize,
+    minimumOrderQuantity: pricing.minimumOrderQuantity,
     costPriceXof: convertedSupplierPriceFCFA,
     estimatedProfitXof: margin.estimatedProfit,
     shippingCategory: pricing.shippingCategory,
@@ -270,7 +273,7 @@ function buildPricingPreview({
     checkoutTotalXof: pricing.total,
     estimatedDays: pricing.estimatedDays,
     ratePerKg: pricing.shipping.ratePerKg,
-    shippingMarkup: pricing.shippingMarkup,
+    shippingMarkup: 0,
   };
 }
 

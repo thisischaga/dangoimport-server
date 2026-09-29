@@ -10,7 +10,14 @@ const rateSchema = new mongoose.Schema({
 const importPricingConfigSchema = new mongoose.Schema({
   key: { type: String, default: 'default', unique: true },
   productMarkupMultiplier: { type: Number, min: 1, default: DEFAULT_IMPORT_PRICING.productMarkupMultiplier },
-  shippingMarkup: { type: Number, min: 0, default: DEFAULT_IMPORT_PRICING.shippingMarkup },
+  minimumProductPrice: { type: Number, min: 0, default: DEFAULT_IMPORT_PRICING.minimumProductPrice },
+  shippingRatePerKg: { type: Number, min: 0, default: DEFAULT_IMPORT_PRICING.shippingRatePerKg },
+  shippingMarkup: { type: Number, min: 0, default: 0 },
+  defaultMinimumOrderQuantity: { type: Number, min: 1, default: DEFAULT_IMPORT_PRICING.defaultMinimumOrderQuantity },
+  estimatedImportDays: {
+    min: { type: Number, min: 1, default: 20 },
+    max: { type: Number, min: 1, default: 30 },
+  },
   shippingRates: {
     type: Map,
     of: rateSchema,

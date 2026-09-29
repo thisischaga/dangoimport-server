@@ -1,6 +1,6 @@
 const ImportPricingConfig = require('../Models/ImportPricingConfig');
 const { cloneImportPricingDefaults, hasLegacyTransitRates } = require('../config/importPricing');
-const { mergeImportPricingConfig, calculateImportPricing, calculateImportQuote } = require('../utils/importPricing');
+const { mergeImportPricingConfig, calculateImportPricing, calculateImportOrderPricing } = require('../utils/importPricing');
 
 let cachedConfig = mergeImportPricingConfig();
 let cacheLoadedAt = 0;
@@ -22,7 +22,11 @@ async function getImportPricingConfigDoc() {
   if (hasLegacyTransitRates(doc.toObject())) {
     const next = cloneImportPricingDefaults();
     doc.productMarkupMultiplier = doc.productMarkupMultiplier || next.productMarkupMultiplier;
-    doc.shippingMarkup = next.shippingMarkup;
+    doc.minimumProductPrice = next.minimumProductPrice;
+    doc.shippingRatePerKg = next.shippingRatePerKg;
+    doc.shippingMarkup = 0;
+    doc.defaultMinimumOrderQuantity = doc.defaultMinimumOrderQuantity || next.defaultMinimumOrderQuantity;
+    doc.estimatedImportDays = next.estimatedImportDays;
     doc.shippingRates = next.shippingRates;
     await doc.save();
   }
@@ -58,7 +62,7 @@ async function calculateImportPricingForProduct(product, options = {}) {
 
 async function calculateImportQuoteForProducts(lines, options = {}) {
   const config = options.config || await getImportPricingConfig();
-  return calculateImportQuote(lines, config);
+  return calculateImportOrderPricing(lines, config);
 }
 
 module.exports = {

@@ -6,7 +6,7 @@ const {
 } = require('../utils/dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 const { assertProductPurchasable, buildShopOrderItem } = require('../utils/orderItemBuilder');
-const { calculateImportPricing, calculateImportQuote } = require('../utils/importPricing');
+const { calculateImportPricing, calculateImportQuote, assertValidOrderQuantity } = require('../utils/importPricing');
 const { getImportPricingConfig } = require('./importPricingService');
 
 const SUPPORTED_COUNTRIES = new Set(['TG', 'BJ', 'TOGO', 'BÉNIN', 'BENIN']);
@@ -44,6 +44,7 @@ async function loadCheckoutProducts(items = []) {
       throw new Error('Ce panier contient un produit non dropshipping.');
     }
     assertProductPurchasable({ ...product, stock: resolveDropshipSellableStock(product) }, row.quantity);
+    assertValidOrderQuantity(product, row.quantity);
     lines.push({ product, quantity: row.quantity, selectedOptions: row.selectedOptions });
   }
 
@@ -63,31 +64,42 @@ function mapTransitOption(quote) {
     estimatedDeliveryMax: quote.estimatedDays.max,
     billedWeight: quote.billedWeight,
     ratePerKg: quote.ratePerKg,
+    shippingRatePerKg: quote.shippingRatePerKg || quote.ratePerKg,
     shippingBaseCost: quote.shippingBaseCost,
-    shippingMarkup: quote.shippingMarkup,
+    shippingMarkup: 0,
   };
 }
 
 function publicImportBreakdown(quote) {
   return {
     productTotal: quote.productTotal,
+    itemsTotal: quote.itemsTotal,
     billedWeight: quote.billedWeight,
+    totalWeightKg: quote.totalWeightKg,
     ratePerKg: quote.ratePerKg,
+    shippingRatePerKg: quote.shippingRatePerKg || quote.ratePerKg,
     shippingBaseCost: quote.shippingBaseCost,
-    shippingMarkup: quote.shippingMarkup,
+    shippingMarkup: 0,
     shippingCost: quote.shippingCost,
     total: quote.total,
     estimatedDays: quote.estimatedDays,
+    estimatedDelivery: quote.estimatedDelivery,
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
     items: (quote.items || []).map((row) => ({
       productPrice: row.productPrice,
+      unitPrice: row.unitPrice,
+      packPrice: row.packPrice,
+      packSize: row.packSize,
       quantity: row.quantity,
       productLineTotal: row.productLineTotal,
+      minimumOrderQuantity: row.minimumOrderQuantity,
+      quantityIncrement: row.quantityIncrement,
+      soldAsLot: row.soldAsLot,
       weight: row.weight,
+      unitWeight: row.unitWeight,
       billedWeight: row.shipping?.billedWeight,
       ratePerKg: row.shipping?.ratePerKg,
       shippingBaseCost: row.shippingBaseCost,
-      shippingMarkup: row.shippingMarkup,
       shippingCost: row.shippingCost,
     })),
   };
@@ -172,7 +184,11 @@ async function validateDropshippingCheckoutPayload({
   const itemSnapshots = [];
 
   for (const line of lines) {
-    const pricing = calculateImportPricing(line.product, { quantity: line.quantity, config });
+    const pricing = calculateImportPricing(line.product, {
+      quantity: line.quantity,
+      config,
+      includeShippingMarkup: false,
+    });
     const built = buildShopOrderItem(line.product, {
       quantity: line.quantity,
       selectedOptions: line.selectedOptions,
@@ -214,21 +230,32 @@ async function validateDropshippingCheckoutPayload({
     category: 'normal',
     weight: breakdown.billedWeight,
     billedWeight: breakdown.billedWeight,
+    totalWeight: breakdown.totalWeightKg || breakdown.billedWeight,
     ratePerKg: breakdown.ratePerKg,
+    shippingRatePerKg: breakdown.shippingRatePerKg || breakdown.ratePerKg,
     baseCost: breakdown.shippingBaseCost,
-    markup: breakdown.shippingMarkup,
+    markup: 0,
+    shippingCost: shippingCostFinal,
     customerCost: shippingCostFinal,
     productPrice: primary.productPrice,
     productTotal: subtotal,
+    itemsTotal: subtotal,
     total,
     productMarkupMultiplier: primary.productMarkupMultiplier,
+    minimumProductPrice: primary.minimumProductPrice,
     estimatedDays: quoteResult.estimatedDays,
+    estimatedDeliveryMinDays: quoteResult.estimatedDays?.min,
+    estimatedDeliveryMaxDays: quoteResult.estimatedDays?.max,
     items: itemSnapshots.map((row) => ({
       productPrice: row.productPrice,
       quantity: row.quantity,
-      weight: row.weight,
+      minimumOrderQuantity: row.minimumOrderQuantity,
+      quantityIncrement: row.quantityIncrement,
+      unitWeight: row.unitWeight || row.weight,
+      totalWeight: row.shipping?.billedWeight,
       billedWeight: row.shipping?.billedWeight,
       shipping: row.shipping,
+      productLineTotal: row.productLineTotal,
     })),
   };
 

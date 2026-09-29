@@ -79,8 +79,14 @@ function toPublicProduct(product) {
     publicDoc.vendorId = undefined;
     publicDoc.fulfillmentType = doc.fulfillmentType || 'DANGO_IMPORT';
     const pricing = calculateImportPricing(doc, { config: getImportPricingConfigSync() });
-    publicDoc.price = pricing.productPrice;
+    publicDoc.price = pricing.unitPrice;
     publicDoc.salePrice = 0;
+    publicDoc.unitPrice = pricing.unitPrice;
+    publicDoc.packPrice = pricing.packPrice;
+    publicDoc.packSize = pricing.packSize;
+    publicDoc.minimumOrderQuantity = pricing.minimumOrderQuantity;
+    publicDoc.quantityIncrement = pricing.quantityIncrement;
+    publicDoc.soldAsLot = pricing.soldAsLot;
     publicDoc.importFeesAtCheckout = true;
     publicDoc.estimatedImportDays = pricing.estimatedDays;
     INTERNAL_FIELDS.forEach((field) => {

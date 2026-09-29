@@ -5,7 +5,7 @@ const {
   toNumber,
 } = require('./dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('./cjCatalogHelpers');
-const { calculateImportPricing } = require('./importPricing');
+const { calculateImportPricing, assertValidOrderQuantity } = require('./importPricing');
 const { getImportPricingConfigSync } = require('../services/importPricingService');
 
 function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitPriceOverride } = {}) {
@@ -92,6 +92,9 @@ function assertProductPurchasable(product, quantity = 1) {
   }
 
   const qty = Math.max(1, toNumber(quantity, 1));
+  if (product.sourceType === 'DROPSHIPPING') {
+    assertValidOrderQuantity(product, qty);
+  }
   const available = product.sourceType === 'DROPSHIPPING'
     ? resolveDropshipSellableStock(product)
     : toNumber(product.stock, 0);

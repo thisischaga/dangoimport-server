@@ -1,17 +1,21 @@
 const DEFAULT_IMPORT_PRICING = {
   productMarkupMultiplier: 1.3,
-  shippingMarkup: 3000,
+  minimumProductPrice: 1000,
+  shippingRatePerKg: 13500,
+  shippingMarkup: 0,
+  defaultMinimumOrderQuantity: 1,
+  estimatedImportDays: { min: 20, max: 30 },
   shippingRates: {
-    normal: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
-    fragile: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
-    special: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
-    medical: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
-    telephone: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
-    ordinateur: { ratePerKg: 10000, minDays: 20, maxDays: 30 },
+    normal: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
+    fragile: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
+    special: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
+    medical: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
+    telephone: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
+    ordinateur: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
   },
 };
 
-const LEGACY_RATE_PER_KG = new Set([9000, 10500, 11500, 15000, 25000, 100000]);
+const LEGACY_RATE_PER_KG = new Set([9000, 10000, 10500, 11500, 15000, 25000, 100000]);
 
 const SHIPPING_CATEGORIES = Object.keys(DEFAULT_IMPORT_PRICING.shippingRates);
 
@@ -20,6 +24,8 @@ function cloneImportPricingDefaults() {
 }
 
 function hasLegacyTransitRates(config = {}) {
+  if (Number(config.shippingMarkup) === 3000) return true;
+  if (Number(config.shippingRatePerKg) === 10000) return true;
   const rates = config.shippingRates && typeof config.shippingRates === 'object'
     ? (config.shippingRates instanceof Map
       ? Object.fromEntries(config.shippingRates)
