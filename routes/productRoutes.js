@@ -6,6 +6,7 @@ const Review = require('../Models/Review');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { toPublicProduct, toPublicProducts, toPublicProductDetail } = require('../utils/publicProduct');
 const { enrichCatalogProductsStock } = require('../services/cj/catalogStockEnrichment');
+const { mixProductsForDisplay, shouldMixCatalogSort } = require('../utils/mixCatalogDisplay');
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -50,7 +51,7 @@ router.get('/featured', async (req, res) => {
       products = [...products, ...extra];
     }
 
-    products = await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 });
+    products = mixProductsForDisplay(await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 }));
 
     return res.status(200).json({ success: true, data: await toPublicProducts(products), count: products.length });
   } catch (error) {
@@ -197,6 +198,7 @@ router.get('/', async (req, res) => {
     }
 
     let sortOption = { createdAt: -1 };
+    const mixDisplay = shouldMixCatalogSort(sort);
     switch (sort) {
       case 'price_asc':
       case 'price-asc':
@@ -220,14 +222,23 @@ router.get('/', async (req, res) => {
         sortOption = { isFeatured: -1, createdAt: -1 };
     }
 
-    const [productsRaw, total] = await Promise.all([
-      Product.find({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
+    const catalogFilter = { $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] };
+    const total = await Product.countDocuments(catalogFilter);
+    let productsRaw;
+    if (mixDisplay) {
+      const poolSize = Math.min(800, Math.max(limitNum + skip, 200));
+      const pool = await Product.find(catalogFilter)
+        .sort(sortOption)
+        .limit(poolSize)
+        .lean();
+      productsRaw = mixProductsForDisplay(pool).slice(skip, skip + limitNum);
+    } else {
+      productsRaw = await Product.find(catalogFilter)
         .sort(sortOption)
         .skip(skip)
         .limit(limitNum)
-        .lean(),
-      Product.countDocuments({ $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] })
-    ]);
+        .lean();
+    }
 
     const products = await enrichCatalogProductsStock(productsRaw, {
       maxLiveRefresh: Math.min(limitNum, 15),
