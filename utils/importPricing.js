@@ -51,6 +51,7 @@ function mergeImportPricingConfig(overrides = {}) {
     shippingRatePerKg,
     shippingMarkup,
     defaultMinimumOrderQuantity,
+    lightProductMaxWeightKg: Math.max(0.05, toNumber(overrides.lightProductMaxWeightKg, base.lightProductMaxWeightKg)),
     estimatedImportDays,
     shippingRates,
   };
@@ -135,24 +136,36 @@ function convertSupplierPriceFcfa(product = {}) {
   return Math.round(supplierPrice);
 }
 
+function lightProductMoqFromWeight(weightKg, thresholdKg = 1) {
+  const weight = Number(weightKg);
+  const threshold = Number(thresholdKg);
+  if (!(weight > 0) || !(threshold > 0) || weight >= threshold) return 1;
+  return Math.max(2, Math.ceil((threshold / weight) - 1e-9));
+}
+
 function resolveMoqRules(product = {}, config = {}) {
   const cfg = mergeImportPricingConfig(config || {});
-  const moq = Math.max(
+  const explicitMoq = Math.max(
     1,
     Math.round(toNumber(product.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
   );
-  const hasExplicitIncrement = product.quantityIncrement != null && product.quantityIncrement !== '';
-  const increment = Math.max(
-    1,
-    Math.round(toNumber(
-      hasExplicitIncrement ? product.quantityIncrement : moq,
-      moq,
-    )),
+  const autoMoq = lightProductMoqFromWeight(
+    parseProductWeightKg(product),
+    cfg.lightProductMaxWeightKg,
   );
+  const moq = Math.max(explicitMoq, autoMoq);
+  const hasExplicitIncrement = product.quantityIncrement != null && product.quantityIncrement !== '';
+  const explicitIncrement = hasExplicitIncrement
+    ? Math.max(1, Math.round(toNumber(product.quantityIncrement, moq)))
+    : null;
+  const increment = explicitIncrement && explicitIncrement !== explicitMoq
+    ? explicitIncrement
+    : moq;
   return {
     minimumOrderQuantity: moq,
     quantityIncrement: increment,
     soldAsLot: moq > 1 && increment === moq,
+    lightProductMoq: autoMoq,
   };
 }
 
@@ -297,6 +310,7 @@ module.exports = {
   inferShippingCategory,
   convertSupplierPriceFcfa,
   resolveMoqRules,
+  lightProductMoqFromWeight,
   isValidOrderQuantity,
   assertValidOrderQuantity,
   calculateImportPricing,

@@ -47,7 +47,7 @@ test('MOQ 5 : pack = (1200 × 5) × 1.30 = 7800, unité 1560', () => {
     convertedSupplierPriceFCFA: 1200,
     minimumOrderQuantity: 5,
     quantityIncrement: 5,
-    weight: 0.1,
+    weight: 0.25,
   });
   assert.equal(pricing.unitPrice, 1560);
   assert.equal(pricing.packSize, 5);
@@ -55,7 +55,28 @@ test('MOQ 5 : pack = (1200 × 5) × 1.30 = 7800, unité 1560', () => {
   assert.equal(pricing.soldAsLot, true);
 });
 
-test('checkout MOQ 5 : 7800 + 0.5kg × 13500 = 14550', () => {
+test('produit < 1 kg : MOQ auto pour atteindre 1 kg (100 g → 10)', () => {
+  const pricing = calculateImportPricing({
+    supplier: { supplierPrice: 1200, supplierCurrency: 'XOF' },
+    convertedSupplierPriceFCFA: 1200,
+    weight: 0.1,
+  });
+  assert.equal(pricing.minimumOrderQuantity, 10);
+  assert.equal(pricing.quantityIncrement, 10);
+  assert.equal(pricing.packSize, 10);
+  assert.equal(pricing.packPrice, 15600);
+});
+
+test('produit ≥ 1 kg : pas de MOQ auto', () => {
+  const pricing = calculateImportPricing({
+    convertedSupplierPriceFCFA: 2000,
+    weight: 1,
+  });
+  assert.equal(pricing.minimumOrderQuantity, 1);
+  assert.equal(pricing.packSize, 1);
+});
+
+test('checkout MOQ 5 : 7800 + 1.25 kg × 13500', () => {
   const quote = calculateImportOrderPricing([
     {
       quantity: 5,
@@ -65,14 +86,14 @@ test('checkout MOQ 5 : 7800 + 0.5kg × 13500 = 14550', () => {
         convertedSupplierPriceFCFA: 1200,
         minimumOrderQuantity: 5,
         quantityIncrement: 5,
-        weight: 0.1,
+        weight: 0.25,
       },
     },
   ]);
   assert.equal(quote.itemsTotal, 7800);
-  assert.equal(quote.totalWeightKg, 0.5);
-  assert.equal(quote.shippingCost, 6750);
-  assert.equal(quote.total, 14550);
+  assert.equal(quote.totalWeightKg, 1.25);
+  assert.equal(quote.shippingCost, 16875);
+  assert.equal(quote.total, 24675);
 });
 
 test('quantité 4 refusée si MOQ 5', () => {
@@ -159,7 +180,7 @@ test('panier groupé : somme des kg × 13500, sans majoration 1.30', () => {
       product: {
         supplier: { supplierPrice: 20000, supplierCurrency: 'XOF' },
         convertedSupplierPriceFCFA: 20000,
-        weight: '400 g',
+        weight: 1,
       },
     },
     {
@@ -167,46 +188,41 @@ test('panier groupé : somme des kg × 13500, sans majoration 1.30', () => {
       product: {
         supplier: { supplierPrice: 10000, supplierCurrency: 'XOF' },
         convertedSupplierPriceFCFA: 10000,
-        weight: 0.3,
+        weight: 1.1,
       },
     },
   ]);
-  assert.equal(quote.billedWeight, 1.1);
+  assert.equal(quote.billedWeight, 3.1);
   assert.equal(quote.shippingMarkup, 0);
-  assert.equal(quote.shippingCost, 14850);
+  assert.equal(quote.shippingCost, 41850);
   assert.equal(quote.productTotal, 65000);
-  assert.equal(quote.total, 79850);
+  assert.equal(quote.total, 106850);
 });
 
-test('multi-produits MOQ : 0.5 + 0.6 + 0.25 = 1.35 kg × 13500', () => {
+test('multi-produits : poids regroupé après MOQ auto < 1 kg', () => {
   const quote = calculateImportOrderPricing([
     {
-      quantity: 5,
+      quantity: 10,
       product: {
         convertedSupplierPriceFCFA: 1200,
-        minimumOrderQuantity: 5,
-        quantityIncrement: 5,
         weight: 0.1,
       },
     },
     {
-      quantity: 2,
+      quantity: 4,
       product: {
         convertedSupplierPriceFCFA: 5000,
-        minimumOrderQuantity: 1,
         weight: 0.3,
       },
     },
     {
-      quantity: 5,
+      quantity: 20,
       product: {
         convertedSupplierPriceFCFA: 800,
-        minimumOrderQuantity: 5,
-        quantityIncrement: 5,
         weight: 0.05,
       },
     },
   ]);
-  assert.equal(quote.totalWeightKg, 1.35);
-  assert.equal(quote.shippingCost, 18225);
+  assert.equal(quote.totalWeightKg, 3.2);
+  assert.equal(quote.shippingCost, 43200);
 });

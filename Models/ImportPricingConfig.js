@@ -14,6 +14,7 @@ const importPricingConfigSchema = new mongoose.Schema({
   shippingRatePerKg: { type: Number, min: 0, default: DEFAULT_IMPORT_PRICING.shippingRatePerKg },
   shippingMarkup: { type: Number, min: 0, default: 0 },
   defaultMinimumOrderQuantity: { type: Number, min: 1, default: DEFAULT_IMPORT_PRICING.defaultMinimumOrderQuantity },
+  lightProductMaxWeightKg: { type: Number, min: 0.05, default: 1 },
   estimatedImportDays: {
     min: { type: Number, min: 1, default: 20 },
     max: { type: Number, min: 1, default: 30 },

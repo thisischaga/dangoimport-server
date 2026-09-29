@@ -4,6 +4,7 @@ const DEFAULT_IMPORT_PRICING = {
   shippingRatePerKg: 13500,
   shippingMarkup: 0,
   defaultMinimumOrderQuantity: 1,
+  lightProductMaxWeightKg: 1,
   estimatedImportDays: { min: 20, max: 30 },
   shippingRates: {
     normal: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
