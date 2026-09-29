@@ -431,11 +431,7 @@ function repairCjDisplayPricing(product = {}) {
     const converted = convertUsdPriceToXof(supplierUsd);
     const multiplier = toNumber(doc.productMarkupMultiplier, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
     if (looksLikeUnconvertedUsdSellingPrice(doc) || !toNumber(doc.price, 0)) {
-      doc.price = applyProductMarkup(
-        converted,
-        multiplier,
-        DEFAULT_IMPORT_PRICING.minimumProductPrice,
-      );
+      doc.price = applyProductMarkup(converted, multiplier);
     }
     doc.costPrice = converted;
     doc.convertedSupplierPriceFCFA = converted;
@@ -456,7 +452,6 @@ function repairCjDisplayPricing(product = {}) {
           price: applyProductMarkup(
             convertedVariant,
             toNumber(doc.productMarkupMultiplier, DEFAULT_IMPORT_PRICING.productMarkupMultiplier),
-            DEFAULT_IMPORT_PRICING.minimumProductPrice,
           ),
         };
       }

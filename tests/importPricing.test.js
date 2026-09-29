@@ -23,14 +23,14 @@ test('prix carte : 20000 × 1.30 = 26000, hors import', () => {
   assert.equal(pricing.total, 32750);
 });
 
-test('plancher 1000 FCFA : 500 × 1.30 = 650 → 1000', () => {
+test('pas de plancher 1000 FCFA : 500 × 1.30 = 650', () => {
   const pricing = calculateImportPricing({
     supplier: { supplierPrice: 500, supplierCurrency: 'XOF' },
     convertedSupplierPriceFCFA: 500,
     weight: 0.1,
   });
-  assert.equal(pricing.unitPrice, 1000);
-  assert.equal(pricing.productPrice, 1000);
+  assert.equal(pricing.unitPrice, 650);
+  assert.equal(pricing.productPrice, 650);
 });
 
 test('800 × 1.30 = 1040 reste 1040', () => {
@@ -55,7 +55,7 @@ test('MOQ 5 : pack = (1200 × 5) × 1.30 = 7800, unité 1560', () => {
   assert.equal(pricing.soldAsLot, true);
 });
 
-test('produit < 1 kg : MOQ auto pour atteindre 1 kg (100 g → 10)', () => {
+test('produit < 1 kg et < 2000 F : MOQ auto (100 g → 10)', () => {
   const pricing = calculateImportPricing({
     supplier: { supplierPrice: 1200, supplierCurrency: 'XOF' },
     convertedSupplierPriceFCFA: 1200,
@@ -67,11 +67,12 @@ test('produit < 1 kg : MOQ auto pour atteindre 1 kg (100 g → 10)', () => {
   assert.equal(pricing.packPrice, 15600);
 });
 
-test('produit ≥ 1 kg : pas de MOQ auto', () => {
+test('produit < 1 kg mais ≥ 2000 F : pas de MOQ auto', () => {
   const pricing = calculateImportPricing({
     convertedSupplierPriceFCFA: 2000,
-    weight: 1,
+    weight: 0.2,
   });
+  assert.equal(pricing.unitPrice, 2600);
   assert.equal(pricing.minimumOrderQuantity, 1);
   assert.equal(pricing.packSize, 1);
 });

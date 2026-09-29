@@ -22,10 +22,12 @@ async function getImportPricingConfigDoc() {
   if (hasLegacyTransitRates(doc.toObject())) {
     const next = cloneImportPricingDefaults();
     doc.productMarkupMultiplier = doc.productMarkupMultiplier || next.productMarkupMultiplier;
-    doc.minimumProductPrice = next.minimumProductPrice;
+    doc.minimumProductPrice = 0;
     doc.shippingRatePerKg = next.shippingRatePerKg;
     doc.shippingMarkup = 0;
     doc.defaultMinimumOrderQuantity = doc.defaultMinimumOrderQuantity || next.defaultMinimumOrderQuantity;
+    doc.lightProductMaxWeightKg = next.lightProductMaxWeightKg;
+    doc.lightProductMaxPrice = next.lightProductMaxPrice;
     doc.estimatedImportDays = next.estimatedImportDays;
     doc.shippingRates = next.shippingRates;
     await doc.save();

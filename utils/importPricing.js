@@ -52,6 +52,7 @@ function mergeImportPricingConfig(overrides = {}) {
     shippingMarkup,
     defaultMinimumOrderQuantity,
     lightProductMaxWeightKg: Math.max(0.05, toNumber(overrides.lightProductMaxWeightKg, base.lightProductMaxWeightKg)),
+    lightProductMaxPrice: Math.max(0, Math.round(toNumber(overrides.lightProductMaxPrice, base.lightProductMaxPrice))),
     estimatedImportDays,
     shippingRates,
   };
@@ -149,10 +150,15 @@ function resolveMoqRules(product = {}, config = {}) {
     1,
     Math.round(toNumber(product.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
   );
-  const autoMoq = lightProductMoqFromWeight(
-    parseProductWeightKg(product),
-    cfg.lightProductMaxWeightKg,
-  );
+  const converted = convertSupplierPriceFcfa(product);
+  const multiplier = Math.max(1, toNumber(product.productMarkupMultiplier, cfg.productMarkupMultiplier));
+  const unitPrice = applyProductMarkup(converted, multiplier, 0);
+  const weight = parseProductWeightKg(product);
+  const underWeight = weight > 0 && weight < cfg.lightProductMaxWeightKg;
+  const underPrice = unitPrice > 0 && unitPrice < cfg.lightProductMaxPrice;
+  const autoMoq = (underWeight && underPrice)
+    ? lightProductMoqFromWeight(weight, cfg.lightProductMaxWeightKg)
+    : 1;
   const moq = Math.max(explicitMoq, autoMoq);
   const hasExplicitIncrement = product.quantityIncrement != null && product.quantityIncrement !== '';
   const explicitIncrement = hasExplicitIncrement
@@ -197,7 +203,7 @@ function calculateImportPricing(product = {}, { quantity = 1, config, includeShi
   );
   const minUnitPrice = Math.max(
     0,
-    Math.round(toNumber(product.minimumProductPrice, cfg.minimumProductPrice)),
+    Math.round(toNumber(product.minimumProductPrice, 0)),
   );
   const convertedSupplierPriceFCFA = convertSupplierPriceFcfa(product);
   const unitPrice = applyProductMarkup(convertedSupplierPriceFCFA, multiplier, minUnitPrice);

@@ -1,10 +1,11 @@
 const DEFAULT_IMPORT_PRICING = {
   productMarkupMultiplier: 1.3,
-  minimumProductPrice: 1000,
+  minimumProductPrice: 0,
   shippingRatePerKg: 13500,
   shippingMarkup: 0,
   defaultMinimumOrderQuantity: 1,
   lightProductMaxWeightKg: 1,
+  lightProductMaxPrice: 2000,
   estimatedImportDays: { min: 20, max: 30 },
   shippingRates: {
     normal: { ratePerKg: 13500, minDays: 20, maxDays: 30 },
@@ -27,6 +28,7 @@ function cloneImportPricingDefaults() {
 function hasLegacyTransitRates(config = {}) {
   if (Number(config.shippingMarkup) === 3000) return true;
   if (Number(config.shippingRatePerKg) === 10000) return true;
+  if (Number(config.minimumProductPrice) === 1000) return true;
   const rates = config.shippingRates && typeof config.shippingRates === 'object'
     ? (config.shippingRates instanceof Map
       ? Object.fromEntries(config.shippingRates)

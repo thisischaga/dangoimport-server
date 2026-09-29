@@ -30,7 +30,6 @@ async function mapCjVariants(variants = [], marginPercent = cjConfig.defaultMarg
     const priceXof = applyProductMarkup(
       convertUsdPriceToXof(supplierUsd),
       DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
-      DEFAULT_IMPORT_PRICING.minimumProductPrice,
     );
     const stock = toNumber(
       variant.variantInventory
@@ -69,7 +68,6 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
   const sellingPrice = applyProductMarkup(
     costPriceXof,
     DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
-    DEFAULT_IMPORT_PRICING.minimumProductPrice,
   );
   const margin = calculateMargin({
     sellingPrice,
@@ -155,7 +153,6 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
     productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
-    minimumProductPrice: DEFAULT_IMPORT_PRICING.minimumProductPrice,
     minimumOrderQuantity: 1,
     quantityIncrement: 1,
     shippingCategory,
