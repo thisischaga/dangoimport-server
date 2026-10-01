@@ -2,6 +2,7 @@ const DEFAULT_IMPORT_PRICING = {
   productMarkupMultiplier: 1.3,
   minimumProductPrice: 0,
   shippingRatePerKg: 13500,
+  chinaDomesticShippingUsd: 2,
   shippingMarkup: 0,
   defaultMinimumOrderQuantity: 1,
   lightProductMaxWeightKg: 1,

@@ -1,6 +1,7 @@
 const { DEFAULT_IMPORT_PRICING, SHIPPING_CATEGORIES, cloneImportPricingDefaults } = require('../config/importPricing');
 const { toNumber, applyProductMarkup } = require('./dropshippingCalculations');
 const { cjConfig } = require('../config/cj');
+const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
 
 function mergeImportPricingConfig(overrides = {}) {
   const base = cloneImportPricingDefaults();
@@ -17,6 +18,10 @@ function mergeImportPricingConfig(overrides = {}) {
     Math.round(toNumber(overrides.defaultMinimumOrderQuantity, base.defaultMinimumOrderQuantity)),
   );
   const shippingMarkup = Math.max(0, Math.round(toNumber(overrides.shippingMarkup, 0)));
+  const chinaDomesticShippingUsd = Math.max(
+    0,
+    toNumber(overrides.chinaDomesticShippingUsd, base.chinaDomesticShippingUsd),
+  );
   const estimatedImportDays = {
     min: Math.max(1, toNumber(overrides.estimatedImportDays?.min, base.estimatedImportDays.min)),
     max: Math.max(1, toNumber(overrides.estimatedImportDays?.max, base.estimatedImportDays.max)),
@@ -49,6 +54,7 @@ function mergeImportPricingConfig(overrides = {}) {
     productMarkupMultiplier,
     minimumProductPrice,
     shippingRatePerKg,
+    chinaDomesticShippingUsd,
     shippingMarkup,
     defaultMinimumOrderQuantity,
     lightProductMaxWeightKg: Math.max(0.05, toNumber(overrides.lightProductMaxWeightKg, base.lightProductMaxWeightKg)),
@@ -135,6 +141,40 @@ function convertSupplierPriceFcfa(product = {}) {
     return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig.usdToXofRate, 610)));
   }
   return Math.round(supplierPrice);
+}
+
+function lineSupplierGoodsUsd(line = {}) {
+  const product = line.product || line;
+  const qty = Math.max(1, Math.round(toNumber(line.quantity, 1)));
+  const currency = String(product.supplier?.supplierCurrency || product.currency || 'XOF').toUpperCase();
+  const price = toNumber(product.supplierRealPrice ?? product.supplier?.supplierPrice ?? 0, 0);
+  if (currency === 'USD') return price * qty;
+  return 0;
+}
+
+function calculateChinaDomesticShipping(lines = [], config) {
+  const cfg = mergeImportPricingConfig(config || {});
+  const usdPerGroup = Math.max(0, toNumber(cfg.chinaDomesticShippingUsd, 2));
+  const grouped = groupDropshippingLinesByOrigin(lines);
+  const groups = [...grouped.entries()].map(([origin, groupLines]) => ({
+    origin,
+    itemCount: groupLines.length,
+    goodsUsd: Number(groupLines.reduce((sum, line) => sum + lineSupplierGoodsUsd(line), 0).toFixed(2)),
+  }));
+  const groupCount = groups.length;
+  const usd = Number((groupCount * usdPerGroup).toFixed(2));
+  const fcfa = Math.max(0, Math.round(usd * toNumber(cjConfig.usdToXofRate, 610)));
+  const goodsUsd = Number(groups.reduce((sum, row) => sum + row.goodsUsd, 0).toFixed(2));
+  return {
+    usdPerGroup,
+    groupCount,
+    usd,
+    fcfa,
+    currency: 'USD',
+    groups,
+    goodsUsd,
+    supplierTotalUsd: Number((goodsUsd + usd).toFixed(2)),
+  };
 }
 
 function lightProductMoqFromWeight(weightKg, thresholdKg = 1) {
@@ -285,6 +325,7 @@ function calculateImportOrderPricing(lines = [], config) {
   const days = itemQuotes.map((row) => row.estimatedDays);
   const minDays = days.length ? Math.min(...days.map((row) => row.min)) : cfg.estimatedImportDays.min;
   const maxDays = days.length ? Math.max(...days.map((row) => row.max)) : cfg.estimatedImportDays.max;
+  const chinaDomesticShipping = calculateChinaDomesticShipping(lines, cfg);
   return {
     currency: 'XOF',
     itemsTotal: Math.round(itemsTotal),
@@ -296,6 +337,9 @@ function calculateImportOrderPricing(lines = [], config) {
     shippingBaseCost: shippingCost,
     shippingMarkup: 0,
     shippingCost,
+    chinaDomesticShipping,
+    chinaDomesticShippingUsd: chinaDomesticShipping.usd,
+    chinaDomesticShippingFcfa: chinaDomesticShipping.fcfa,
     total: Math.round(itemsTotal + shippingCost),
     estimatedDays: { min: minDays, max: maxDays },
     estimatedDelivery: { minDays, maxDays },
@@ -322,4 +366,5 @@ module.exports = {
   calculateImportPricing,
   calculateImportQuote,
   calculateImportOrderPricing,
+  calculateChinaDomesticShipping,
 };

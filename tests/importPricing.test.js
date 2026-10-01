@@ -227,3 +227,69 @@ test('multi-produits : poids regroupé après MOQ auto < 1 kg', () => {
   assert.equal(quote.totalWeightKg, 3.2);
   assert.equal(quote.shippingCost, 43200);
 });
+
+test('shipping Chine : 1 produit = 2 USD, hors tarif kg et hors marge 1.30', () => {
+  const { calculateChinaDomesticShipping } = require('../utils/importPricing');
+  const { cjConfig } = require('../config/cj');
+  const quote = calculateImportOrderPricing([{
+    quantity: 1,
+    product: {
+      sourceType: 'DROPSHIPPING',
+      supplier: { supplierPrice: 10, supplierCurrency: 'USD', shipFromCountryCode: 'CN', platform: 'cj' },
+      convertedSupplierPriceFCFA: 6100,
+      weight: 0.5,
+    },
+  }]);
+  assert.equal(quote.chinaDomesticShipping.usd, 2);
+  assert.equal(quote.chinaDomesticShipping.groupCount, 1);
+  assert.equal(quote.chinaDomesticShipping.goodsUsd, 10);
+  assert.equal(quote.chinaDomesticShipping.supplierTotalUsd, 12);
+  assert.equal(quote.chinaDomesticShipping.fcfa, Math.round(2 * cjConfig.usdToXofRate));
+  assert.equal(quote.productTotal, 7930);
+  assert.equal(quote.shippingCost, 6750);
+  assert.equal(quote.total, 14680);
+  const china = calculateChinaDomesticShipping([]);
+  assert.equal(china.usd, 0);
+  assert.equal(china.groupCount, 0);
+});
+
+test('shipping Chine : plusieurs produits même groupe = 2 USD (60 + 2 = 62)', () => {
+  const products = [
+    { quantity: 1, product: { supplier: { supplierPrice: 10, supplierCurrency: 'USD', shipFromCountryCode: 'CN' }, convertedSupplierPriceFCFA: 6100, weight: 0.2 } },
+    { quantity: 1, product: { supplier: { supplierPrice: 20, supplierCurrency: 'USD', shipFromCountryCode: 'CN' }, convertedSupplierPriceFCFA: 12200, weight: 0.2 } },
+    { quantity: 1, product: { supplier: { supplierPrice: 30, supplierCurrency: 'USD', shipFromCountryCode: 'CN' }, convertedSupplierPriceFCFA: 18300, weight: 0.2 } },
+  ];
+  const quote = calculateImportOrderPricing(products);
+  assert.equal(quote.chinaDomesticShipping.goodsUsd, 60);
+  assert.equal(quote.chinaDomesticShipping.usd, 2);
+  assert.equal(quote.chinaDomesticShipping.supplierTotalUsd, 62);
+  assert.equal(quote.chinaDomesticShipping.groupCount, 1);
+  assert.equal(quote.shippingCost, Math.round(0.6 * 13500));
+  assert.equal(quote.productTotal, Math.round((6100 + 12200 + 18300) * 1.3));
+});
+
+test('shipping Chine : deux origines = 4 USD', () => {
+  const quote = calculateImportOrderPricing([
+    { quantity: 1, product: { supplier: { supplierPrice: 10, supplierCurrency: 'USD', shipFromCountryCode: 'CN' }, convertedSupplierPriceFCFA: 6100, weight: 0.2 } },
+    { quantity: 1, product: { supplier: { supplierPrice: 20, supplierCurrency: 'USD', shipFromCountryCode: 'US' }, convertedSupplierPriceFCFA: 12200, weight: 0.2 } },
+  ]);
+  assert.equal(quote.chinaDomesticShipping.groupCount, 2);
+  assert.equal(quote.chinaDomesticShipping.usd, 4);
+  assert.equal(quote.shippingCost, Math.round(0.4 * 13500));
+});
+
+test('snapshot shipping Chine figé si la config change ensuite', () => {
+  const lines = [{
+    quantity: 1,
+    product: {
+      supplier: { supplierPrice: 10, supplierCurrency: 'USD', shipFromCountryCode: 'CN' },
+      convertedSupplierPriceFCFA: 6100,
+      weight: 0.5,
+    },
+  }];
+  const snapshot = calculateImportOrderPricing(lines);
+  const later = calculateImportOrderPricing(lines, { chinaDomesticShippingUsd: 9 });
+  assert.equal(snapshot.chinaDomesticShipping.usd, 2);
+  assert.equal(later.chinaDomesticShipping.usd, 9);
+  assert.equal(snapshot.shippingCost, later.shippingCost);
+});

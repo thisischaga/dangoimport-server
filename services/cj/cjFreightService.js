@@ -4,6 +4,8 @@ const cjClient = require('./cjClient');
 const { getCJProductDetail } = require('./cjProductService');
 const { toNumber } = require('../../utils/dropshippingCalculations');
 const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
+const { groupDropshippingLinesByOrigin, resolveShipFromAreaCode } = require('../../utils/importShipmentGroups');
+const { calculateChinaDomesticShipping } = require('../../utils/importPricing');
 
 const CACHE_TTL_MS = Math.max(30_000, Number(process.env.CJ_FREIGHT_CACHE_TTL_MS) || 300_000);
 const freightCache = new Map();
@@ -144,7 +146,7 @@ function buildFreightLineDto(line) {
     throw err;
   }
   const supplier = product.supplier || {};
-  const srcAreaCode = String(supplier.shipFromCountryCode || 'CN').trim().toUpperCase().slice(0, 2);
+  const srcAreaCode = resolveShipFromAreaCode(product);
   return {
     product,
     quantity: Math.max(1, toNumber(quantity, 1)),
@@ -179,11 +181,7 @@ async function buildFreightCalculateTipBody(lines, destination) {
     });
   }
 
-  const byOrigin = new Map();
-  for (const row of enriched) {
-    if (!byOrigin.has(row.srcAreaCode)) byOrigin.set(row.srcAreaCode, []);
-    byOrigin.get(row.srcAreaCode).push(row);
-  }
+  const byOrigin = groupDropshippingLinesByOrigin(enriched);
 
   const reqDTOS = [];
   for (const [srcAreaCode, group] of byOrigin.entries()) {
@@ -325,22 +323,26 @@ async function callFreightCalculateTip(reqDTOS) {
   return [];
 }
 
-async function fetchCjShippingOptionsForLines(lines, destination) {
-  assertCjConfigured();
-  const { reqDTOS } = await buildFreightCalculateTipBody(lines, destination);
-  const cacheKey = crypto.createHash('sha256').update(JSON.stringify({ reqDTOS })).digest('hex');
-  const cached = cacheGet(cacheKey);
-  if (cached) return cached;
-
-  const optionGroups = [];
-  for (const dto of reqDTOS) {
-    const rows = await callFreightCalculateTip([dto]);
-    optionGroups.push(normalizeCJShippingOptions(rows));
-  }
-  const options = mergeMultiOriginOptions(optionGroups);
-  const result = { options, reqDTOS };
-  cacheSet(cacheKey, result);
-  return result;
+async function fetchCjShippingOptionsForLines(lines, destination = {}) {
+  const china = calculateChinaDomesticShipping(lines);
+  const { reqDTOS } = await buildFreightCalculateTipBody(lines, destination).catch(() => ({ reqDTOS: [] }));
+  const options = [{
+    id: 'dango-import:china-domestic',
+    provider: 'Dango Import',
+    logisticName: 'Shipping Chine (transitaire)',
+    price: china.usd,
+    currency: 'USD',
+    customerPrice: china.fcfa,
+    customerCurrency: 'XOF',
+    estimatedDelivery: null,
+    channelId: null,
+    optionId: null,
+    raw: {
+      usdPerGroup: china.usdPerGroup,
+      groupCount: china.groupCount,
+    },
+  }];
+  return { options, reqDTOS, chinaDomesticShipping: china };
 }
 
 function findShippingOptionById(options, shippingOptionId) {

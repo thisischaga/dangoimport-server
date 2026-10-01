@@ -85,6 +85,9 @@ function publicImportBreakdown(quote) {
     estimatedDays: quote.estimatedDays,
     estimatedDelivery: quote.estimatedDelivery,
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+    chinaDomesticShipping: quote.chinaDomesticShipping,
+    chinaDomesticShippingUsd: quote.chinaDomesticShippingUsd,
+    chinaDomesticShippingFcfa: quote.chinaDomesticShippingFcfa,
     items: (quote.items || []).map((row) => ({
       productPrice: row.productPrice,
       unitPrice: row.unitPrice,
@@ -246,6 +249,12 @@ async function validateDropshippingCheckoutPayload({
     estimatedDays: quoteResult.estimatedDays,
     estimatedDeliveryMinDays: quoteResult.estimatedDays?.min,
     estimatedDeliveryMaxDays: quoteResult.estimatedDays?.max,
+    chinaDomesticShippingUsd: breakdown.chinaDomesticShippingUsd ?? breakdown.chinaDomesticShipping?.usd,
+    chinaDomesticShippingFcfa: breakdown.chinaDomesticShippingFcfa ?? breakdown.chinaDomesticShipping?.fcfa,
+    chinaDomesticShippingUsdPerGroup: breakdown.chinaDomesticShipping?.usdPerGroup,
+    chinaDomesticShippingGroupCount: breakdown.chinaDomesticShipping?.groupCount,
+    chinaDomesticShippingGroups: breakdown.chinaDomesticShipping?.groups,
+    chinaDomesticShipping: breakdown.chinaDomesticShipping,
     items: itemSnapshots.map((row) => ({
       productPrice: row.productPrice,
       quantity: row.quantity,
