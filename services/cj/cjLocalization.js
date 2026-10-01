@@ -2,6 +2,9 @@ const { isPrimarilyChinese, isInvalidTranslationText } = require('../../utils/cj
 
 const translationCache = new Map();
 
+/** Indique si MyMemory a refusé une requête pour cause de quota dépassé lors de cette session. */
+let _quotaExceeded = false;
+
 function looksFrench(text) {
   const s = String(text || '').trim();
   if (!s) return false;
@@ -12,25 +15,76 @@ function looksFrench(text) {
 function looksEnglish(text) {
   const s = String(text || '').trim();
   if (!s || looksFrench(s) || isPrimarilyChinese(s)) return false;
-  return /\b(the|and|for|with|women|men|size|color|black|white|blue|shirt|dress|shoes|bag)\b/i.test(s)
-    || /[a-z]{4,}/i.test(s);
+  // Recherche de mots anglais courants pour éviter les faux positifs sur des codes/SKU
+  return /\b(the|and|for|with|women|men|size|color|black|white|blue|shirt|dress|shoes|bag|pack|set|kit|pro|new|hot|free|mini|case|top|best|sale)\b/i.test(s)
+    || /\b[a-z]{5,}\b/i.test(s); // Au moins 5 lettres consécutives (évite les SKU/acronymes courts)
 }
 
+/**
+ * Détecte si un message de réponse MyMemory indique un dépassement de quota.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isMyMemoryQuotaError(text) {
+  const upper = String(text || '').toUpperCase();
+  return (
+    upper.includes('YOU USED ALL AVAILABLE FREE TRANSLATIONS')
+    || upper.includes('MYMEMORY WARNING')
+    || upper.includes('USAGE LIMITS')
+    || upper.includes('TO TRANSLATE MORE')
+    || upper.includes('FREE TRANSLATION')
+    || upper.includes('MYMEMORY')
+    || upper.includes('TRANSLATED.NET')
+  );
+}
+
+/**
+ * Appelle MyMemory pour traduire un chunk de texte.
+ * @returns {{ text: string, quotaExceeded: boolean }}
+ */
 async function fetchTranslation(chunk, langpair) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langpair}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
-  const data = await response.json();
-  const translated = data?.responseData?.translatedText;
-  if (!translated || typeof translated !== 'string') return '';
-  const cleaned = translated.trim();
-  if (
-    !cleaned
-    || isInvalidTranslationText(cleaned)
-    || cleaned.toUpperCase().includes('QUERY LENGTH')
-  ) {
-    return '';
+  let data;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    data = await response.json();
+  } catch (networkErr) {
+    // Erreur réseau / timeout — on ne marque PAS le quota comme dépassé
+    console.warn('[cjLocalization] MyMemory réseau/timeout:', networkErr.message);
+    return { text: '', quotaExceeded: false };
   }
-  return cleaned;
+
+  // Vérifier le code de réponse MyMemory (200 = OK, 429/403 = quota)
+  const responseStatus = data?.responseStatus;
+  const translated = data?.responseData?.translatedText;
+  const translatedStr = String(translated || '').trim();
+
+  // Quota dépassé : code 429/403 ou message d'erreur dans le texte traduit
+  if (
+    responseStatus === 429
+    || responseStatus === 403
+    || responseStatus === '429'
+    || responseStatus === '403'
+    || isMyMemoryQuotaError(translatedStr)
+    || isInvalidTranslationText(translatedStr)
+    || translatedStr.toUpperCase().includes('QUERY LENGTH')
+  ) {
+    const isQuota = responseStatus === 429 || responseStatus === 403
+      || responseStatus === '429' || responseStatus === '403'
+      || isMyMemoryQuotaError(translatedStr);
+    if (isQuota) {
+      console.warn(
+        '[cjLocalization] ⚠️  Quota MyMemory dépassé (responseStatus=%s). '
+        + 'Les traductions sont suspendues pour cette session. '
+        + 'Relancez le serveur demain ou utilisez une clé API MyMemory.',
+        responseStatus,
+      );
+    }
+    return { text: '', quotaExceeded: isQuota };
+  }
+
+  if (!translatedStr) return { text: '', quotaExceeded: false };
+  return { text: translatedStr, quotaExceeded: false };
 }
 
 async function translateToFr(text) {
@@ -42,6 +96,11 @@ async function translateToFr(text) {
     return isInvalidTranslationText(cached) ? source : cached;
   }
 
+  // Si le quota est déjà dépassé pour cette session, ne pas appeler l'API
+  if (_quotaExceeded) {
+    return source;
+  }
+
   const langpair = isPrimarilyChinese(source) ? 'zh-CN|fr' : 'en|fr';
   const chunks = [];
   for (let i = 0; i < source.length; i += 450) {
@@ -51,7 +110,11 @@ async function translateToFr(text) {
   try {
     const parts = [];
     for (const chunk of chunks) {
-      const translated = await fetchTranslation(chunk, langpair);
+      const { text: translated, quotaExceeded } = await fetchTranslation(chunk, langpair);
+      if (quotaExceeded) {
+        _quotaExceeded = true;
+        return source; // Arrêter immédiatement, quota dépassé
+      }
       parts.push(translated || chunk);
     }
     const cleaned = parts.join(' ').replace(/\s+/g, ' ').trim();
@@ -60,9 +123,21 @@ async function translateToFr(text) {
       return cleaned;
     }
   } catch {
-    /* garder l’original */
+    /* garder l'original */
   }
   return source;
+}
+
+/**
+ * Réinitialise le flag de quota dépassé (à appeler au démarrage du serveur ou pour les tests).
+ */
+function resetQuotaFlag() {
+  _quotaExceeded = false;
+}
+
+/** Retourne true si MyMemory a renvoyé une erreur de quota pendant cette session. */
+function isQuotaExceeded() {
+  return _quotaExceeded;
 }
 
 async function maybeTranslateCatalogText(text, { forImport = false } = {}) {
@@ -132,4 +207,6 @@ module.exports = {
   applyCatalogTranslationToProduct,
   translateToFr,
   looksFrench,
+  isQuotaExceeded,
+  resetQuotaFlag,
 };

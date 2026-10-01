@@ -16,6 +16,7 @@ router.post('/import/csv', dropshippingController.importCsv);
 router.post('/bulk-status', dropshippingController.bulkStatus);
 router.post('/bulk-delete', dropshippingController.bulkDelete);
 router.post('/bulk-translate', dropshippingController.bulkTranslate);
+router.get('/translation-status', dropshippingController.getTranslationStatus);
 router.post('/translate-preview', dropshippingController.translatePreview);
 router.post('/orders/:orderId/items/:itemIndex/supplier-order', dropshippingController.markSupplierOrdered);
 router.post('/', dropshippingController.create);

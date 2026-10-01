@@ -111,7 +111,8 @@ async function mapCJProductToDangoProduct(cjProduct, detail = null, inventoryPay
   let subCategory = cjProduct.subCategory || detail?.twoCategoryName || '';
   let specifications = buildCjSpecifications(detail);
   if (!skipTranslation) {
-    category = await translateCatalogTextForImport(category);
+    // category est déjà en français via pickCjCategory() → mapCjCategoryToDangoStore()
+    // Ne PAS appeler MyMemory dessus (gaspillage de quota)
     subCategory = await translateCatalogTextForImport(subCategory);
     specifications = await Promise.all(specifications.map(async (row) => ({
       ...row,

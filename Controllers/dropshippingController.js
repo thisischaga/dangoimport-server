@@ -101,8 +101,16 @@ exports.translatePreview = async (req, res) => {
 
 exports.translateOne = async (req, res) => {
   try {
+    const { isQuotaExceeded } = require('../services/cj/cjLocalization');
     const product = await dropshippingService.translateDropshippingProduct(req.params.id, req.admin || req.user);
-    return res.json({ success: true, data: product, message: 'Textes traduits en français.' });
+    return res.json({
+      success: true,
+      data: product,
+      message: isQuotaExceeded()
+        ? 'Textes partiellement traduits — quota MyMemory dépassé. Relancez le serveur demain ou configurez une clé API.'
+        : 'Textes traduits en français.',
+      quotaExceeded: isQuotaExceeded(),
+    });
   } catch (error) {
     return handleError(res, error);
   }
@@ -110,14 +118,38 @@ exports.translateOne = async (req, res) => {
 
 exports.bulkTranslate = async (req, res) => {
   try {
+    const { isQuotaExceeded } = require('../services/cj/cjLocalization');
     const data = await dropshippingService.bulkTranslateDropshippingProducts(
       req.body?.ids || req.body?.productIds,
       req.admin || req.user,
     );
+    const quotaWarning = isQuotaExceeded()
+      ? ' ⚠️ Quota MyMemory dépassé — certains textes n\'ont pas été traduits. Relancez le serveur demain.'
+      : '';
     return res.json({
       success: true,
       data,
-      message: `${data.translated} produit(s) traduit(s) en français.`,
+      message: `${data.translated} produit(s) traduit(s) en français.${quotaWarning}`,
+      quotaExceeded: isQuotaExceeded(),
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.getTranslationStatus = async (req, res) => {
+  try {
+    const { isQuotaExceeded, resetQuotaFlag } = require('../services/cj/cjLocalization');
+    if (req.query.reset === 'true') {
+      resetQuotaFlag();
+      return res.json({ success: true, quotaExceeded: false, message: 'Flag quota réinitialisé.' });
+    }
+    return res.json({
+      success: true,
+      quotaExceeded: isQuotaExceeded(),
+      message: isQuotaExceeded()
+        ? 'Quota MyMemory dépassé pour cette session. Les traductions sont suspendues.'
+        : 'MyMemory opérationnel.',
     });
   } catch (error) {
     return handleError(res, error);
