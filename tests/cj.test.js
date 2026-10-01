@@ -236,3 +236,26 @@ test('catalog translation is skipped outside admin import', async () => {
     global.fetch = originalFetch;
   }
 });
+
+test('admin translation keeps French product fields without calling the API', async () => {
+  const { translateCatalogProductFields } = require('../services/cj/cjLocalization');
+  let fetchCalled = false;
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    fetchCalled = true;
+    return { json: async () => ({}) };
+  };
+  try {
+    const out = await translateCatalogProductFields({
+      name: 'Chapeau pour femme',
+      description: 'Une robe noire avec col en V',
+      category: 'Vêtements',
+    });
+    assert.equal(out.name, 'Chapeau pour femme');
+    assert.equal(out.description, 'Une robe noire avec col en V');
+    assert.equal(out.category, 'Vêtements');
+    assert.equal(fetchCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

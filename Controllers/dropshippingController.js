@@ -90,6 +90,40 @@ exports.bulkDelete = async (req, res) => {
   }
 };
 
+exports.translatePreview = async (req, res) => {
+  try {
+    const data = await dropshippingService.previewDropshippingTranslation(req.body || {});
+    return res.json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.translateOne = async (req, res) => {
+  try {
+    const product = await dropshippingService.translateDropshippingProduct(req.params.id, req.admin || req.user);
+    return res.json({ success: true, data: product, message: 'Textes traduits en français.' });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.bulkTranslate = async (req, res) => {
+  try {
+    const data = await dropshippingService.bulkTranslateDropshippingProducts(
+      req.body?.ids || req.body?.productIds,
+      req.admin || req.user,
+    );
+    return res.json({
+      success: true,
+      data,
+      message: `${data.translated} produit(s) traduit(s) en français.`,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
 exports.importCsv = async (req, res) => {
   try {
     const csvText = req.body?.csv || req.body?.content || '';

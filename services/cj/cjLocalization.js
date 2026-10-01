@@ -87,9 +87,49 @@ async function translateCatalogTextForImport(text) {
   return maybeTranslateCatalogText(text, { forImport: true });
 }
 
+async function translateCatalogProductFields(input = {}) {
+  const specifications = Array.isArray(input.specifications) ? input.specifications : [];
+  const variants = Array.isArray(input.variants) ? input.variants : [];
+  return {
+    name: await translateCatalogTextForImport(input.name),
+    shortDescription: await translateCatalogTextForImport(input.shortDescription),
+    description: await translateCatalogTextForImport(input.description),
+    category: await translateCatalogTextForImport(input.category),
+    subCategory: await translateCatalogTextForImport(input.subCategory),
+    shippingInfo: await translateCatalogTextForImport(input.shippingInfo),
+    specifications: await Promise.all(specifications.map(async (row) => ({
+      ...(row && typeof row === 'object' ? row : { value: row }),
+      key: await translateCatalogTextForImport(row?.key),
+      value: await translateCatalogTextForImport(row?.value),
+    }))),
+    variants: await Promise.all(variants.map(async (variant) => {
+      const raw = variant && typeof variant.toObject === 'function' ? variant.toObject() : { ...variant };
+      return {
+        ...raw,
+        name: await translateCatalogTextForImport(raw.name),
+      };
+    })),
+  };
+}
+
+async function applyCatalogTranslationToProduct(product) {
+  const fields = await translateCatalogProductFields(product);
+  product.name = fields.name;
+  product.shortDescription = fields.shortDescription;
+  product.description = fields.description;
+  if (fields.category) product.category = fields.category;
+  product.subCategory = fields.subCategory;
+  if (fields.shippingInfo) product.shippingInfo = fields.shippingInfo;
+  if (fields.specifications.length) product.specifications = fields.specifications;
+  if (fields.variants.length) product.variants = fields.variants;
+  return product;
+}
+
 module.exports = {
   maybeTranslateCatalogText,
   translateCatalogTextForImport,
+  translateCatalogProductFields,
+  applyCatalogTranslationToProduct,
   translateToFr,
   looksFrench,
 };

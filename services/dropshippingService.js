@@ -280,6 +280,11 @@ async function createDropshippingProduct(body, adminUser) {
     date: new Date(),
   }];
 
+  if (payload.isPublished) {
+    const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
+    await applyCatalogTranslationToProduct(payload);
+  }
+
   const created = await Product.create(payload);
   return created.toObject();
 }
@@ -313,6 +318,11 @@ async function updateDropshippingProduct(id, body, adminUser) {
     },
   ];
 
+  if (payload.isPublished) {
+    const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
+    await applyCatalogTranslationToProduct(payload);
+  }
+
   Object.assign(existing, payload);
   await existing.save();
   return existing.toObject();
@@ -340,6 +350,20 @@ async function updateDropshippingStatus(id, { isDropshippingActive, isPublished 
     product.isDropshippingActive = isDropshippingActive;
   }
   if (typeof isPublished === 'boolean') {
+    if (isPublished === true) {
+      const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
+      await applyCatalogTranslationToProduct(product);
+      product.history = [
+        ...(product.history || []),
+        {
+          action: 'Traduction catalogue',
+          comment: 'Textes traduits en français avant publication client.',
+          performedBy: 'admin',
+          role: 'admin',
+          date: new Date(),
+        },
+      ];
+    }
     product.isPublished = isPublished;
   }
 
@@ -354,6 +378,29 @@ async function bulkUpdateDropshippingStatus(ids = [], patch = {}) {
     err.status = 400;
     throw err;
   }
+  if (typeof patch.isPublished === 'boolean' && patch.isPublished === true) {
+    const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
+    const toPublish = await Product.find({ _id: { $in: productIds }, sourceType: 'DROPSHIPPING' });
+    for (const product of toPublish) {
+      await applyCatalogTranslationToProduct(product);
+      product.isPublished = true;
+      if (typeof patch.isDropshippingActive === 'boolean') {
+        product.isDropshippingActive = patch.isDropshippingActive;
+      }
+      product.history = [
+        ...(product.history || []),
+        {
+          action: 'Traduction catalogue',
+          comment: 'Textes traduits en français avant publication client.',
+          performedBy: 'admin',
+          role: 'admin',
+          date: new Date(),
+        },
+      ];
+      await product.save();
+    }
+    return { matched: toPublish.length, modified: toPublish.length, translated: toPublish.length };
+  }
   const update = {};
   if (typeof patch.isDropshippingActive === 'boolean') update.isDropshippingActive = patch.isDropshippingActive;
   if (typeof patch.isPublished === 'boolean') update.isPublished = patch.isPublished;
@@ -367,6 +414,59 @@ async function bulkUpdateDropshippingStatus(ids = [], patch = {}) {
     { $set: update },
   );
   return { matched: result.matchedCount ?? result.n, modified: result.modifiedCount ?? result.nModified };
+}
+
+async function translateDropshippingProduct(id, adminUser) {
+  const product = await Product.findOne({ _id: id, sourceType: 'DROPSHIPPING' });
+  if (!product) {
+    const err = new Error('Produit dropshipping introuvable.');
+    err.status = 404;
+    throw err;
+  }
+  const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
+  await applyCatalogTranslationToProduct(product);
+  product.history = [
+    ...(product.history || []),
+    {
+      action: 'Traduction catalogue',
+      comment: 'Textes traduits en français (admin, avant publication client).',
+      performedBy: adminUser?.email || adminUser?.adminName || 'admin',
+      role: 'admin',
+      date: new Date(),
+    },
+  ];
+  await product.save();
+  return product.toObject();
+}
+
+async function bulkTranslateDropshippingProducts(ids = [], adminUser) {
+  const productIds = (Array.isArray(ids) ? ids : []).map((id) => String(id)).filter(Boolean);
+  if (!productIds.length) {
+    const err = new Error('Aucun produit sélectionné.');
+    err.status = 400;
+    throw err;
+  }
+  const products = await Product.find({ _id: { $in: productIds }, sourceType: 'DROPSHIPPING' });
+  let translated = 0;
+  for (const product of products) {
+    await translateDropshippingProduct(product._id, adminUser);
+    translated += 1;
+  }
+  return { matched: products.length, translated };
+}
+
+async function previewDropshippingTranslation(body = {}) {
+  const { translateCatalogProductFields } = require('./cj/cjLocalization');
+  return translateCatalogProductFields({
+    name: body.name,
+    shortDescription: body.shortDescription,
+    description: body.description,
+    category: body.category,
+    subCategory: body.subCategory,
+    shippingInfo: body.shippingInfo,
+    specifications: body.specifications,
+    variants: body.variants,
+  });
 }
 
 async function bulkDeleteDropshippingProducts(ids = []) {
@@ -520,6 +620,9 @@ module.exports = {
   updateDropshippingStatus,
   bulkUpdateDropshippingStatus,
   bulkDeleteDropshippingProducts,
+  translateDropshippingProduct,
+  bulkTranslateDropshippingProducts,
+  previewDropshippingTranslation,
   importDropshippingCsv,
   syncDropshippingProduct,
 };
