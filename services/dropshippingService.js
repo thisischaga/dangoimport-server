@@ -214,7 +214,8 @@ async function listDropshippingProducts(query = {}) {
     filter['supplier.platform'] = String(query.platform).trim().toLowerCase();
   }
   if (query.category) {
-    filter.category = String(query.category).trim();
+    const catStr = String(query.category).trim();
+    filter.category = new RegExp(`^${catStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
   }
   if (query.search) {
     const regex = new RegExp(String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
