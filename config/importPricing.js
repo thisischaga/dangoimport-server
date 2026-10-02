@@ -4,7 +4,7 @@ const DEFAULT_IMPORT_PRICING = {
   shippingRatePerKg: 13500,
   chinaDomesticShippingUsd: 2,
   shippingMarkup: 0,
-  defaultMinimumOrderQuantity: 1,
+  defaultMinimumOrderQuantity: 20,
   lightProductMaxWeightKg: 1,
   lightProductMaxPrice: 2000,
   estimatedImportDays: { min: 20, max: 30 },

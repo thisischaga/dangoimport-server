@@ -351,6 +351,11 @@ async function updateDropshippingStatus(id, { isDropshippingActive, isPublished 
   }
   if (typeof isPublished === 'boolean') {
     if (isPublished === true) {
+      if (Number(product.price || 0) <= 0) {
+        const err = new Error('Impossible de publier un produit dont le prix est égal à 0$ / 0 FCFA.');
+        err.status = 400;
+        throw err;
+      }
       const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
       await applyCatalogTranslationToProduct(product);
       product.history = [
@@ -364,7 +369,7 @@ async function updateDropshippingStatus(id, { isDropshippingActive, isPublished 
         },
       ];
     }
-    product.isPublished = isPublished;
+    product.isPublished = isPublished && Number(product.price || 0) > 0;
   }
 
   await product.save();
@@ -381,7 +386,13 @@ async function bulkUpdateDropshippingStatus(ids = [], patch = {}) {
   if (typeof patch.isPublished === 'boolean' && patch.isPublished === true) {
     const { applyCatalogTranslationToProduct } = require('./cj/cjLocalization');
     const toPublish = await Product.find({ _id: { $in: productIds }, sourceType: 'DROPSHIPPING' });
+    let publishedCount = 0;
     for (const product of toPublish) {
+      if (Number(product.price || 0) <= 0) {
+        product.isPublished = false;
+        await product.save();
+        continue;
+      }
       await applyCatalogTranslationToProduct(product);
       product.isPublished = true;
       if (typeof patch.isDropshippingActive === 'boolean') {
@@ -398,8 +409,9 @@ async function bulkUpdateDropshippingStatus(ids = [], patch = {}) {
         },
       ];
       await product.save();
+      publishedCount++;
     }
-    return { matched: toPublish.length, modified: toPublish.length, translated: toPublish.length };
+    return { matched: toPublish.length, modified: publishedCount, translated: publishedCount };
   }
   const update = {};
   if (typeof patch.isDropshippingActive === 'boolean') update.isDropshippingActive = patch.isDropshippingActive;

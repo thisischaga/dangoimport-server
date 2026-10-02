@@ -140,7 +140,7 @@ function buildProductPayload(body, { existingProduct } = {}) {
     isBestSeller: Boolean(body.isBestSeller),
     isNewArrival: Boolean(body.isNewArrival),
     isPromo: Boolean(body.isPromo || body.promoPrice || body.salePrice),
-    isPublished: body.isPublished !== false && body.isPublished !== 'false',
+    isPublished: (body.isPublished !== false && body.isPublished !== 'false') && (toNumber(body.price, existingProduct?.price ?? 0) || 0) > 0,
     seoTitle: body.seoTitle?.trim() || undefined,
     seoDescription: body.seoDescription?.trim() || undefined,
     seoKeywords: toStringList(body.seoKeywords),

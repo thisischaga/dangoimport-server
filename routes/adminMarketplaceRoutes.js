@@ -115,13 +115,13 @@ router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
     const missing = [];
     if (!product.name || !String(product.name).trim()) missing.push('name');
     if (!product.category || !String(product.category).trim()) missing.push('category');
-    if (product.price === undefined || product.price === null) missing.push('price');
+    if (product.price === undefined || product.price === null || Number(product.price) <= 0) missing.push('price (doit être supérieur à 0)');
     if (product.stock === undefined || product.stock === null) missing.push('stock');
     if (!product.description || !String(product.description).trim()) missing.push('description');
 
     if (missing.length > 0) {
       // Do not attempt to save; return a clear error so the admin can request changes
-      return res.status(400).json({ success: false, message: 'Impossible d\'approuver : champs requis manquants.', missingFields: missing });
+      return res.status(400).json({ success: false, message: 'Impossible d\'approuver : champs requis manquants ou prix égal à 0.', missingFields: missing });
     }
 
     product.validationStatus = 'approved';
@@ -337,9 +337,13 @@ router.put('/products/:id/toggle-disable', verifyAdmin, async (req, res) => {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
+    if (product.validationStatus === 'disabled' && Number(product.price || 0) <= 0) {
+      return res.status(400).json({ success: false, message: 'Impossible de réactiver un produit dont le prix est de 0$ / 0 FCFA.' });
+    }
+
     const newStatus = product.validationStatus === 'disabled' ? 'approved' : 'disabled';
     product.validationStatus = newStatus;
-    product.isPublished = newStatus === 'approved';
+    product.isPublished = newStatus === 'approved' && Number(product.price || 0) > 0;
     product.updatedAt = new Date();
 
     const adminUser = req.adminUser || req.admin || req.user || {};

@@ -223,7 +223,7 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     brand: mapped.brand,
     shippingInfo: mapped.shippingInfo,
     importSourceType: 'CJ_API',
-    isPublished: publish,
+    isPublished: Boolean(publish) && Number(mapped?.pricing?.sellingPrice || 0) > 0,
     isDropshippingActive: true,
     otherCosts: 0,
     estimatedProfit: mapped.pricing.estimatedProfit,

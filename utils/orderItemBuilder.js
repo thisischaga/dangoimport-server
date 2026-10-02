@@ -82,6 +82,10 @@ function assertProductPurchasable(product, quantity = 1) {
     throw new Error('Produit introuvable.');
   }
 
+  if (Number(product.price || 0) <= 0) {
+    throw new Error(`Le produit "${product.name}" n'a pas un prix valide.`);
+  }
+
   if (product.sourceType === 'DROPSHIPPING') {
     if (!product.isDropshippingActive) {
       throw new Error(`Le produit ${product.name} n'est pas disponible.`);

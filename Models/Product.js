@@ -362,10 +362,14 @@ const productSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    date: {
-        type: Date,
-        default: Date.now,
+});
+
+// Sécurité : empêche la publication de produits à 0$ / 0 FCFA
+productSchema.pre('save', function (next) {
+    if (this.isPublished && (this.price === undefined || this.price === null || Number(this.price) <= 0)) {
+        this.isPublished = false;
     }
+    next();
 });
 
 // Optimisation : Indexation pour recherche rapide

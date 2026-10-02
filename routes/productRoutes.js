@@ -11,6 +11,7 @@ const { mixProductsForDisplay, shouldMixCatalogSort } = require('../utils/mixCat
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const PUBLIC_CATALOG_SOURCE_FILTER = {
+  price: { $gt: 0 },
   $or: [
     { sourceType: { $exists: false } },
     { sourceType: 'LOCAL_SELLER' },
