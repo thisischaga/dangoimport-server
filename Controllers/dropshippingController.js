@@ -139,17 +139,24 @@ exports.bulkTranslate = async (req, res) => {
 
 exports.getTranslationStatus = async (req, res) => {
   try {
-    const { isQuotaExceeded, resetQuotaFlag } = require('../services/cj/cjLocalization');
+    const { getTranslationEngineStatus, resetEngineState } = require('../services/cj/cjLocalization');
     if (req.query.reset === 'true') {
-      resetQuotaFlag();
-      return res.json({ success: true, quotaExceeded: false, message: 'Flag quota réinitialisé.' });
+      resetEngineState();
+      return res.json({ success: true, ...getTranslationEngineStatus(), message: 'Moteur de traduction réinitialisé vers MyMemory.' });
+    }
+    const status = getTranslationEngineStatus();
+    let message = 'Moteur principal MyMemory actif.';
+    if (status.activeEngine === 'libretranslate') {
+      message = 'Quota MyMemory atteint — Basculement automatique sur LibreTranslate.';
+    } else if (status.activeEngine === 'lingva') {
+      message = 'Quota MyMemory et LibreTranslate atteints — Basculement sur Lingva Translate.';
+    } else if (status.allEnginesFailed) {
+      message = 'Tous les moteurs de traduction gratuits sont indisponibles. Les textes originaux sont conservés.';
     }
     return res.json({
       success: true,
-      quotaExceeded: isQuotaExceeded(),
-      message: isQuotaExceeded()
-        ? 'Quota MyMemory dépassé pour cette session. Les traductions sont suspendues.'
-        : 'MyMemory opérationnel.',
+      ...status,
+      message,
     });
   } catch (error) {
     return handleError(res, error);

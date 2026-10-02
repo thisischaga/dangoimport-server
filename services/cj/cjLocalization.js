@@ -1,9 +1,16 @@
-const { isPrimarilyChinese, isInvalidTranslationText } = require('../../utils/cjCatalogHelpers');
+﻿const { isPrimarilyChinese, isInvalidTranslationText } = require('../../utils/cjCatalogHelpers');
+
+// ─── Cache & état global ────────────────────────────────────────────────────
 
 const translationCache = new Map();
 
-/** Indique si MyMemory a refusé une requête pour cause de quota dépassé lors de cette session. */
-let _quotaExceeded = false;
+/**
+ * Moteur actif : 'mymemory' | 'libretranslate' | 'lingva' | 'none'
+ * 'none' = tous les moteurs ont échoué pour cette session.
+ */
+let _activeEngine = 'mymemory';
+
+// ─── Helpers de détection ───────────────────────────────────────────────────
 
 function looksFrench(text) {
   const s = String(text || '').trim();
@@ -15,16 +22,10 @@ function looksFrench(text) {
 function looksEnglish(text) {
   const s = String(text || '').trim();
   if (!s || looksFrench(s) || isPrimarilyChinese(s)) return false;
-  // Recherche de mots anglais courants pour éviter les faux positifs sur des codes/SKU
   return /\b(the|and|for|with|women|men|size|color|black|white|blue|shirt|dress|shoes|bag|pack|set|kit|pro|new|hot|free|mini|case|top|best|sale)\b/i.test(s)
-    || /\b[a-z]{5,}\b/i.test(s); // Au moins 5 lettres consécutives (évite les SKU/acronymes courts)
+    || /\b[a-z]{5,}\b/i.test(s);
 }
 
-/**
- * Détecte si un message de réponse MyMemory indique un dépassement de quota.
- * @param {string} text
- * @returns {boolean}
- */
 function isMyMemoryQuotaError(text) {
   const upper = String(text || '').toUpperCase();
   return (
@@ -38,70 +39,171 @@ function isMyMemoryQuotaError(text) {
   );
 }
 
-/**
- * Appelle MyMemory pour traduire un chunk de texte.
- * @returns {{ text: string, quotaExceeded: boolean }}
- */
-async function fetchTranslation(chunk, langpair) {
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langpair}`;
+// ─── Config moteurs depuis .env ─────────────────────────────────────────────
+
+function getEngineConfig() {
+  return {
+    mymemory: {
+      apiKey: (process.env.MYMEMORY_API_KEY || '').trim(),
+      enabled: true,
+    },
+    libretranslate: {
+      url: (process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com').replace(/\/$/, ''),
+      apiKey: (process.env.LIBRETRANSLATE_API_KEY || '').trim(),
+      enabled: process.env.LIBRETRANSLATE_ENABLED !== 'false',
+    },
+    lingva: {
+      url: (process.env.LINGVA_URL || 'https://lingva.ml').replace(/\/$/, ''),
+      enabled: process.env.LINGVA_ENABLED !== 'false',
+    },
+  };
+}
+
+// ─── Moteurs de traduction ───────────────────────────────────────────────────
+
+async function fetchFromMyMemory(chunk, langpair) {
+  const config = getEngineConfig().mymemory;
+  let url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langpair}`;
+  if (config.apiKey) url += `&key=${encodeURIComponent(config.apiKey)}`;
   let data;
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
     data = await response.json();
   } catch (networkErr) {
-    // Erreur réseau / timeout — on ne marque PAS le quota comme dépassé
-    console.warn('[cjLocalization] MyMemory réseau/timeout:', networkErr.message);
+    console.warn('[cjLocalization/mymemory] Reseau/timeout:', networkErr.message);
     return { text: '', quotaExceeded: false };
   }
-
-  // Vérifier le code de réponse MyMemory (200 = OK, 429/403 = quota)
-  const responseStatus = data?.responseStatus;
-  const translated = data?.responseData?.translatedText;
-  const translatedStr = String(translated || '').trim();
-
-  // Quota dépassé : code 429/403 ou message d'erreur dans le texte traduit
-  if (
-    responseStatus === 429
-    || responseStatus === 403
-    || responseStatus === '429'
-    || responseStatus === '403'
-    || isMyMemoryQuotaError(translatedStr)
-    || isInvalidTranslationText(translatedStr)
-    || translatedStr.toUpperCase().includes('QUERY LENGTH')
-  ) {
-    const isQuota = responseStatus === 429 || responseStatus === 403
-      || responseStatus === '429' || responseStatus === '403'
-      || isMyMemoryQuotaError(translatedStr);
-    if (isQuota) {
-      console.warn(
-        '[cjLocalization] ⚠️  Quota MyMemory dépassé (responseStatus=%s). '
-        + 'Les traductions sont suspendues pour cette session. '
-        + 'Relancez le serveur demain ou utilisez une clé API MyMemory.',
-        responseStatus,
-      );
-    }
-    return { text: '', quotaExceeded: isQuota };
+  const responseStatus = data && data.responseStatus;
+  const translatedStr = String((data && data.responseData && data.responseData.translatedText) || '').trim();
+  const isQuota = responseStatus === 429 || responseStatus === 403
+    || responseStatus === '429' || responseStatus === '403'
+    || isMyMemoryQuotaError(translatedStr);
+  if (isQuota) {
+    console.warn('[cjLocalization] MyMemory quota depasse (status=%s). Passage au moteur suivant.', responseStatus);
+    return { text: '', quotaExceeded: true };
   }
-
-  if (!translatedStr) return { text: '', quotaExceeded: false };
+  if (!translatedStr || isInvalidTranslationText(translatedStr) || translatedStr.toUpperCase().includes('QUERY LENGTH')) {
+    return { text: '', quotaExceeded: false };
+  }
   return { text: translatedStr, quotaExceeded: false };
 }
+
+async function fetchFromLibreTranslate(chunk, sourceLang) {
+  const config = getEngineConfig().libretranslate;
+  if (!config.enabled) return '';
+  const source = sourceLang === 'zh-CN' ? 'zh' : sourceLang;
+  const body = { q: chunk, source, target: 'fr', format: 'text' };
+  if (config.apiKey) body.api_key = config.apiKey;
+  try {
+    const response = await fetch(`${config.url}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      if (response.status === 429 || response.status === 403) {
+        console.warn('[cjLocalization/libretranslate] Quota/limite atteint(e) sur %s. Passage a Lingva.', config.url);
+        return null;
+      }
+      const errBody = await response.text().catch(() => '');
+      console.warn('[cjLocalization/libretranslate] Erreur %d: %s', response.status, errBody.slice(0, 120));
+      return '';
+    }
+    const data = await response.json();
+    const translated = String((data && data.translatedText) || '').trim();
+    if (!translated || isInvalidTranslationText(translated)) return '';
+    return translated;
+  } catch (err) {
+    console.warn('[cjLocalization/libretranslate] Reseau/timeout:', err.message);
+    return '';
+  }
+}
+
+async function fetchFromLingva(chunk, sourceLang) {
+  const config = getEngineConfig().lingva;
+  if (!config.enabled) return '';
+  const source = sourceLang === 'zh-CN' ? 'zh' : sourceLang;
+  const encoded = encodeURIComponent(chunk);
+  try {
+    const response = await fetch(
+      `${config.url}/api/v1/${source}/fr/${encoded}`,
+      { signal: AbortSignal.timeout(15000) },
+    );
+    if (!response.ok) {
+      if (response.status === 429 || response.status === 503) {
+        console.warn('[cjLocalization/lingva] Instance %s surchargee (%d).', config.url, response.status);
+        return null;
+      }
+      console.warn('[cjLocalization/lingva] Erreur %d sur %s', response.status, config.url);
+      return '';
+    }
+    const data = await response.json();
+    const translated = String((data && data.translation) || '').trim();
+    if (!translated || isInvalidTranslationText(translated)) return '';
+    return translated;
+  } catch (err) {
+    console.warn('[cjLocalization/lingva] Reseau/timeout:', err.message);
+    return '';
+  }
+}
+
+// ─── Orchestrateur en cascade ───────────────────────────────────────────────
+
+async function translateChunkCascade(chunk, srcLang) {
+  if (_activeEngine === 'none') return chunk;
+
+  if (_activeEngine === 'mymemory') {
+    const langpair = srcLang === 'zh-CN' ? 'zh-CN|fr' : 'en|fr';
+    const { text, quotaExceeded } = await fetchFromMyMemory(chunk, langpair);
+    if (!quotaExceeded && text) return text;
+    if (quotaExceeded) {
+      console.warn('[cjLocalization] Basculement MyMemory -> LibreTranslate');
+      _activeEngine = 'libretranslate';
+    } else {
+      return chunk;
+    }
+  }
+
+  if (_activeEngine === 'libretranslate') {
+    const result = await fetchFromLibreTranslate(chunk, srcLang);
+    if (result === null) {
+      console.warn('[cjLocalization] Basculement LibreTranslate -> Lingva');
+      _activeEngine = 'lingva';
+    } else if (result) {
+      return result;
+    } else {
+      _activeEngine = 'lingva';
+    }
+  }
+
+  if (_activeEngine === 'lingva') {
+    const result = await fetchFromLingva(chunk, srcLang);
+    if (result === null || !result) {
+      console.warn('[cjLocalization] Tous les moteurs de traduction sont indisponibles. Texte original conserve.');
+      _activeEngine = 'none';
+      return chunk;
+    }
+    return result;
+  }
+
+  return chunk;
+}
+
+// ─── Traduction principale ───────────────────────────────────────────────────
 
 async function translateToFr(text) {
   const source = String(text || '').trim();
   if (!source || source.length < 2 || isInvalidTranslationText(source)) return source;
   if (looksFrench(source) && !isPrimarilyChinese(source)) return source;
+  if (_activeEngine === 'none') return source;
+
   if (translationCache.has(source)) {
     const cached = translationCache.get(source);
     return isInvalidTranslationText(cached) ? source : cached;
   }
 
-  // Si le quota est déjà dépassé pour cette session, ne pas appeler l'API
-  if (_quotaExceeded) {
-    return source;
-  }
-
-  const langpair = isPrimarilyChinese(source) ? 'zh-CN|fr' : 'en|fr';
+  const srcLang = isPrimarilyChinese(source) ? 'zh-CN' : 'en';
   const chunks = [];
   for (let i = 0; i < source.length; i += 450) {
     chunks.push(source.slice(i, i + 450));
@@ -110,11 +212,7 @@ async function translateToFr(text) {
   try {
     const parts = [];
     for (const chunk of chunks) {
-      const { text: translated, quotaExceeded } = await fetchTranslation(chunk, langpair);
-      if (quotaExceeded) {
-        _quotaExceeded = true;
-        return source; // Arrêter immédiatement, quota dépassé
-      }
+      const translated = await translateChunkCascade(chunk, srcLang);
       parts.push(translated || chunk);
     }
     const cleaned = parts.join(' ').replace(/\s+/g, ' ').trim();
@@ -122,23 +220,42 @@ async function translateToFr(text) {
       translationCache.set(source, cleaned);
       return cleaned;
     }
-  } catch {
+  } catch (_err) {
     /* garder l'original */
   }
   return source;
 }
 
-/**
- * Réinitialise le flag de quota dépassé (à appeler au démarrage du serveur ou pour les tests).
- */
-function resetQuotaFlag() {
-  _quotaExceeded = false;
+// ─── Gestion des moteurs ─────────────────────────────────────────────────────
+
+function resetEngineState() {
+  _activeEngine = 'mymemory';
+  console.info('[cjLocalization] Moteur de traduction reinitialise -> MyMemory');
 }
 
-/** Retourne true si MyMemory a renvoyé une erreur de quota pendant cette session. */
-function isQuotaExceeded() {
-  return _quotaExceeded;
+function getTranslationEngineStatus() {
+  const config = getEngineConfig();
+  return {
+    activeEngine: _activeEngine,
+    quotaExceeded: _activeEngine !== 'mymemory',
+    allEnginesFailed: _activeEngine === 'none',
+    engines: {
+      mymemory: { active: _activeEngine === 'mymemory', hasApiKey: Boolean(config.mymemory.apiKey) },
+      libretranslate: { active: _activeEngine === 'libretranslate', enabled: config.libretranslate.enabled, url: config.libretranslate.url },
+      lingva: { active: _activeEngine === 'lingva', enabled: config.lingva.enabled, url: config.lingva.url },
+    },
+  };
 }
+
+function isQuotaExceeded() {
+  return _activeEngine !== 'mymemory';
+}
+
+function resetQuotaFlag() {
+  resetEngineState();
+}
+
+// ─── API catalogue ───────────────────────────────────────────────────────────
 
 async function maybeTranslateCatalogText(text, { forImport = false } = {}) {
   const { cjConfig } = require('../../config/cj');
@@ -154,7 +271,6 @@ async function maybeTranslateCatalogText(text, { forImport = false } = {}) {
     return source;
   }
 
-  // Hors import admin : ne jamais appeler l’API de traduction.
   return source;
 }
 
@@ -162,23 +278,24 @@ async function translateCatalogTextForImport(text) {
   return maybeTranslateCatalogText(text, { forImport: true });
 }
 
-async function translateCatalogProductFields(input = {}) {
-  const specifications = Array.isArray(input.specifications) ? input.specifications : [];
-  const variants = Array.isArray(input.variants) ? input.variants : [];
+async function translateCatalogProductFields(input) {
+  const inp = input || {};
+  const specifications = Array.isArray(inp.specifications) ? inp.specifications : [];
+  const variants = Array.isArray(inp.variants) ? inp.variants : [];
   return {
-    name: await translateCatalogTextForImport(input.name),
-    shortDescription: await translateCatalogTextForImport(input.shortDescription),
-    description: await translateCatalogTextForImport(input.description),
-    category: await translateCatalogTextForImport(input.category),
-    subCategory: await translateCatalogTextForImport(input.subCategory),
-    shippingInfo: await translateCatalogTextForImport(input.shippingInfo),
+    name: await translateCatalogTextForImport(inp.name),
+    shortDescription: await translateCatalogTextForImport(inp.shortDescription),
+    description: await translateCatalogTextForImport(inp.description),
+    category: await translateCatalogTextForImport(inp.category),
+    subCategory: await translateCatalogTextForImport(inp.subCategory),
+    shippingInfo: await translateCatalogTextForImport(inp.shippingInfo),
     specifications: await Promise.all(specifications.map(async (row) => ({
       ...(row && typeof row === 'object' ? row : { value: row }),
-      key: await translateCatalogTextForImport(row?.key),
-      value: await translateCatalogTextForImport(row?.value),
+      key: await translateCatalogTextForImport(row && row.key),
+      value: await translateCatalogTextForImport(row && row.value),
     }))),
     variants: await Promise.all(variants.map(async (variant) => {
-      const raw = variant && typeof variant.toObject === 'function' ? variant.toObject() : { ...variant };
+      const raw = variant && typeof variant.toObject === 'function' ? variant.toObject() : Object.assign({}, variant);
       return {
         ...raw,
         name: await translateCatalogTextForImport(raw.name),
@@ -209,4 +326,6 @@ module.exports = {
   looksFrench,
   isQuotaExceeded,
   resetQuotaFlag,
+  resetEngineState,
+  getTranslationEngineStatus,
 };
