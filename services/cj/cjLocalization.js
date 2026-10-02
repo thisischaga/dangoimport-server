@@ -1,4 +1,4 @@
-﻿const { isPrimarilyChinese, isInvalidTranslationText } = require('../../utils/cjCatalogHelpers');
+const { isPrimarilyChinese, isInvalidTranslationText } = require('../../utils/cjCatalogHelpers');
 
 // ─── Cache & état global ────────────────────────────────────────────────────
 
@@ -47,14 +47,17 @@ function getEngineConfig() {
       apiKey: (process.env.MYMEMORY_API_KEY || '').trim(),
       enabled: true,
     },
+    google: {
+      enabled: process.env.GOOGLE_GTX_ENABLED !== 'false',
+    },
     libretranslate: {
-      url: (process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com').replace(/\/$/, ''),
+      url: (process.env.LIBRETRANSLATE_URL || 'https://libretranslate.de').replace(/\/$/, ''),
       apiKey: (process.env.LIBRETRANSLATE_API_KEY || '').trim(),
-      enabled: process.env.LIBRETRANSLATE_ENABLED !== 'false',
+      enabled: Boolean((process.env.LIBRETRANSLATE_URL || '').trim() || (process.env.LIBRETRANSLATE_API_KEY || '').trim()),
     },
     lingva: {
       url: (process.env.LINGVA_URL || 'https://lingva.ml').replace(/\/$/, ''),
-      enabled: process.env.LINGVA_ENABLED !== 'false',
+      enabled: process.env.LINGVA_ENABLED === 'true',
     },
   };
 }
@@ -88,6 +91,34 @@ async function fetchFromMyMemory(chunk, langpair) {
   return { text: translatedStr, quotaExceeded: false };
 }
 
+async function fetchFromGoogleGtx(chunk, sourceLang) {
+  const src = sourceLang === 'zh-CN' ? 'zh-CN' : 'en';
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${src}&tl=fr&dt=t&q=${encodeURIComponent(chunk)}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok) {
+      console.warn('[cjLocalization/google-gtx] HTTP error %d', response.status);
+      return '';
+    }
+    const data = await response.json();
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      const translatedText = data[0].map((item) => (item && item[0]) || '').join('');
+      if (translatedText && !isInvalidTranslationText(translatedText)) {
+        return translatedText.trim();
+      }
+    }
+    return '';
+  } catch (err) {
+    console.warn('[cjLocalization/google-gtx] Erreur/timeout:', err.message);
+    return '';
+  }
+}
+
 async function fetchFromLibreTranslate(chunk, sourceLang) {
   const config = getEngineConfig().libretranslate;
   if (!config.enabled) return '';
@@ -102,8 +133,8 @@ async function fetchFromLibreTranslate(chunk, sourceLang) {
       signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
-      if (response.status === 429 || response.status === 403) {
-        console.warn('[cjLocalization/libretranslate] Quota/limite atteint(e) sur %s. Passage a Lingva.', config.url);
+      if (response.status === 429 || response.status === 403 || response.status === 400) {
+        console.warn('[cjLocalization/libretranslate] Service non disponible (%d) sur %s. Passage au moteur suivant.', response.status, config.url);
         return null;
       }
       const errBody = await response.text().catch(() => '');
@@ -131,8 +162,8 @@ async function fetchFromLingva(chunk, sourceLang) {
       { signal: AbortSignal.timeout(15000) },
     );
     if (!response.ok) {
-      if (response.status === 429 || response.status === 503) {
-        console.warn('[cjLocalization/lingva] Instance %s surchargee (%d).', config.url, response.status);
+      if (response.status === 429 || response.status === 503 || response.status === 403) {
+        console.warn('[cjLocalization/lingva] Instance %s non accessible (%d).', config.url, response.status);
         return null;
       }
       console.warn('[cjLocalization/lingva] Erreur %d sur %s', response.status, config.url);
@@ -158,22 +189,26 @@ async function translateChunkCascade(chunk, srcLang) {
     const { text, quotaExceeded } = await fetchFromMyMemory(chunk, langpair);
     if (!quotaExceeded && text) return text;
     if (quotaExceeded) {
-      console.warn('[cjLocalization] Basculement MyMemory -> LibreTranslate');
-      _activeEngine = 'libretranslate';
+      console.warn('[cjLocalization] Basculement MyMemory -> Google Translate (GTX)');
+      _activeEngine = 'google';
     } else {
       return chunk;
     }
   }
 
+  if (_activeEngine === 'google') {
+    const result = await fetchFromGoogleGtx(chunk, srcLang);
+    if (result) return result;
+    console.warn('[cjLocalization] Google GTX indisponible. Passage aux alternatives secondaires.');
+    _activeEngine = 'libretranslate';
+  }
+
   if (_activeEngine === 'libretranslate') {
     const result = await fetchFromLibreTranslate(chunk, srcLang);
-    if (result === null) {
-      console.warn('[cjLocalization] Basculement LibreTranslate -> Lingva');
+    if (result === null || !result) {
       _activeEngine = 'lingva';
-    } else if (result) {
-      return result;
     } else {
-      _activeEngine = 'lingva';
+      return result;
     }
   }
 
@@ -241,6 +276,7 @@ function getTranslationEngineStatus() {
     allEnginesFailed: _activeEngine === 'none',
     engines: {
       mymemory: { active: _activeEngine === 'mymemory', hasApiKey: Boolean(config.mymemory.apiKey) },
+      google: { active: _activeEngine === 'google', enabled: config.google.enabled },
       libretranslate: { active: _activeEngine === 'libretranslate', enabled: config.libretranslate.enabled, url: config.libretranslate.url },
       lingva: { active: _activeEngine === 'lingva', enabled: config.lingva.enabled, url: config.lingva.url },
     },
