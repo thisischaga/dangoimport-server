@@ -73,7 +73,6 @@ async function exchangeAuthorizationCode(code) {
   }
   const data = await iopPost('/auth/token/create', {
     code: String(code || '').trim(),
-    redirect_uri: redirectUri,
   });
   if (!data.access_token && !data.accessToken) {
     const err = new Error(data.error_description || data.error_message || data.message || 'Échange du code OAuth Alibaba impossible.');

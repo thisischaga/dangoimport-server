@@ -1,6 +1,14 @@
 function classifyAlibabaError(error) {
   const message = String(error?.message || '');
   const code = String(error?.code || '');
+  if (/IncompleteSignature|does not conform to platform standards/i.test(`${code} ${message}`)) {
+    return {
+      code: 'IncompleteSignature',
+      alibaba: true,
+      status: 502,
+      message: message || 'The request signature does not conform to platform standards',
+    };
+  }
   if (/specified API Path is invalid|invalid.?api.?path/i.test(message) || code === 'INVALID_API_PATH') {
     return {
       code: 'INVALID_API_PATH',

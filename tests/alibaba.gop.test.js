@@ -36,6 +36,19 @@ test('GOP product calls POST to /rest without appending the API path', () => {
   const auth = buildGopRequest('/auth/token/create', { code: 'abc' });
   assert.equal(auth.append, true);
   assert.match(auth.url, /\/rest\/auth\/token\/create$/);
+  assert.equal(auth.params.method, undefined);
+  assert.equal(auth.params.format, undefined);
+  assert.equal(auth.params.redirect_uri, undefined);
+  assert.equal(auth.params.code, 'abc');
+  assert.equal(auth.params.sign_method, 'sha256');
+});
+
+test('classifies IncompleteSignature before permission wording', () => {
+  const mixed = classifyAlibabaError({
+    code: 'IncompleteSignature',
+    message: 'The request signature does not conform to platform standards et App does not have permission to access this api',
+  });
+  assert.equal(mixed.code, 'IncompleteSignature');
 });
 
 test('extractProductId reads numeric IDs and product-detail URLs', () => {

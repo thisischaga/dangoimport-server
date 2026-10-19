@@ -42,22 +42,34 @@ function throwIfFailed(data, response) {
   }
 }
 
-function shouldAppendPath(apiPath) {
+function isAuthPath(apiPath) {
   return String(apiPath || '').startsWith('/auth/');
+}
+
+function shouldAppendPath(apiPath) {
+  return isAuthPath(apiPath);
 }
 
 function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const append = appendPath ?? shouldAppendPath(path);
-  const params = {
-    app_key: alibabaConfig.appKey,
-    format: 'json',
-    method: path,
-    timestamp: String(Date.now()),
-    sign_method: 'sha256',
-    ...stringifyParams(bizParams),
-  };
-  if (accessToken) params.access_token = accessToken;
+  const timestamp = String(Date.now());
+  const params = isAuthPath(path)
+    ? {
+      app_key: alibabaConfig.appKey,
+      sign_method: 'sha256',
+      timestamp,
+      ...stringifyParams(bizParams),
+    }
+    : {
+      app_key: alibabaConfig.appKey,
+      format: 'json',
+      method: path,
+      timestamp,
+      sign_method: 'sha256',
+      ...stringifyParams(bizParams),
+    };
+  if (accessToken && !isAuthPath(path)) params.access_token = accessToken;
   params.sign = signIop(path, params, alibabaConfig.appSecret);
   const url = append ? `${alibabaConfig.gateway}${path}` : alibabaConfig.gateway;
   return { url, path, params, append };
