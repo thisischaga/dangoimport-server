@@ -5,6 +5,8 @@ const { buildGopRequest, buildEcoGetRequest, shouldAppendPath } = require('../se
 const { alibabaConfig } = require('../config/alibaba');
 const {
   extractProductId,
+  unwrapList,
+  extractIdList,
   REJECTED_API_PATHS,
 } = require('../services/alibaba/alibabaProductService');
 const { buildExternalSourceKey } = require('../services/alibaba/alibabaMapper');
@@ -121,6 +123,19 @@ test('classifies missing param0 separately from missing app_key', () => {
     message: 'The input parameter “keyword” that is mandatory for processing this request is not supplied',
   });
   assert.equal(keyword.code, 'MISSING_KEYWORD');
+});
+
+test('unwraps GOP search payloads nested under result_data or JSON body', () => {
+  assert.deepEqual(
+    extractIdList({ result: { result_data: { product_id_list: [16001, '16002'] } } }),
+    ['16001', '16002'],
+  );
+  const items = unwrapList({
+    code: '0',
+    body: JSON.stringify({ products: [{ product_id: '16003', title: 'Earbuds' }] }),
+  });
+  assert.equal(items[0].product_id, '16003');
+  assert.equal(unwrapList({ result: { result_data: { total: 2 } } }).length, 0);
 });
 
 test('rejected GOP paths stay blocked', () => {
