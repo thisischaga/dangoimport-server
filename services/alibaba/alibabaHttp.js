@@ -1,5 +1,5 @@
 const { alibabaConfig } = require('../../config/alibaba');
-const { signIop } = require('./alibabaSign');
+const { signIop, signTopHmacMd5, gmtPlus8Timestamp } = require('./alibabaSign');
 
 function stringifyParams(bizParams = {}) {
   return Object.fromEntries(
@@ -9,18 +9,55 @@ function stringifyParams(bizParams = {}) {
   );
 }
 
-function extractErrorMessage(data = {}) {
-  const raw = data.error_message || data.errorMsg || data.message || data.msg || data.exception || data.error_code || data.error || '';
-  if (/非法的AppKey|illegal.?app.?key/i.test(String(raw))) {
-    return 'Alibaba Open Platform refuse l’AppKey. Vérifiez ALIBABA_APP_KEY sur Render (console openapi.alibaba.com).';
+function parseAlibabaPayload(text) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    const err = new Error('Réponse Alibaba invalide.');
+    err.status = 502;
+    err.details = String(text || '').slice(0, 400);
+    throw err;
   }
-  if (/does not have permission|no permission|insufficient isv permissions/i.test(String(raw))) {
-    return 'NO_API_PERMISSION';
-  }
-  return String(raw || 'Erreur API Alibaba Open Platform.');
 }
 
-async function iopPost(apiPath, bizParams = {}, { accessToken } = {}) {
+function throwIfFailed(data, response) {
+  const code = data.code ?? data.error_code ?? data.errorCode;
+  const raw = data.error_message || data.errorMsg || data.message || data.msg || data.sub_msg || data.exception || data.error || '';
+  const failed = (code !== undefined && code !== null && String(code) !== '0' && String(code) !== '200')
+    || data.error_response
+    || data.error_message
+    || data.exception;
+  const nested = data.error_response || {};
+  const message = raw
+    || nested.sub_msg
+    || nested.msg
+    || (!response.ok ? `Erreur Alibaba HTTP ${response.status}` : '');
+  if ((failed || !response.ok) && !data.access_token) {
+    const err = new Error(String(message || 'Erreur API Alibaba Open Platform.'));
+    err.status = 502;
+    err.code = String(nested.code || code || 'ALIBABA');
+    err.alibaba = data;
+    throw err;
+  }
+}
+
+async function postForm(url, params) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+      'X-Protocol': 'GOP',
+    },
+    body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
+  });
+  const text = await response.text();
+  const data = parseAlibabaPayload(text);
+  throwIfFailed(data, response);
+  return data.result || data.data || data;
+}
+
+async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const params = {
     app_key: alibabaConfig.appKey,
@@ -32,56 +69,67 @@ async function iopPost(apiPath, bizParams = {}, { accessToken } = {}) {
   };
   if (accessToken) params.access_token = accessToken;
   params.sign = signIop(path, params, alibabaConfig.appSecret);
-
-  const url = `${alibabaConfig.gateway}${path}`;
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-        'X-Protocol': 'GOP',
-      },
-      body: new URLSearchParams(params),
-      signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
-    });
-  } catch (error) {
-    const err = new Error(`Impossible de joindre Alibaba Open Platform (${error.message}).`);
-    err.status = 502;
-    throw err;
-  }
-
-  const text = await response.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    const err = new Error(`Réponse Alibaba invalide (HTTP ${response.status}).`);
-    err.status = 502;
-    err.details = String(text || '').slice(0, 400);
-    throw err;
-  }
-
-  const code = data.code ?? data.error_code ?? data.errorCode;
-  const failed = (code !== undefined && code !== null && String(code) !== '0' && String(code) !== '200')
-    || data.error_message
-    || data.exception;
-  if (failed && !data.access_token) {
-    const err = new Error(extractErrorMessage(data));
-    err.status = 502;
-    err.code = String(code || 'ALIBABA');
-    err.alibaba = data;
-    throw err;
-  }
-
-  if (!response.ok && !data.access_token) {
-    const err = new Error(extractErrorMessage(data) || `Erreur Alibaba HTTP ${response.status}`);
-    err.status = 502;
-    err.alibaba = data;
-    throw err;
-  }
-
-  return data.result || data.data || data;
+  const url = appendPath === false
+    ? alibabaConfig.gateway
+    : `${alibabaConfig.gateway}${path}`;
+  return postForm(url, params);
 }
 
-module.exports = { iopPost };
+async function iopPostFlexible(apiPath, bizParams = {}, { accessToken } = {}) {
+  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const isAuth = path.startsWith('/auth/');
+  const modes = isAuth
+    ? [{ appendPath: true, label: 'path' }]
+    : [{ appendPath: false, label: 'root' }, { appendPath: true, label: 'path' }];
+  let lastError;
+  for (const mode of modes) {
+    try {
+      return await iopPost(path, bizParams, { accessToken, appendPath: mode.appendPath });
+    } catch (error) {
+      lastError = error;
+      console.warn(`[alibaba] ${path} [${mode.label}]: ${error.message}`);
+    }
+  }
+  throw lastError;
+}
+
+async function topPost(method, bizParams = {}, { accessToken } = {}) {
+  const params = {
+    method,
+    app_key: alibabaConfig.appKey,
+    timestamp: gmtPlus8Timestamp(),
+    format: 'json',
+    v: '2.0',
+    sign_method: 'hmac',
+    simplify: 'true',
+    ...stringifyParams(bizParams),
+  };
+  if (accessToken) params.session = accessToken;
+  params.sign = signTopHmacMd5(params, alibabaConfig.appSecret);
+  const gateways = [
+    'https://eco.taobao.com/router/rest',
+    'https://api.alibaba.com/router/rest',
+  ];
+  let lastError;
+  for (const url of gateways) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+        body: new URLSearchParams(params),
+        signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
+      });
+      const text = await response.text();
+      const data = parseAlibabaPayload(text);
+      throwIfFailed(data, response);
+      const wrapped = Object.values(data).find((value) => value && typeof value === 'object') || data;
+      return wrapped;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[alibaba] TOP ${method} @ ${url}: ${error.message}`);
+    }
+  }
+  throw lastError;
+}
+
+module.exports = { iopPost, iopPostFlexible, topPost };
