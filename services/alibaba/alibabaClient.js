@@ -1,6 +1,6 @@
 const { alibabaConfig, assertAlibabaConfigured } = require('../../config/alibaba');
 const { getValidAccessToken } = require('./alibabaTokenService');
-const { iopPost } = require('./alibabaHttp');
+const { iopPost, iopPostFlexible, topPost } = require('./alibabaHttp');
 const { signIop } = require('./alibabaSign');
 
 async function iopCall(apiPath, bizParams = {}, { needsToken = true } = {}) {
@@ -10,16 +10,25 @@ async function iopCall(apiPath, bizParams = {}, { needsToken = true } = {}) {
 }
 
 async function alibabaCall(apiName, bizParams = {}) {
+  assertAlibabaConfigured();
+  const accessToken = await getValidAccessToken();
   const path = String(apiName || '').startsWith('/') ? apiName : `/${String(apiName || '').replace(/\./g, '/')}`;
-  return iopCall(path, bizParams);
+  return iopPostFlexible(path, bizParams, { accessToken });
+}
+
+async function topCall(method, bizParams = {}) {
+  assertAlibabaConfigured();
+  const accessToken = await getValidAccessToken();
+  return topPost(method, bizParams, { accessToken });
 }
 
 async function testConnection() {
   const started = Date.now();
-  const result = await iopCall('/alibaba/dropshipping/product/list', {
-    keyword: 'phone',
+  const result = await alibabaCall('/product/list', {
+    pool_id: alibabaConfig.defaultPoolId,
     page_no: 1,
     page_size: 1,
+    country: alibabaConfig.defaultCountry,
   });
   const list = result?.resultList || result?.products || result?.productList || (Array.isArray(result) ? result : []);
   return {
@@ -32,6 +41,7 @@ async function testConnection() {
 module.exports = {
   iopCall,
   alibabaCall,
+  topCall,
   testConnection,
   signIop,
 };

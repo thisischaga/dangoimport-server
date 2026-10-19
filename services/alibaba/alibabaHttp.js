@@ -57,12 +57,12 @@ async function postForm(url, params) {
   return data.result || data.data || data;
 }
 
-async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
+async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath, methodValue } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const params = {
     app_key: alibabaConfig.appKey,
     format: 'json',
-    method: path,
+    method: methodValue || path,
     timestamp: String(Date.now()),
     sign_method: 'sha256',
     ...stringifyParams(bizParams),
@@ -77,14 +77,23 @@ async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}
 
 async function iopPostFlexible(apiPath, bizParams = {}, { accessToken } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const dotted = path.replace(/^\//, '').replace(/\//g, '.');
   const isAuth = path.startsWith('/auth/');
   const modes = isAuth
-    ? [{ appendPath: true, label: 'path' }]
-    : [{ appendPath: false, label: 'root' }, { appendPath: true, label: 'path' }];
+    ? [{ appendPath: true, methodValue: path, label: 'path' }]
+    : [
+      { appendPath: false, methodValue: path, label: 'root+slash' },
+      { appendPath: false, methodValue: dotted, label: 'root+dotted' },
+      { appendPath: true, methodValue: path, label: 'append' },
+    ];
   let lastError;
   for (const mode of modes) {
     try {
-      return await iopPost(path, bizParams, { accessToken, appendPath: mode.appendPath });
+      return await iopPost(path, bizParams, {
+        accessToken,
+        appendPath: mode.appendPath,
+        methodValue: mode.methodValue,
+      });
     } catch (error) {
       lastError = error;
       console.warn(`[alibaba] ${path} [${mode.label}]: ${error.message}`);
