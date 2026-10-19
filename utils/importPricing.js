@@ -1,6 +1,7 @@
 const { DEFAULT_IMPORT_PRICING, SHIPPING_CATEGORIES, cloneImportPricingDefaults } = require('../config/importPricing');
 const { toNumber, applyProductMarkup } = require('./dropshippingCalculations');
 const { cjConfig } = require('../config/cj');
+const { alibabaConfig } = require('../config/alibaba');
 const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
 
 function mergeImportPricingConfig(overrides = {}) {
@@ -139,6 +140,9 @@ function convertSupplierPriceFcfa(product = {}) {
   const currency = String(product.supplier?.supplierCurrency || product.currency || 'XOF').toUpperCase();
   if (currency === 'USD') {
     return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig.usdToXofRate, 610)));
+  }
+  if (currency === 'CNY') {
+    return Math.max(0, Math.round(supplierPrice * toNumber(alibabaConfig.cnyToXofRate, 85)));
   }
   return Math.round(supplierPrice);
 }

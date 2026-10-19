@@ -1104,6 +1104,8 @@ const startServer = async () => {
     const adminCjSupplierRoutes = require('./routes/adminCjSupplierRoutes');
     app.use('/api/admin/suppliers/cj', adminCjSupplierRoutes);
     app.use('/api/admin/cj', adminCjSupplierRoutes);
+    const adminAlibabaSupplierRoutes = require('./routes/adminAlibabaSupplierRoutes');
+    app.use('/api/admin/suppliers/alibaba', adminAlibabaSupplierRoutes);
 
     // Vendor Routes
     const vendorRoutes = require('./routes/vendorRoutes');

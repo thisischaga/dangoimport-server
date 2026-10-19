@@ -641,4 +641,5 @@ module.exports = {
   previewDropshippingTranslation,
   importDropshippingCsv,
   syncDropshippingProduct,
+  stampOfficialImportPricing,
 };

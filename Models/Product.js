@@ -269,7 +269,7 @@ const productSchema = new mongoose.Schema({
     },
     importSourceType: {
         type: String,
-        enum: ['MANUAL', 'API', 'CSV', 'URL_IMPORT', 'CJ_API'],
+        enum: ['MANUAL', 'API', 'CSV', 'URL_IMPORT', 'CJ_API', 'ALIBABA_API'],
         default: 'MANUAL',
     },
     externalSourceKey: {
