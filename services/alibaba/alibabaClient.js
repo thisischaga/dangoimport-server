@@ -78,7 +78,10 @@ async function alibabaCall(apiName, bizParams = {}, { namespace = 'com.alibaba.p
   }
 
   if (data.error_code || data.errorCode || data.error_message || data.exception) {
-    const message = data.error_message || data.errorMsg || data.exception || data.error_code || 'Erreur API Alibaba.';
+    let message = data.error_message || data.errorMsg || data.exception || data.error_code || 'Erreur API Alibaba.';
+    if (/非法的AppKey|illegal.?app.?key/i.test(String(message))) {
+      message = '1688 refuse l’AppKey (非法的AppKey). Vérifiez ALIBABA_APP_KEY sur Render : il doit être celui de open.1688.com, pas d’Alibaba.com international.';
+    }
     const err = new Error(String(message));
     err.status = 502;
     err.code = String(data.error_code || data.errorCode || 'ALIBABA');

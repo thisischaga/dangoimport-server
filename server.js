@@ -1278,6 +1278,16 @@ const startServer = async () => {
         const ShopOrder = require('./Models/ShopOrder');
         const TransactionModel = require('./Models/Transaction');
         const UserModel = require('./Models/User');
+        const TZ = 'Africa/Porto-Novo';
+        const dayCount = Math.min(365, Math.max(1, Number(req.query.days) || 7));
+
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const startOfMonth = new Date(startOfToday.getFullYear(), startOfToday.getMonth(), 1);
+        const rangeStart = new Date(startOfToday);
+        rangeStart.setDate(rangeStart.getDate() - (dayCount - 1));
+
+        const paidMatch = { paymentStatus: 'completed' };
 
         const [
           products,
@@ -1286,30 +1296,70 @@ const startServer = async () => {
           transactions,
           completedTransactions,
           completedOrders,
+          pendingOrders,
+          cancelledOrders,
           recentOrders,
           recentTransactions,
+          completedOrderTotal,
+          dailyRevenue,
+          todayAgg,
+          monthAgg,
         ] = await Promise.all([
           Product.countDocuments(),
           ShopOrder.countDocuments(),
           UserModel.countDocuments(),
           TransactionModel.countDocuments(),
           TransactionModel.countDocuments({ status: 'approved' }),
-          ShopOrder.countDocuments({ paymentStatus: 'completed' }),
-          ShopOrder.find({}).sort({ createdAt: -1 }).limit(5).lean(),
+          ShopOrder.countDocuments(paidMatch),
+          ShopOrder.countDocuments({
+            status: { $in: ['pending', 'confirmed', 'processing'] },
+            paymentStatus: { $ne: 'failed' },
+          }),
+          ShopOrder.countDocuments({ status: 'cancelled' }),
+          ShopOrder.find({}).sort({ createdAt: -1 }).limit(8).lean(),
           TransactionModel.find({}).sort({ createdAt: -1 }).limit(5).lean(),
+          ShopOrder.aggregate([
+            { $match: paidMatch },
+            { $group: { _id: null, total: { $sum: '$total' } } },
+          ]),
+          ShopOrder.aggregate([
+            { $match: { ...paidMatch, createdAt: { $gte: rangeStart } } },
+            {
+              $group: {
+                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: TZ } },
+                orders: { $sum: 1 },
+                revenue: { $sum: '$total' },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ]),
+          ShopOrder.aggregate([
+            { $match: { ...paidMatch, createdAt: { $gte: startOfToday } } },
+            { $group: { _id: null, orders: { $sum: 1 }, revenue: { $sum: '$total' } } },
+          ]),
+          ShopOrder.aggregate([
+            { $match: { ...paidMatch, createdAt: { $gte: startOfMonth } } },
+            { $group: { _id: null, orders: { $sum: 1 }, revenue: { $sum: '$total' } } },
+          ]),
         ]);
 
-        const completedOrderTotal = await ShopOrder.aggregate([
-          { $match: { paymentStatus: 'completed' } },
-          { $group: { _id: null, total: { $sum: '$total' } } },
-        ]);
-
-        const approvedTransactionTotal = await TransactionModel.aggregate([
-          { $match: { status: 'approved' } },
-          { $group: { _id: null, total: { $sum: '$amount' } } },
-        ]);
-
-        const revenue = (completedOrderTotal[0]?.total || 0) + (approvedTransactionTotal[0]?.total || 0);
+        const revenue = Number(completedOrderTotal[0]?.total || 0);
+        const byDay = Object.fromEntries(
+          (dailyRevenue || []).map((row) => [row._id, { orders: row.orders, revenue: row.revenue }]),
+        );
+        const chart = [];
+        for (let i = dayCount - 1; i >= 0; i -= 1) {
+          const d = new Date(startOfToday);
+          d.setDate(startOfToday.getDate() - i);
+          const key = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d);
+          const point = byDay[key] || { orders: 0, revenue: 0 };
+          chart.push({
+            date: key,
+            label: d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
+            orders: Number(point.orders || 0),
+            revenue: Number(point.revenue || 0),
+          });
+        }
 
         const recentCommandes = recentOrders.map((order) => ({
           _id: order._id,
@@ -1318,6 +1368,7 @@ const startServer = async () => {
           categorie: (order.items || []).map((item) => item.category || item.productName).filter(Boolean).slice(0, 2).join(', ') || 'Commande',
           totalPrice: Number(order.total || 0),
           status: order.paymentStatus === 'completed' ? 'Payé' : (order.status || 'pending'),
+          createdAt: order.createdAt,
         }));
 
         const recentAchats = recentTransactions.map((tx) => ({
@@ -1332,16 +1383,24 @@ const startServer = async () => {
         }));
 
         res.status(200).json({
+          currency: 'XOF',
           products,
           commandes,
           achats: transactions,
           users,
           completedOrders,
           completedTransactions,
+          pendingOrders,
+          cancelledOrders,
           recentCommandes,
           recentAchats,
           recentTransactions,
           revenue,
+          revenueToday: Number(todayAgg[0]?.revenue || 0),
+          revenueMonth: Number(monthAgg[0]?.revenue || 0),
+          ordersToday: Number(todayAgg[0]?.orders || 0),
+          ordersMonth: Number(monthAgg[0]?.orders || 0),
+          chart,
         });
       } catch (error) {
         console.error("Erreur GET /api/admin/stats :", error);

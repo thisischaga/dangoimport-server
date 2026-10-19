@@ -47,6 +47,56 @@ async function saveToken(payload = {}) {
   return doc.toObject();
 }
 
+function tokenError(data = {}) {
+  const raw = String(
+    data.error_description || data.error_message || data.errorMsg || data.exception || data.error || '',
+  );
+  if (/非法的AppKey|illegal.?app.?key|invalid.?app.?key/i.test(raw)) {
+    const err = new Error(
+      '1688 refuse l’AppKey (非法的AppKey). La clé doit venir de open.1688.com (pas Alibaba.com international), être collée sur Render (ALIBABA_APP_KEY), et identique à la console. getToken doit être en POST.',
+    );
+    err.status = 502;
+    err.code = 'INVALID_APP_KEY';
+    err.alibaba = data;
+    return err;
+  }
+  const err = new Error(raw || 'Échange du code OAuth Alibaba impossible.');
+  err.status = 502;
+  err.alibaba = data;
+  return err;
+}
+
+function assertAppCredentials() {
+  if (!alibabaConfig.appKey || !alibabaConfig.appSecret) {
+    const err = new Error('ALIBABA_APP_KEY / ALIBABA_APP_SECRET absents sur le serveur (à définir sur Render, pas seulement en local).');
+    err.status = 503;
+    throw err;
+  }
+}
+
+async function postGetToken(params) {
+  assertAppCredentials();
+  const endpoints = [
+    `${alibabaConfig.gateway}/param2/1/system.oauth2/getToken/${alibabaConfig.appKey}`,
+    `${alibabaConfig.gateway}/http/1/system.oauth2/getToken/${alibabaConfig.appKey}`,
+  ];
+  let lastData = {};
+  for (const endpoint of endpoints) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (data.access_token) return data;
+    lastData = data;
+    const raw = String(data.error_message || data.error_description || data.error || '');
+    if (!/非法的AppKey|illegal.?app.?key|invalid.?app.?key/i.test(raw)) break;
+  }
+  throw tokenError(lastData);
+}
+
 async function exchangeAuthorizationCode(code) {
   const redirectUri = getRedirectUri();
   if (!redirectUri) {
@@ -54,38 +104,24 @@ async function exchangeAuthorizationCode(code) {
     err.status = 503;
     throw err;
   }
-  const url = new URL(`https://gw.open.1688.com/openapi/http/1/system.oauth2/getToken/${alibabaConfig.appKey}`);
-  url.searchParams.set('grant_type', 'authorization_code');
-  url.searchParams.set('need_refresh_token', 'true');
-  url.searchParams.set('client_id', alibabaConfig.appKey);
-  url.searchParams.set('client_secret', alibabaConfig.appSecret);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('code', String(code || '').trim());
-
-  const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs) });
-  const data = await response.json().catch(() => ({}));
-  if (!data.access_token) {
-    const err = new Error(data.error_description || data.error_message || data.error || 'Échange du code OAuth Alibaba impossible.');
-    err.status = 502;
-    err.alibaba = data;
-    throw err;
-  }
+  const data = await postGetToken({
+    grant_type: 'authorization_code',
+    need_refresh_token: 'true',
+    client_id: alibabaConfig.appKey,
+    client_secret: alibabaConfig.appSecret,
+    redirect_uri: redirectUri,
+    code: String(code || '').trim(),
+  });
   return saveToken(data);
 }
 
 async function refreshAccessToken(refreshToken) {
-  const url = new URL(`https://gw.open.1688.com/openapi/http/1/system.oauth2/getToken/${alibabaConfig.appKey}`);
-  url.searchParams.set('grant_type', 'refresh_token');
-  url.searchParams.set('client_id', alibabaConfig.appKey);
-  url.searchParams.set('client_secret', alibabaConfig.appSecret);
-  url.searchParams.set('refresh_token', refreshToken);
-  const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs) });
-  const data = await response.json().catch(() => ({}));
-  if (!data.access_token) {
-    const err = new Error(data.error_description || data.error_message || 'Rafraîchissement du token Alibaba impossible.');
-    err.status = 502;
-    throw err;
-  }
+  const data = await postGetToken({
+    grant_type: 'refresh_token',
+    client_id: alibabaConfig.appKey,
+    client_secret: alibabaConfig.appSecret,
+    refresh_token: refreshToken,
+  });
   return saveToken(data);
 }
 
@@ -114,6 +150,7 @@ async function getAuthStatus() {
   return {
     enabled: alibabaConfig.enabled,
     hasAppKey: Boolean(alibabaConfig.appKey),
+    appKeyHint: alibabaConfig.appKey ? `…${alibabaConfig.appKey.slice(-2)} (${alibabaConfig.appKey.length} car.)` : '',
     hasAppSecret: Boolean(alibabaConfig.appSecret),
     hasToken: Boolean(alibabaConfig.accessToken || stored?.accessToken),
     tokenSource: alibabaConfig.accessToken ? 'env' : stored?.accessToken ? 'oauth' : 'none',

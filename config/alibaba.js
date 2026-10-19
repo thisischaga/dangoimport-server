@@ -14,13 +14,16 @@ function trimEnv(value) {
   return String(value || '').trim().replace(/^["']|["']$/g, '');
 }
 
+const productionBackend = (process.env.BACKEND_URL || process.env.API_BASE_URL || 'https://dangoimport-server.onrender.com').replace(/\/$/, '');
+const productionAdmin = (process.env.ADMIN_FRONTEND_URL || 'https://dangoimport-admin-eiim.vercel.app').replace(/\/$/, '');
+
 const alibabaConfig = {
   gateway: (process.env.ALIBABA_API_GATEWAY || 'https://gw.open.1688.com/openapi').replace(/\/$/, ''),
-  appKey: trimEnv(process.env.ALIBABA_APP_KEY),
+  appKey: trimEnv(process.env.ALIBABA_APP_KEY).replace(/\D/g, ''),
   appSecret: trimEnv(process.env.ALIBABA_APP_SECRET),
   accessToken: trimEnv(process.env.ALIBABA_ACCESS_TOKEN),
-  redirectUri: trimEnv(process.env.ALIBABA_REDIRECT_URI),
-  adminSuccessUrl: trimEnv(process.env.ALIBABA_ADMIN_SUCCESS_URL) || 'http://localhost:5173/suppliers/alibaba',
+  redirectUri: trimEnv(process.env.ALIBABA_REDIRECT_URI) || `${productionBackend}/api/admin/suppliers/alibaba/oauth/callback`,
+  adminSuccessUrl: trimEnv(process.env.ALIBABA_ADMIN_SUCCESS_URL) || `${productionAdmin}/suppliers/alibaba`,
   enabled: toBool(process.env.ALIBABA_API_ENABLED, false),
   apiVersion: String(process.env.ALIBABA_API_VERSION || '1').trim() || '1',
   requestTimeoutMs: Math.max(5000, toNumber(process.env.ALIBABA_REQUEST_TIMEOUT_MS, 30000)),
