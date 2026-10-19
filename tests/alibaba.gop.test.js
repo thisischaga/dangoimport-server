@@ -75,8 +75,10 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(shouldAppendPath('/eco/buyer/product/description'), true);
   const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
   assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
-  assert.equal(eco.queryUrl.includes('method='), false);
-  assert.equal(eco.queryUrl.includes('format='), false);
+  assert.equal(eco.params.method, undefined);
+  assert.equal(eco.params.format, undefined);
+  assert.equal(/(?:^|[?&])method=/.test(eco.queryUrl), false);
+  assert.equal(/(?:^|[?&])format=/.test(eco.queryUrl), false);
   assert.match(eco.queryUrl, /app_key=/);
   assert.match(eco.queryUrl, /access_token=tok/);
   assert.match(eco.queryUrl, /sign_method=sha256/);
