@@ -1,6 +1,6 @@
-const { assertAlibabaConfigured } = require('../../config/alibaba');
+const { alibabaConfig, assertAlibabaConfigured } = require('../../config/alibaba');
 const { getValidAccessToken } = require('./alibabaTokenService');
-const { iopPost, iopPostFlexible } = require('./alibabaHttp');
+const { iopPost } = require('./alibabaHttp');
 const { signIop } = require('./alibabaSign');
 
 async function iopCall(apiPath, bizParams = {}, { needsToken = true } = {}) {
@@ -13,7 +13,7 @@ async function alibabaCall(apiName, bizParams = {}) {
   assertAlibabaConfigured();
   const accessToken = await getValidAccessToken();
   const path = String(apiName || '').startsWith('/') ? apiName : `/${String(apiName || '').replace(/\./g, '/')}`;
-  return iopPostFlexible(path, bizParams, { accessToken });
+  return iopPost(path, bizParams, { accessToken });
 }
 
 async function testConnection() {
@@ -22,7 +22,10 @@ async function testConnection() {
   return {
     ok: true,
     latencyMs: Date.now() - started,
-    note: 'Token OAuth GOP valide. Collez un ID produit Alibaba.com, pas un mot-clé.',
+    gateway: alibabaConfig.gateway,
+    productGetPath: alibabaConfig.productGetPath,
+    productListPath: alibabaConfig.productListPath || null,
+    note: 'Token OAuth présent. La recherche mot-clé n’est appelée que si ALIBABA_PRODUCT_LIST_PATH est défini.',
   };
 }
 

@@ -23,6 +23,7 @@ function handleError(res, error) {
     success: false,
     message: error.message || 'Erreur Alibaba.',
     code: error.code || undefined,
+    alibaba: Boolean(error.alibabaOrigin || error.alibaba),
   });
 }
 
@@ -41,6 +42,9 @@ exports.status = async (_req, res) => {
           apiEnabled: alibabaConfig.enabled,
           gateway: alibabaConfig.gateway,
           cnyToXofRate: alibabaConfig.cnyToXofRate,
+          productGetPath: alibabaConfig.productGetPath,
+          productListPath: alibabaConfig.productListPath || '',
+          keywordSearchEnabled: Boolean(alibabaConfig.productListPath),
         },
       },
     });

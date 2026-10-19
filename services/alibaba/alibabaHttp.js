@@ -1,5 +1,6 @@
 const { alibabaConfig } = require('../../config/alibaba');
-const { signIop, signTopHmacMd5, gmtPlus8Timestamp } = require('./alibabaSign');
+const { signIop } = require('./alibabaSign');
+const { applyAlibabaError } = require('./alibabaErrors');
 
 function stringifyParams(bizParams = {}) {
   return Object.fromEntries(
@@ -16,7 +17,7 @@ function parseAlibabaPayload(text) {
     const err = new Error('Réponse Alibaba invalide.');
     err.status = 502;
     err.details = String(text || '').slice(0, 400);
-    throw err;
+    throw applyAlibabaError(err);
   }
 }
 
@@ -36,9 +37,34 @@ function throwIfFailed(data, response) {
     const err = new Error(String(message || 'Erreur API Alibaba Open Platform.'));
     err.status = 502;
     err.code = String(nested.code || code || 'ALIBABA');
-    err.alibaba = data;
-    throw err;
+    err.alibaba = { code: nested.code || code, message };
+    throw applyAlibabaError(err);
   }
+}
+
+function shouldAppendPath(apiPath) {
+  return String(apiPath || '').startsWith('/auth/');
+}
+
+function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
+  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const append = appendPath ?? shouldAppendPath(path);
+  const params = {
+    app_key: alibabaConfig.appKey,
+    format: 'json',
+    method: path,
+    timestamp: String(Date.now()),
+    sign_method: 'sha256',
+    ...stringifyParams(bizParams),
+  };
+  if (accessToken) params.access_token = accessToken;
+  params.sign = signIop(path, params, alibabaConfig.appSecret);
+  const url = append ? `${alibabaConfig.gateway}${path}` : alibabaConfig.gateway;
+  return { url, path, params, append };
+}
+
+function logSafeAlibabaError(path, error) {
+  console.warn(`[alibaba] ${path}: ${error.code || ''} ${error.message}`.trim());
 }
 
 async function postForm(url, params) {
@@ -54,91 +80,17 @@ async function postForm(url, params) {
   const text = await response.text();
   const data = parseAlibabaPayload(text);
   throwIfFailed(data, response);
-  return data.result || data.data || data;
+  return data;
 }
 
-async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath, methodValue } = {}) {
-  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const params = {
-    app_key: alibabaConfig.appKey,
-    format: 'json',
-    method: methodValue || path,
-    timestamp: String(Date.now()),
-    sign_method: 'sha256',
-    ...stringifyParams(bizParams),
-  };
-  if (accessToken) params.access_token = accessToken;
-  params.sign = signIop(path, params, alibabaConfig.appSecret);
-  const url = appendPath === false
-    ? alibabaConfig.gateway
-    : `${alibabaConfig.gateway}${path}`;
-  return postForm(url, params);
-}
-
-function isInvalidApiPath(error) {
-  return /specified API Path is invalid|invalid.?api.?path/i.test(String(error?.message || ''));
-}
-
-async function iopPostFlexible(apiPath, bizParams = {}, { accessToken } = {}) {
-  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const isAuth = path.startsWith('/auth/');
-  const modes = isAuth
-    ? [{ appendPath: true, label: 'path' }]
-    : [{ appendPath: true, label: 'append' }, { appendPath: false, label: 'root' }];
-  let lastError;
-  for (const mode of modes) {
-    try {
-      return await iopPost(path, bizParams, {
-        accessToken,
-        appendPath: mode.appendPath,
-        methodValue: path,
-      });
-    } catch (error) {
-      lastError = error;
-      console.warn(`[alibaba] ${path} [${mode.label}]: ${error.message}`);
-      if (!isInvalidApiPath(error)) throw error;
-    }
+async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
+  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath });
+  try {
+    return await postForm(built.url, built.params);
+  } catch (error) {
+    logSafeAlibabaError(built.path, error);
+    throw error;
   }
-  throw lastError;
 }
 
-async function topPost(method, bizParams = {}, { accessToken } = {}) {
-  const params = {
-    method,
-    app_key: alibabaConfig.appKey,
-    timestamp: gmtPlus8Timestamp(),
-    format: 'json',
-    v: '2.0',
-    sign_method: 'hmac',
-    simplify: 'true',
-    ...stringifyParams(bizParams),
-  };
-  if (accessToken) params.session = accessToken;
-  params.sign = signTopHmacMd5(params, alibabaConfig.appSecret);
-  const gateways = [
-    'https://eco.taobao.com/router/rest',
-    'https://api.alibaba.com/router/rest',
-  ];
-  let lastError;
-  for (const url of gateways) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
-        body: new URLSearchParams(params),
-        signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
-      });
-      const text = await response.text();
-      const data = parseAlibabaPayload(text);
-      throwIfFailed(data, response);
-      const wrapped = Object.values(data).find((value) => value && typeof value === 'object') || data;
-      return wrapped;
-    } catch (error) {
-      lastError = error;
-      console.warn(`[alibaba] TOP ${method} @ ${url}: ${error.message}`);
-    }
-  }
-  throw lastError;
-}
-
-module.exports = { iopPost, iopPostFlexible, topPost };
+module.exports = { iopPost, buildGopRequest, shouldAppendPath };

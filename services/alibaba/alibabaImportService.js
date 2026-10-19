@@ -59,7 +59,7 @@ async function upsertAlibabaProduct(externalProductId, { publish = false, update
   stamped.sku = await resolveSkuForCreate(stamped.sku);
   stamped.history = [{
     action: 'Import Alibaba',
-    comment: `Produit importé depuis Alibaba / 1688 (id ${id}).`,
+    comment: `Produit importé depuis Alibaba.com (id ${id}).`,
     performedBy: adminUser?.email || 'admin',
     role: 'admin',
     date: new Date(),

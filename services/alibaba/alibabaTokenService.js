@@ -132,6 +132,9 @@ async function getAuthStatus() {
     authorizeUrl: alibabaConfig.authorizeUrl,
     redirectUri: getRedirectUri(),
     adminSuccessUrl: alibabaConfig.adminSuccessUrl,
+    productGetPath: alibabaConfig.productGetPath,
+    productListPath: alibabaConfig.productListPath || '',
+    keywordSearchEnabled: Boolean(alibabaConfig.productListPath),
   };
 }
 
