@@ -8,6 +8,8 @@ function firstImage(item = {}) {
     item.image,
     item.imgUrl,
     item.picUrl,
+    ...(Array.isArray(item.main_image?.images) ? item.main_image.images : []),
+    ...(Array.isArray(item.mainImage?.images) ? item.mainImage.images : []),
     ...(Array.isArray(item.imageList) ? item.imageList : []),
     ...(Array.isArray(item.productImageList) ? item.productImageList : []),
     item.productImage?.url,
@@ -31,7 +33,7 @@ function extractImages(item = {}) {
     urls.push({ url });
   };
   push(firstImage(item));
-  (item.imageList || item.productImageList || item.images || []).forEach(push);
+  (item.main_image?.images || item.mainImage?.images || item.imageList || item.productImageList || item.images || []).forEach(push);
   return urls;
 }
 
@@ -68,20 +70,15 @@ function unwrapList(payload) {
 
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
-  const size = Math.min(50, Math.max(1, toNumber(params.size, 20)));
+  const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
   const keyword = params.keyword ? String(params.keyword).trim() : undefined;
-  const payload = await alibabaCall('/product/search', {
-    keyword,
-    keywords: keyword,
-    categoryId: params.categoryId || undefined,
-    page: page,
-    pageNo: page,
-    page_no: page,
-    pageSize: size,
+  const payload = await alibabaCall('/alibaba/icbu/product/list', {
+    language: 'ENGLISH',
+    subject: keyword,
+    category_id: params.categoryId || undefined,
+    current_page: page,
     page_size: size,
-    country: params.country || alibabaConfig.defaultCountry,
-    priceStart: params.minPrice || undefined,
-    priceEnd: params.maxPrice || undefined,
+    filter_type: 'onSelling',
   });
   const list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
   const total = toNumber(
@@ -106,11 +103,11 @@ async function getAlibabaProductDetail(productId) {
     err.status = 400;
     throw err;
   }
-  const payload = await alibabaCall('/product/get', {
-    product_id: id,
-    productId: id,
-    productID: id,
-    country: alibabaConfig.defaultCountry,
+  const payload = await alibabaCall('/icbu/product/get', {
+    product_get_request: {
+      productId: Number.isFinite(Number(id)) ? Number(id) : id,
+      webSite: 'ICBU',
+    },
   });
   const product = payload?.product || payload?.productInfo || payload || {};
   return {

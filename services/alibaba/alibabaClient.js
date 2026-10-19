@@ -16,15 +16,11 @@ async function alibabaCall(apiName, bizParams = {}) {
 
 async function testConnection() {
   const started = Date.now();
-  const result = await iopCall('/product/search', {
-    keyword: 'phone',
-    keywords: 'phone',
-    page: 1,
-    pageNo: 1,
-    page_no: 1,
-    pageSize: 1,
+  const result = await iopCall('/alibaba/icbu/product/list', {
+    language: 'ENGLISH',
+    current_page: 1,
     page_size: 1,
-    country: alibabaConfig.defaultCountry,
+    filter_type: 'onSelling',
   });
   const list = result?.resultList || result?.products || result?.productList || (Array.isArray(result) ? result : []);
   return {

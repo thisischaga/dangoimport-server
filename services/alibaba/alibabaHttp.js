@@ -21,6 +21,8 @@ async function iopPost(apiPath, bizParams = {}, { accessToken } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const params = {
     app_key: alibabaConfig.appKey,
+    format: 'json',
+    method: path,
     timestamp: String(Date.now()),
     sign_method: 'sha256',
     ...stringifyParams(bizParams),
