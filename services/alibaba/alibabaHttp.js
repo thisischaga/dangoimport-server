@@ -10,6 +10,34 @@ function stringifyParams(bizParams = {}) {
   );
 }
 
+function parseJsonObject(value) {
+  if (typeof value !== 'string' || !value.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function wrapEcoBizParams(apiPath, bizParams = {}) {
+  if (!String(apiPath || '').startsWith('/eco/')) return bizParams;
+  if (bizParams.param0 !== undefined && bizParams.param0 !== null && bizParams.param0 !== '') {
+    return bizParams;
+  }
+  const entries = Object.entries(bizParams)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '');
+  if (entries.length === 1) {
+    const [, value] = entries[0];
+    if (typeof value === 'object' && !Array.isArray(value)) return { param0: value };
+    const parsed = parseJsonObject(value);
+    if (parsed) return { param0: parsed };
+  }
+  const obj = {};
+  for (const [key, value] of entries) obj[key] = value;
+  return { param0: obj };
+}
+
 function parseAlibabaPayload(text) {
   try {
     return text ? JSON.parse(text) : {};
@@ -66,7 +94,7 @@ function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = 
     app_key: alibabaConfig.appKey,
     timestamp: String(Date.now()),
     sign_method: 'sha256',
-    ...stringifyParams(bizParams),
+    ...stringifyParams(wrapEcoBizParams(path, bizParams)),
   };
   if (!append) {
     params.format = 'json';
@@ -142,4 +170,4 @@ async function iopGet(apiPath, bizParams = {}, { accessToken } = {}) {
   }
 }
 
-module.exports = { iopPost, iopGet, buildGopRequest, buildEcoGetRequest, shouldAppendPath };
+module.exports = { iopPost, iopGet, buildGopRequest, buildEcoGetRequest, shouldAppendPath, wrapEcoBizParams };

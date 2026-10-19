@@ -73,18 +73,50 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(alibabaConfig.productSearchPath, '/eco/buyer/product/search');
   assert.equal(alibabaConfig.productListPath, '/eco/buyer/product/check');
   assert.equal(shouldAppendPath('/eco/buyer/product/description'), true);
-  const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
+  const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: { pool_id: '9031800410' } }, { accessToken: 'tok' });
   assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
   assert.equal(eco.params.method, undefined);
   assert.equal(eco.params.format, undefined);
+  assert.equal(eco.params.query_req, undefined);
+  assert.equal(JSON.parse(eco.params.param0).pool_id, '9031800410');
   assert.equal(/(?:^|[?&])method=/.test(eco.queryUrl), false);
   assert.equal(/(?:^|[?&])format=/.test(eco.queryUrl), false);
   assert.match(eco.queryUrl, /app_key=/);
   assert.match(eco.queryUrl, /access_token=tok/);
   assert.match(eco.queryUrl, /sign_method=sha256/);
   assert.match(eco.queryUrl, /sign=/);
+  assert.match(eco.queryUrl, /param0=/);
   assert.equal(eco.headerHeaders['X-Protocol'], 'GOP');
   assert.equal(eco.headerHeaders.app_key, undefined);
+});
+
+test('buyer search and description wrap business fields as param0 JSON', () => {
+  const search = buildEcoGetRequest('/eco/buyer/product/search', {
+    keywords: 'phone',
+    country: 'US',
+    page_index: 1,
+    page_size: 20,
+  }, { accessToken: 'tok' });
+  assert.equal(search.params.keywords, undefined);
+  assert.deepEqual(JSON.parse(search.params.param0), {
+    keywords: 'phone',
+    country: 'US',
+    page_index: 1,
+    page_size: 20,
+  });
+  const description = buildEcoGetRequest('/eco/buyer/product/description', {
+    product_id: '1600123456789',
+    country: 'US',
+  }, { accessToken: 'tok' });
+  assert.equal(description.params.product_id, undefined);
+  assert.equal(JSON.parse(description.params.param0).product_id, '1600123456789');
+});
+
+test('classifies missing param0 separately from missing app_key', () => {
+  const missing = classifyAlibabaError({
+    message: 'The input parameter “param0” that is mandatory for processing this request is not supplied',
+  });
+  assert.equal(missing.code, 'MISSING_PARAM0');
 });
 
 test('rejected GOP paths stay blocked', () => {
