@@ -27,12 +27,15 @@ function wrapEcoBizParams(apiPath, bizParams = {}) {
   }
   const entries = Object.entries(bizParams)
     .filter(([, value]) => value !== undefined && value !== null && value !== '');
-  if (entries.length !== 1) return bizParams;
-  const [, value] = entries[0];
-  if (typeof value === 'object' && !Array.isArray(value)) return { param0: value };
-  const parsed = parseJsonObject(value);
-  if (parsed) return { param0: parsed };
-  return bizParams;
+  if (entries.length === 1) {
+    const [, value] = entries[0];
+    if (typeof value === 'object' && !Array.isArray(value)) return { param0: value };
+    const parsed = parseJsonObject(value);
+    if (parsed) return { param0: parsed };
+  }
+  if (!entries.length) return bizParams;
+  const dto = Object.fromEntries(entries);
+  return { ...dto, param0: dto };
 }
 
 function parseAlibabaPayload(text) {

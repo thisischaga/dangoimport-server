@@ -90,7 +90,7 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(eco.headerHeaders.app_key, undefined);
 });
 
-test('buyer search sends keyword as a GOP field, not param0', () => {
+test('buyer search sends keyword and param0 together', () => {
   const search = buildEcoGetRequest('/eco/buyer/product/search', {
     keyword: 'phone',
     country: 'US',
@@ -98,14 +98,14 @@ test('buyer search sends keyword as a GOP field, not param0', () => {
     page_size: 20,
   }, { accessToken: 'tok' });
   assert.equal(search.params.keyword, 'phone');
-  assert.equal(search.params.param0, undefined);
   assert.equal(search.params.country, 'US');
+  assert.equal(JSON.parse(search.params.param0).keyword, 'phone');
   const description = buildEcoGetRequest('/eco/buyer/product/description', {
     product_id: '1600123456789',
     country: 'US',
   }, { accessToken: 'tok' });
   assert.equal(description.params.product_id, '1600123456789');
-  assert.equal(description.params.param0, undefined);
+  assert.equal(JSON.parse(description.params.param0).product_id, '1600123456789');
 });
 
 test('classifies missing param0 separately from missing app_key', () => {
