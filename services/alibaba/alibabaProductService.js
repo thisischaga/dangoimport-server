@@ -1,4 +1,4 @@
-const { alibabaCall } = require('./alibabaClient');
+const { alibabaCall, topCall } = require('./alibabaClient');
 const { alibabaConfig } = require('../../config/alibaba');
 const { toNumber } = require('../../utils/dropshippingCalculations');
 
@@ -38,7 +38,7 @@ function extractImages(item = {}) {
 }
 
 function pickOfferId(item = {}) {
-  return String(item.offerId || item.productID || item.productId || item.id || '').trim();
+  return String(item.offerId || item.productID || item.productId || item.product_id || item.id || '').trim();
 }
 
 function mapSearchItem(item = {}) {
@@ -76,61 +76,56 @@ function unwrapList(payload) {
     || payload?.pageResult?.resultList
     || payload?.result?.resultList
     || payload?.result?.products
+    || payload?.distribution_sale_product
     || [];
 }
 
-function isSkippableApiError(error) {
-  const msg = String(error?.message || error?.code || '');
-  return /NO_API_PERMISSION|does not have permission|specified API Path is invalid|invalid.?api.?path/i.test(msg);
+function isProductIdKeyword(keyword) {
+  return /^\d{6,}$/.test(String(keyword || '').trim());
 }
 
-function permissionError(lastError) {
-  const err = new Error(
-    'L’app n’a pas la permission d’accéder aux API produit. Dans openapi.alibaba.com → App Console → API Permission Group, demandez le groupe Dropshipping / Product (Product List, Product Get). OAuth seul ne suffit pas. API actuellement nécessaires : /alibaba/dropshipping/product/list ou /product/list (pool) ou /alibaba/icbu/product/list.',
-  );
-  err.status = 502;
-  err.code = 'NO_API_PERMISSION';
-  err.cause = lastError;
-  return err;
-}
-
-async function callFirstAllowed(attempts) {
-  let lastError;
-  for (const attempt of attempts) {
-    try {
-      return await alibabaCall(attempt.path, attempt.params);
-    } catch (error) {
-      lastError = error;
-      if (isSkippableApiError(error)) continue;
-      throw error;
-    }
-  }
-  throw permissionError(lastError);
-}
-
-async function searchAlibabaProducts(params = {}) {
-  const page = Math.max(1, toNumber(params.page, 1));
-  const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
-  const keyword = params.keyword ? String(params.keyword).trim() : undefined;
-  const payload = await callFirstAllowed([
+function getParamsForId(id) {
+  const numericId = Number(id);
+  const productId = Number.isFinite(numericId) ? numericId : id;
+  return [
     {
-      path: '/alibaba/dropshipping/product/list',
+      protocol: 'gop',
+      path: '/alibaba/dropshipping/product/get',
       params: {
-        keyword,
-        keywords: keyword,
-        subject: keyword,
-        page_no: page,
-        pageNo: page,
-        current_page: page,
-        page_size: size,
-        pageSize: size,
+        param_distribution_sale_product_request: JSON.stringify({ product_ids: [productId] }),
+        product_ids: String(productId),
       },
     },
     {
+      protocol: 'top',
+      path: 'alibaba.dropshipping.product.get',
+      params: { product_ids: JSON.stringify([productId]) },
+    },
+    {
+      protocol: 'gop',
+      path: '/icbu/product/get',
+      params: {
+        product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
+        product_id: String(productId),
+      },
+    },
+    {
+      protocol: 'top',
+      path: 'alibaba.icbu.product.get',
+      params: {
+        product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
+      },
+    },
+  ];
+}
+
+function listAttempts(keyword, page, size, categoryId) {
+  return [
+    {
+      protocol: 'gop',
       path: '/product/list',
       params: {
         pool_id: alibabaConfig.defaultPoolId,
-        poolId: alibabaConfig.defaultPoolId,
         keyword,
         page_no: page,
         page_size: size,
@@ -138,18 +133,81 @@ async function searchAlibabaProducts(params = {}) {
       },
     },
     {
+      protocol: 'gop',
+      path: '/alibaba/dropshipping/product/list',
+      params: {
+        keyword,
+        page_no: page,
+        page_size: size,
+      },
+    },
+    {
+      protocol: 'gop',
       path: '/alibaba/icbu/product/list',
       params: {
         language: 'ENGLISH',
         subject: keyword,
-        category_id: params.categoryId || undefined,
+        category_id: categoryId || undefined,
         current_page: page,
         page_size: size,
         filter_type: 'onSelling',
       },
     },
-  ]);
+    {
+      protocol: 'top',
+      path: 'alibaba.icbu.product.list',
+      params: {
+        language: 'ENGLISH',
+        subject: keyword,
+        current_page: String(page),
+        page_size: String(size),
+        filter_type: 'onSelling',
+      },
+    },
+  ];
+}
+
+async function callAttempt(attempt) {
+  if (attempt.protocol === 'top') {
+    return topCall(attempt.path, attempt.params);
+  }
+  return alibabaCall(attempt.path, attempt.params);
+}
+
+async function callFirstAllowed(attempts) {
+  const errors = [];
+  for (const attempt of attempts) {
+    try {
+      return await callAttempt(attempt);
+    } catch (error) {
+      const message = `${attempt.protocol} ${attempt.path}: ${error.message}`;
+      errors.push(message);
+      console.warn(`[alibaba] ${message}`);
+    }
+  }
+  const err = new Error(
+    `Alibaba n’a accepté aucune API produit. ${errors.slice(0, 4).join(' | ')} `
+    + 'Le groupe ICBU Dropshipping Solution ne permet pas la recherche par mot-clé : collez l’ID numérique du produit (URL alibaba.com/product-detail/…). '
+    + 'Reconnectez Alibaba après un nouveau groupe d’API.',
+  );
+  err.status = 502;
+  err.code = 'NO_API_PERMISSION';
+  throw err;
+}
+
+async function searchAlibabaProducts(params = {}) {
+  const page = Math.max(1, toNumber(params.page, 1));
+  const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
+  const keyword = params.keyword ? String(params.keyword).trim() : undefined;
+  const attempts = isProductIdKeyword(keyword)
+    ? getParamsForId(keyword)
+    : listAttempts(keyword, page, size, params.categoryId);
+  const payload = await callFirstAllowed(attempts);
   const list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
+  if (!list.length && payload && isProductIdKeyword(keyword)) {
+    const mapped = mapSearchItem({ ...payload, offerId: pickOfferId(payload) || keyword });
+    if (mapped.externalProductId) list.push(mapped);
+  }
   const total = toNumber(
     payload?.totalRecords ?? payload?.total_item ?? payload?.totalCount ?? payload?.pageResult?.totalRecords,
     list.length,
@@ -172,26 +230,7 @@ async function getAlibabaProductDetail(productId) {
     err.status = 400;
     throw err;
   }
-  const numericId = Number(id);
-  const payload = await callFirstAllowed([
-    {
-      path: '/alibaba/dropshipping/product/get',
-      params: {
-        param_distribution_sale_product_request: {
-          product_ids: [Number.isFinite(numericId) ? numericId : id],
-        },
-      },
-    },
-    {
-      path: '/icbu/product/get',
-      params: {
-        product_get_request: {
-          productId: Number.isFinite(numericId) ? numericId : id,
-          webSite: 'ICBU',
-        },
-      },
-    },
-  ]);
+  const payload = await callFirstAllowed(getParamsForId(id));
   const product = payload?.product
     || payload?.productInfo
     || unwrapList(payload)[0]
