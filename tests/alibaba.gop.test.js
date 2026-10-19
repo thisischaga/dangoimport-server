@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyAlibabaError } = require('../services/alibaba/alibabaErrors');
-const { buildGopRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
+const { buildGopRequest, buildIopSdkRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
 const {
   extractProductId,
   searchAlibabaProducts,
@@ -33,15 +33,14 @@ test('GOP product calls POST to /rest without appending the API path', () => {
   assert.equal(product.params.sign_method, 'sha256');
   assert.equal(product.params.sign.length, 64);
   assert.equal(product.params.access_token, 'tok');
-  const authRoot = buildGopRequest('/auth/token/create', { code: 'abc' }, { appendPath: false, includeMethod: true });
-  assert.equal(authRoot.append, false);
-  assert.equal(authRoot.params.method, '/auth/token/create');
-  assert.equal(authRoot.params.code, 'abc');
-  const authPython = buildGopRequest('/auth/token/create', { code: 'abc' }, { appendPath: true, includeMethod: false });
-  assert.equal(authPython.append, true);
-  assert.match(authPython.url, /\/rest\/auth\/token\/create$/);
-  assert.equal(authPython.params.method, undefined);
-  assert.equal(authPython.params.format, undefined);
+  const auth = buildIopSdkRequest('/auth/token/create', { code: 'abc' });
+  assert.match(auth.url, /\/rest\/auth\/token\/create\?/);
+  assert.match(auth.url, /app_key=/);
+  assert.match(auth.url, /sign=/);
+  assert.doesNotMatch(auth.url, /[?&]code=/);
+  assert.equal(auth.body.code, 'abc');
+  assert.equal(auth.query.sign_method, 'sha256');
+  assert.equal(auth.query.partner_id, 'iop-sdk-nodejs');
 });
 
 test('classifies IncompleteSignature before permission wording', () => {
