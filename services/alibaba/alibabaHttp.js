@@ -55,7 +55,8 @@ function isAuthPath(apiPath) {
 }
 
 function shouldAppendPath(apiPath) {
-  return isAuthPath(apiPath);
+  const path = String(apiPath || '');
+  return path.startsWith('/auth/') || path.startsWith('/eco/');
 }
 
 function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
@@ -63,25 +64,28 @@ function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = 
   const append = appendPath ?? shouldAppendPath(path);
   const params = {
     app_key: alibabaConfig.appKey,
-    format: 'json',
-    method: path,
     timestamp: String(Date.now()),
     sign_method: 'sha256',
     ...stringifyParams(bizParams),
   };
+  if (!append) {
+    params.format = 'json';
+    params.method = path;
+  }
   if (accessToken) params.access_token = accessToken;
   params.sign = signIop(path, params, alibabaConfig.appSecret);
   const url = append ? `${alibabaConfig.gateway}${path}` : alibabaConfig.gateway;
   return { url, path, params, append };
 }
 
-function logSafeAlibabaError(path, error, style) {
+function logSafeAlibabaError(path, error, style, params) {
   const prefix = style ? `${path} [${style}]` : path;
-  console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
+  const keys = params ? Object.keys(params).filter((key) => key !== 'sign').sort().join(',') : '';
+  console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}${keys ? ` keys=${keys}` : ''}`.trim());
 }
 
 function buildEcoGetRequest(apiPath, bizParams = {}, { accessToken } = {}) {
-  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath: false });
+  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath: true });
   return {
     path: built.path,
     params: built.params,
@@ -111,7 +115,7 @@ async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}
   try {
     return await postForm(built.url, built.params);
   } catch (error) {
-    logSafeAlibabaError(built.path, error);
+    logSafeAlibabaError(built.path, error, undefined, built.params);
     throw error;
   }
 }
@@ -133,7 +137,7 @@ async function iopGet(apiPath, bizParams = {}, { accessToken } = {}) {
   try {
     return await getJson(built.queryUrl, built.headerHeaders);
   } catch (error) {
-    logSafeAlibabaError(built.path, error, 'query-get');
+    logSafeAlibabaError(built.path, error, 'query-get', built.params);
     throw error;
   }
 }

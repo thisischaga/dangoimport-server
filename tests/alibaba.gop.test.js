@@ -44,9 +44,11 @@ test('GOP product calls POST to /rest ; auth appends /auth/token/create', () => 
   const auth = buildGopRequest('/auth/token/create', { code: 'abc' });
   assert.equal(auth.append, true);
   assert.match(auth.url, /\/rest\/auth\/token\/create$/);
-  assert.equal(auth.params.method, '/auth/token/create');
+  assert.equal(auth.params.method, undefined);
+  assert.equal(auth.params.format, undefined);
   assert.equal(auth.params.code, 'abc');
   assert.equal(auth.params.sign_method, 'sha256');
+  assert.deepEqual(Object.keys(auth.params).sort(), ['app_key', 'code', 'sign', 'sign_method', 'timestamp']);
 });
 
 test('classifies IncompleteSignature before permission wording', () => {
@@ -70,15 +72,14 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(alibabaConfig.productGetPath, '/eco/buyer/product/description');
   assert.equal(alibabaConfig.productSearchPath, '/eco/buyer/product/search');
   assert.equal(alibabaConfig.productListPath, '/eco/buyer/product/check');
-  assert.equal(shouldAppendPath('/eco/buyer/product/description'), false);
+  assert.equal(shouldAppendPath('/eco/buyer/product/description'), true);
   const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
-  assert.match(eco.queryUrl, /\/rest\?/);
-  assert.equal(eco.queryUrl.includes('/rest/eco/'), false);
-  assert.match(eco.queryUrl, /method=%2Feco%2Fbuyer%2Fproduct%2Fcheck/);
+  assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
+  assert.equal(eco.queryUrl.includes('method='), false);
+  assert.equal(eco.queryUrl.includes('format='), false);
   assert.match(eco.queryUrl, /app_key=/);
   assert.match(eco.queryUrl, /access_token=tok/);
   assert.match(eco.queryUrl, /sign_method=sha256/);
-  assert.match(eco.queryUrl, /format=json/);
   assert.match(eco.queryUrl, /sign=/);
   assert.equal(eco.headerHeaders['X-Protocol'], 'GOP');
   assert.equal(eco.headerHeaders.app_key, undefined);
