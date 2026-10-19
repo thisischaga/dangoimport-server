@@ -22,6 +22,13 @@ test('classifies Alibaba invalid path separately from missing permission', () =>
   assert.equal(keyword.status, 400);
 });
 
+test('classifies missing app_key separately from invalid key', () => {
+  const missing = classifyAlibabaError({
+    message: 'The input parameter “app_key” that is mandatory for processing this request is not supplied',
+  });
+  assert.equal(missing.code, 'MISSING_APP_KEY');
+});
+
 test('GOP product calls POST to /rest ; auth appends /auth/token/create', () => {
   assert.equal(shouldAppendPath('/auth/token/create'), true);
   assert.equal(shouldAppendPath('/icbu/product/get'), false);
@@ -60,7 +67,10 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(alibabaConfig.productListPath, '/eco/buyer/product/check');
   assert.equal(shouldAppendPath('/eco/buyer/product/description'), false);
   const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
-  assert.match(eco.headerUrl, /\/rest\/eco\/buyer\/product\/check\?/);
+  assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
+  assert.match(eco.queryUrl, /app_key=/);
+  assert.match(eco.queryUrl, /access_token=tok/);
+  assert.match(eco.queryUrl, /sign=/);
   assert.equal(eco.headerHeaders.app_key, alibabaConfig.appKey);
   assert.equal(eco.headerHeaders.access_token, 'tok');
   assert.equal(eco.headerHeaders.sign_method, 'sha256');

@@ -25,6 +25,14 @@ function classifyAlibabaError(error) {
       message: message || 'App does not have permission to access this api',
     };
   }
+  if (/app_key.+not supplied|mandatory for processing this request is not supplied/i.test(message)) {
+    return {
+      code: 'MISSING_APP_KEY',
+      alibaba: true,
+      status: 502,
+      message: message || 'The input parameter “app_key” that is mandatory for processing this request is not supplied',
+    };
+  }
   if (/Invalid app Key|非法的AppKey/i.test(message)) {
     return {
       code: 'INVALID_APP_KEY',

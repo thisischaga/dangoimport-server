@@ -80,6 +80,11 @@ function isIncompleteSignature(error) {
     || /IncompleteSignature|does not conform to platform standards/i.test(String(error?.message || ''));
 }
 
+function isMissingAppKey(error) {
+  return error?.code === 'MISSING_APP_KEY'
+    || /app_key.+not supplied|mandatory for processing this request is not supplied/i.test(String(error?.message || ''));
+}
+
 function logSafeAlibabaError(path, error, style) {
   const prefix = style ? `${path} [${style}]` : path;
   console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
@@ -96,11 +101,11 @@ function buildEcoGetRequest(apiPath, bizParams = {}, { accessToken } = {}) {
   if (accessToken) sys.access_token = accessToken;
   const signParams = { ...sys, ...biz };
   const sign = signIop(path, signParams, alibabaConfig.appSecret);
+  const query = new URLSearchParams({ ...signParams, sign });
   return {
     path,
-    headerUrl: `${alibabaConfig.gateway}${path}?${new URLSearchParams(biz)}`,
+    queryUrl: `${alibabaConfig.gateway}${path}?${query}`,
     headerHeaders: { ...sys, sign, 'X-Protocol': 'GOP' },
-    queryUrl: `${alibabaConfig.gateway}${path}?${new URLSearchParams({ ...signParams, sign })}`,
   };
 }
 
@@ -145,16 +150,15 @@ async function getJson(url, headers = {}) {
 async function iopGet(apiPath, bizParams = {}, { accessToken } = {}) {
   const built = buildEcoGetRequest(apiPath, bizParams, { accessToken });
   try {
-    return await getJson(built.headerUrl, built.headerHeaders);
+    return await getJson(built.queryUrl, built.headerHeaders);
   } catch (error) {
-    logSafeAlibabaError(built.path, error, 'header-get');
-    if (!isIncompleteSignature(error)) throw error;
+    logSafeAlibabaError(built.path, error, 'query-get');
+    if (!isIncompleteSignature(error) && !isMissingAppKey(error)) throw error;
   }
-  const retry = buildEcoGetRequest(apiPath, bizParams, { accessToken });
   try {
-    return await getJson(retry.queryUrl, { 'X-Protocol': 'GOP' });
+    return await iopPost(apiPath, bizParams, { accessToken, appendPath: false });
   } catch (error) {
-    logSafeAlibabaError(retry.path, error, 'query-get');
+    logSafeAlibabaError(apiPath, error, 'form-post');
     throw error;
   }
 }
