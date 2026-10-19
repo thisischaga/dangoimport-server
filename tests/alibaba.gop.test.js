@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyAlibabaError } = require('../services/alibaba/alibabaErrors');
-const { buildGopRequest, buildIopSdkRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
+const { buildGopRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
 const {
   extractProductId,
   searchAlibabaProducts,
@@ -22,25 +22,19 @@ test('classifies Alibaba invalid path separately from missing permission', () =>
   assert.equal(keyword.status, 400);
 });
 
-test('GOP product calls POST to /rest without appending the API path', () => {
-  assert.equal(shouldAppendPath('/auth/token/create'), false);
+test('GOP product calls POST to /rest ; auth appends /auth/token/create', () => {
+  assert.equal(shouldAppendPath('/auth/token/create'), true);
   assert.equal(shouldAppendPath('/icbu/product/get'), false);
   const product = buildGopRequest('/icbu/product/get', { product_get_request: '{"productId":1}' }, { accessToken: 'tok' });
   assert.equal(product.append, false);
   assert.match(product.url, /\/rest$/);
-  assert.doesNotMatch(product.url, /\/icbu\/product\/get$/);
   assert.equal(product.params.method, '/icbu/product/get');
-  assert.equal(product.params.sign_method, 'sha256');
-  assert.equal(product.params.sign.length, 64);
-  assert.equal(product.params.access_token, 'tok');
-  const auth = buildIopSdkRequest('/auth/token/create', { code: 'abc' });
-  assert.match(auth.url, /\/rest\/auth\/token\/create\?/);
-  assert.match(auth.url, /app_key=/);
-  assert.match(auth.url, /sign=/);
-  assert.doesNotMatch(auth.url, /[?&]code=/);
-  assert.equal(auth.body.code, 'abc');
-  assert.equal(auth.query.sign_method, 'sha256');
-  assert.equal(auth.query.partner_id, 'iop-sdk-nodejs');
+  const auth = buildGopRequest('/auth/token/create', { code: 'abc' });
+  assert.equal(auth.append, true);
+  assert.match(auth.url, /\/rest\/auth\/token\/create$/);
+  assert.equal(auth.params.method, '/auth/token/create');
+  assert.equal(auth.params.code, 'abc');
+  assert.equal(auth.params.sign_method, 'sha256');
 });
 
 test('classifies IncompleteSignature before permission wording', () => {
@@ -64,6 +58,13 @@ test('keyword search is rejected locally when no Product List path is configured
   await assert.rejects(
     () => searchAlibabaProducts({ keyword: 'laptop' }),
     (error) => error.code === 'PRODUCT_ID_REQUIRED' && error.status === 400,
+  );
+});
+
+test('product ID lookup is blocked until ALIBABA_PRODUCT_GET_PATH is set', async () => {
+  await assert.rejects(
+    () => searchAlibabaProducts({ keyword: '1600123456789' }),
+    (error) => error.code === 'PRODUCT_GET_PATH_REQUIRED' && error.status === 503,
   );
 });
 

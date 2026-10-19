@@ -46,74 +46,36 @@ function isAuthPath(apiPath) {
   return String(apiPath || '').startsWith('/auth/');
 }
 
-function shouldAppendPath() {
-  return false;
+function shouldAppendPath(apiPath) {
+  return isAuthPath(apiPath);
 }
 
-function isIncompleteSignature(error) {
-  return error?.code === 'IncompleteSignature'
-    || /IncompleteSignature|does not conform to platform standards/i.test(String(error?.message || ''));
-}
-
-function buildGopRequest(apiPath, bizParams = {}, {
-  accessToken,
-  appendPath,
-  includeMethod = true,
-} = {}) {
+function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const append = appendPath ?? shouldAppendPath(path);
-  const timestamp = String(Date.now());
-  const params = includeMethod
-    ? {
-      app_key: alibabaConfig.appKey,
-      format: 'json',
-      method: path,
-      timestamp,
-      sign_method: 'sha256',
-      ...stringifyParams(bizParams),
-    }
-    : {
-      app_key: alibabaConfig.appKey,
-      sign_method: 'sha256',
-      timestamp,
-      ...stringifyParams(bizParams),
-    };
+  const params = {
+    app_key: alibabaConfig.appKey,
+    format: 'json',
+    method: path,
+    timestamp: String(Date.now()),
+    sign_method: 'sha256',
+    ...stringifyParams(bizParams),
+  };
   if (accessToken) params.access_token = accessToken;
   params.sign = signIop(path, params, alibabaConfig.appSecret);
   const url = append ? `${alibabaConfig.gateway}${path}` : alibabaConfig.gateway;
-  return { url, path, params, append, includeMethod };
+  return { url, path, params, append };
 }
 
-function buildIopSdkRequest(apiPath, bizParams = {}) {
-  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const biz = stringifyParams(bizParams);
-  const sys = {
-    app_key: alibabaConfig.appKey,
-    sign_method: 'sha256',
-    timestamp: String(Date.now()),
-    partner_id: 'iop-sdk-nodejs',
-  };
-  const signParams = { ...sys, ...biz };
-  const sign = signIop(path, signParams, alibabaConfig.appSecret);
-  const query = new URLSearchParams({ ...sys, sign });
-  return {
-    path,
-    url: `${alibabaConfig.gateway}${path}?${query.toString()}`,
-    body: biz,
-    query: { ...sys, sign },
-  };
-}
-
-function logSafeAlibabaError(path, error, style) {
-  const prefix = style ? `${path} [${style}]` : path;
-  console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
+function logSafeAlibabaError(path, error) {
+  console.warn(`[alibaba] ${path}: ${error.code || ''} ${error.message}`.trim());
 }
 
 async function postForm(url, params) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
       'X-Protocol': 'GOP',
     },
     body: new URLSearchParams(params),
@@ -125,54 +87,14 @@ async function postForm(url, params) {
   return data;
 }
 
-async function getJson(url) {
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'X-Protocol': 'GOP' },
-    signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
-  });
-  const text = await response.text();
-  const data = parseAlibabaPayload(text);
-  throwIfFailed(data, response);
-  return data;
-}
-
-async function iopAuthCall(apiPath, bizParams = {}) {
-  const sdk = buildIopSdkRequest(apiPath, bizParams);
+async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
+  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath });
   try {
-    return await postForm(sdk.url, sdk.body);
-  } catch (error) {
-    logSafeAlibabaError(sdk.path, error, 'sdk-post');
-    if (!isIncompleteSignature(error)) throw error;
-  }
-  const getReq = buildIopSdkRequest(apiPath, bizParams);
-  const getUrl = `${getReq.url}&${new URLSearchParams(getReq.body).toString()}`;
-  try {
-    return await getJson(getUrl);
-  } catch (error) {
-    logSafeAlibabaError(getReq.path, error, 'sdk-get');
-    throw error;
-  }
-}
-
-async function iopPost(apiPath, bizParams = {}, options = {}) {
-  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  if (isAuthPath(path) && options.appendPath === undefined) {
-    return iopAuthCall(path, bizParams);
-  }
-  try {
-    const built = buildGopRequest(path, bizParams, options);
     return await postForm(built.url, built.params);
   } catch (error) {
-    logSafeAlibabaError(path, error, 'default');
+    logSafeAlibabaError(built.path, error);
     throw error;
   }
 }
 
-module.exports = {
-  iopPost,
-  buildGopRequest,
-  buildIopSdkRequest,
-  shouldAppendPath,
-  isIncompleteSignature,
-};
+module.exports = { iopPost, buildGopRequest, shouldAppendPath };

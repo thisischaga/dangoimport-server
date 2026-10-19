@@ -45,6 +45,7 @@ exports.status = async (_req, res) => {
           productGetPath: alibabaConfig.productGetPath,
           productListPath: alibabaConfig.productListPath || '',
           keywordSearchEnabled: Boolean(alibabaConfig.productListPath),
+          productGetEnabled: Boolean(alibabaConfig.productGetPath),
         },
       },
     });
@@ -64,7 +65,7 @@ exports.oauthStart = async (_req, res) => {
         message: 'Définissez ALIBABA_REDIRECT_URI (même URL que dans la console openapi.alibaba.com).',
       });
     }
-    const state = createOauthState();
+    const state = await createOauthState();
     return res.json({
       success: true,
       data: {
@@ -84,7 +85,7 @@ exports.oauthCallback = async (req, res) => {
     if (error) {
       return res.redirect(`${successUrl}?alibaba=error&message=${encodeURIComponent(String(error))}`);
     }
-    if (!consumeOauthState(state)) {
+    if (!(await consumeOauthState(state))) {
       return res.redirect(`${successUrl}?alibaba=error&message=${encodeURIComponent('Session OAuth expirée. Relancez « Connecter Alibaba ».')}`);
     }
     await exchangeAuthorizationCode(code);
@@ -98,7 +99,7 @@ exports.oauthExchange = async (req, res) => {
   try {
     const code = String(req.body?.code || '').trim();
     if (!code) {
-      return res.status(400).json({ success: false, message: 'Collez le code OAuth renvoyé par 1688.' });
+      return res.status(400).json({ success: false, message: 'Collez le code OAuth renvoyé par Alibaba.com.' });
     }
     await exchangeAuthorizationCode(code);
     const auth = await getAuthStatus();

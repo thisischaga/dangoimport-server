@@ -3,8 +3,6 @@ const AlibabaToken = require('../../Models/AlibabaToken');
 const { alibabaConfig } = require('../../config/alibaba');
 const { iopPost } = require('./alibabaHttp');
 
-const pendingStates = new Map();
-
 function getRedirectUri() {
   return String(alibabaConfig.redirectUri || '').trim();
 }
@@ -21,16 +19,31 @@ function getAuthorizeUrl(state) {
   return `${alibabaConfig.authorizeUrl}?${params.toString()}`;
 }
 
-function createOauthState() {
+async function createOauthState() {
   const state = crypto.randomBytes(16).toString('hex');
-  pendingStates.set(state, Date.now() + 10 * 60 * 1000);
+  await AlibabaToken.findOneAndUpdate(
+    { key: 'default' },
+    { oauthState: state, oauthStateExpiresAt: new Date(Date.now() + 10 * 60 * 1000), updatedAt: new Date() },
+    { upsert: true },
+  );
   return state;
 }
 
-function consumeOauthState(state) {
-  const expires = pendingStates.get(String(state || ''));
-  pendingStates.delete(String(state || ''));
-  return Boolean(expires && expires > Date.now());
+async function consumeOauthState(state) {
+  const expected = String(state || '');
+  if (!expected) return false;
+  const stored = await AlibabaToken.findOne({ key: 'default' }).lean();
+  const ok = Boolean(
+    stored?.oauthState
+    && stored.oauthState === expected
+    && stored.oauthStateExpiresAt
+    && new Date(stored.oauthStateExpiresAt).getTime() > Date.now(),
+  );
+  await AlibabaToken.findOneAndUpdate(
+    { key: 'default' },
+    { oauthState: '', oauthStateExpiresAt: null, updatedAt: new Date() },
+  );
+  return ok;
 }
 
 async function loadStoredToken() {
@@ -131,8 +144,9 @@ async function getAuthStatus() {
     authorizeUrl: alibabaConfig.authorizeUrl,
     redirectUri: getRedirectUri(),
     adminSuccessUrl: alibabaConfig.adminSuccessUrl,
-    productGetPath: alibabaConfig.productGetPath,
+    productGetPath: alibabaConfig.productGetPath || '',
     productListPath: alibabaConfig.productListPath || '',
+    productGetEnabled: Boolean(alibabaConfig.productGetPath),
     keywordSearchEnabled: Boolean(alibabaConfig.productListPath),
   };
 }

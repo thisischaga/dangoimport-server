@@ -7,6 +7,8 @@ const alibabaTokenSchema = new mongoose.Schema({
   expiresAt: { type: Date, default: null },
   aliId: { type: String, default: '' },
   resourceOwner: { type: String, default: '' },
+  oauthState: { type: String, default: '' },
+  oauthStateExpiresAt: { type: Date, default: null },
   updatedAt: { type: Date, default: Date.now },
 });
 

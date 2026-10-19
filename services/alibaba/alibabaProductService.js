@@ -136,6 +136,14 @@ function permissionDeniedOnProductGet(error) {
 
 async function fetchProductById(id) {
   const path = alibabaConfig.productGetPath;
+  if (!path) {
+    const err = new Error(
+      'Aucun Path « Get Product Description » n’est configuré. Dans openapi.alibaba.com → App Console → API Permission Group → ISV-Dropshipping, ouvrez Get Product Description, copiez le API Path, puis définissez ALIBABA_PRODUCT_GET_PATH sur Render. /icbu/product/get est une API vendeur refusée pour cette app.',
+    );
+    err.status = 503;
+    err.code = 'PRODUCT_GET_PATH_REQUIRED';
+    throw err;
+  }
   assertAllowedPath(path);
   const numericId = Number(id);
   const productId = Number.isFinite(numericId) ? numericId : id;

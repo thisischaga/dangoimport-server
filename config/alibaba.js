@@ -33,7 +33,7 @@ const alibabaConfig = {
   defaultPublicStock: Math.max(1, toNumber(process.env.ALIBABA_DEFAULT_PUBLIC_STOCK, 50)),
   defaultCountry: trimEnv(process.env.ALIBABA_DEFAULT_COUNTRY) || 'US',
   defaultPoolId: trimEnv(process.env.ALIBABA_DEFAULT_POOL_ID) || '9031800410',
-  productGetPath: trimEnv(process.env.ALIBABA_PRODUCT_GET_PATH) || '/icbu/product/get',
+  productGetPath: trimEnv(process.env.ALIBABA_PRODUCT_GET_PATH),
   productListPath: trimEnv(process.env.ALIBABA_PRODUCT_LIST_PATH),
   platformKey: 'alibaba',
   supplierName: 'Alibaba.com',
