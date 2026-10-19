@@ -179,6 +179,16 @@ function unwrapList(payload) {
 
   let best = [];
   let bestScore = 0;
+  const consider = (arr, key = '') => {
+    let score = scoreList(arr);
+    if (score && /product_id|productId|dataList|item_data|products|productList|offer_id|item_ids|search_result/i.test(key)) {
+      score += 2;
+    }
+    if (score > bestScore) {
+      best = arr;
+      bestScore = score;
+    }
+  };
   const queue = [root];
   const seen = new Set();
   while (queue.length) {
@@ -186,25 +196,21 @@ function unwrapList(payload) {
     if (!node || typeof node !== 'object' || seen.has(node)) continue;
     seen.add(node);
     if (Array.isArray(node)) {
-      const score = scoreList(node);
-      if (score > bestScore) {
-        best = node;
-        bestScore = score;
-      }
+      consider(node);
       continue;
     }
     for (const [key, value] of Object.entries(node)) {
       if (/token|secret|sign|^code$|request_id|_trace_id_|message|^msg$/i.test(key)) continue;
       if (typeof value === 'string' && /^\d+(?:\s*,\s*\d+)+$/.test(value.trim())) {
-        const ids = value.split(',').map((part) => part.trim()).filter(Boolean);
-        const score = scoreList(ids);
-        if (score > bestScore) {
-          best = ids;
-          bestScore = score;
-        }
+        consider(value.split(',').map((part) => part.trim()).filter(Boolean), key);
         continue;
       }
-      queue.push(value);
+      const parsed = parseJsonValue(value);
+      if (Array.isArray(parsed)) {
+        consider(parsed, key);
+        continue;
+      }
+      queue.push(parsed);
     }
   }
   if (bestScore > 0) return best;
