@@ -51,13 +51,20 @@ function parseAlibabaPayload(text) {
 
 function throwIfFailed(data, response) {
   const code = data.code ?? data.error_code ?? data.errorCode;
-  const nestedResultCode = data.result?.result_code;
+  const nestedResultCode = data.result?.result_code ?? data.result?.code;
+  const nestedCodeText = nestedResultCode === undefined || nestedResultCode === null
+    ? ''
+    : String(nestedResultCode).toLowerCase();
   const nestedFailed = nestedResultCode !== undefined
     && nestedResultCode !== null
-    && String(nestedResultCode) !== '200'
-    && String(nestedResultCode) !== '0';
+    && nestedCodeText !== ''
+    && nestedCodeText !== '200'
+    && nestedCodeText !== '0'
+    && nestedCodeText !== 'success'
+    && nestedCodeText !== 'ok'
+    && nestedCodeText !== 'true';
   const raw = data.error_message || data.errorMsg || data.message || data.msg || data.sub_msg
-    || data.exception || data.error || data.result?.result_msg || '';
+    || data.exception || data.error || data.result?.message || data.result?.result_msg || '';
   const failed = (code !== undefined && code !== null && String(code) !== '0' && String(code) !== '200')
     || nestedFailed
     || data.error_response

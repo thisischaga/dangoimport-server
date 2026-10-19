@@ -136,6 +136,15 @@ test('unwraps GOP search payloads nested under result_data or JSON body', () => 
   });
   assert.equal(items[0].product_id, '16003');
   assert.equal(unwrapList({ result: { result_data: { total: 2 } } }).length, 0);
+  const fromResultData = unwrapList({
+    code: '0',
+    result: { code: '0', data: { dataList: [{ product_id: '16004' }] }, message: 'success' },
+  });
+  assert.equal(fromResultData[0].product_id, '16004');
+  assert.deepEqual(
+    extractIdList({ code: '0', result: { code: 200, data: [16005, 16006], message: 'ok' } }),
+    ['16005', '16006'],
+  );
 });
 
 test('rejected GOP paths stay blocked', () => {

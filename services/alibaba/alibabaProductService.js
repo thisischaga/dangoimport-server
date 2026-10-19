@@ -76,31 +76,50 @@ function parseJsonValue(value) {
   }
 }
 
-const LIST_KEYS = [
-  'product_id_list', 'productIdList', 'product_ids', 'productIds',
-  'offer_id_list', 'offerIdList', 'item_ids', 'itemIds',
-  'distribution_sale_product', 'products', 'productList', 'product_list',
-  'resultList', 'toReturn', 'records', 'items', 'hits', 'list',
-  'search_result', 'offerList', 'offers',
-];
-
-const NEST_KEYS = ['result', 'result_data', 'data', 'body', 'value', 'response', 'payload', 'content'];
-
 function isProductIdValue(item) {
   return typeof item === 'number'
     || (typeof item === 'string' && /^\d+$/.test(item.trim()));
 }
 
+function isOkBuyerCode(code) {
+  if (code === undefined || code === null || code === '') return true;
+  const value = String(code).toLowerCase();
+  return value === '0' || value === '200' || value === 'success' || value === 'ok' || value === 'true';
+}
+
 function summarizePayload(payload) {
   const root = payload && typeof payload === 'object' ? payload : {};
-  const keys = Object.keys(root).filter((key) => !/token|secret|sign/i.test(key)).slice(0, 20);
-  const result = root.result && typeof root.result === 'object' ? Object.keys(root.result).slice(0, 20) : [];
+  const inner = root.result && typeof root.result === 'object' ? root.result : {};
+  const data = parseJsonValue(inner.data);
   return {
-    keys,
-    resultKeys: result,
-    dataType: Array.isArray(root.data) ? 'array' : typeof root.data,
-    bodyType: typeof root.body,
+    keys: Object.keys(root).filter((key) => !/token|secret|sign/i.test(key)).slice(0, 20),
+    resultKeys: Object.keys(inner).slice(0, 20),
+    resultCode: inner.code,
+    resultMessage: inner.message || inner.msg || '',
+    dataType: Array.isArray(data) ? `array:${data.length}` : typeof data,
+    dataKeys: data && typeof data === 'object' && !Array.isArray(data)
+      ? Object.keys(data).slice(0, 20)
+      : [],
   };
+}
+
+function scoreList(arr) {
+  if (!Array.isArray(arr) || !arr.length) return 0;
+  if (arr.some((item) => item && typeof item === 'object' && pickOfferId(item))) return 3;
+  if (arr.every(isProductIdValue)) return 2;
+  if (arr.every((item) => item && typeof item === 'object')) return 1;
+  return 0;
+}
+
+function assertBuyerResult(payload) {
+  const inner = payload?.result;
+  if (!inner || typeof inner !== 'object') return;
+  if (isOkBuyerCode(inner.code)) return;
+  const message = inner.message || inner.msg || inner.error_message || `Alibaba result.code=${inner.code}`;
+  const err = new Error(String(message));
+  err.status = 502;
+  err.code = String(inner.code || 'ALIBABA');
+  throw applyAlibabaError(err);
 }
 
 function flattenBuyerProduct(item = {}, fallbackId = '') {
@@ -158,21 +177,37 @@ function unwrapList(payload) {
     return [root.product];
   }
 
+  let best = [];
+  let bestScore = 0;
   const queue = [root];
   const seen = new Set();
   while (queue.length) {
     const node = parseJsonValue(queue.shift());
     if (!node || typeof node !== 'object' || seen.has(node)) continue;
     seen.add(node);
-    if (Array.isArray(node)) return node;
-    for (const key of LIST_KEYS) {
-      const val = parseJsonValue(node[key]);
-      if (Array.isArray(val)) return val;
+    if (Array.isArray(node)) {
+      const score = scoreList(node);
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+      continue;
     }
-    for (const key of NEST_KEYS) {
-      if (node[key] !== undefined) queue.push(node[key]);
+    for (const [key, value] of Object.entries(node)) {
+      if (/token|secret|sign|^code$|request_id|_trace_id_|message|^msg$/i.test(key)) continue;
+      if (typeof value === 'string' && /^\d+(?:\s*,\s*\d+)+$/.test(value.trim())) {
+        const ids = value.split(',').map((part) => part.trim()).filter(Boolean);
+        const score = scoreList(ids);
+        if (score > bestScore) {
+          best = ids;
+          bestScore = score;
+        }
+        continue;
+      }
+      queue.push(value);
     }
   }
+  if (bestScore > 0) return best;
   if (pickOfferId(root)) return [root];
   return [];
 }
@@ -328,6 +363,7 @@ async function searchAlibabaProducts(params = {}) {
         size,
         page_size: size,
       });
+      assertBuyerResult(payload);
       const { ids, items } = listFromSearchPayload(payload);
       const list = ids
         ? await hydrateProductIds(ids, size)
@@ -352,6 +388,7 @@ async function searchAlibabaProducts(params = {}) {
         country: alibabaConfig.defaultCountry,
       },
     });
+    assertBuyerResult(payload);
     const { ids, items } = listFromSearchPayload(payload);
     const list = ids
       ? await hydrateProductIds(ids, size)
