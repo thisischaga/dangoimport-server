@@ -75,28 +75,28 @@ async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath, metho
   return postForm(url, params);
 }
 
+function isInvalidApiPath(error) {
+  return /specified API Path is invalid|invalid.?api.?path/i.test(String(error?.message || ''));
+}
+
 async function iopPostFlexible(apiPath, bizParams = {}, { accessToken } = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const dotted = path.replace(/^\//, '').replace(/\//g, '.');
   const isAuth = path.startsWith('/auth/');
   const modes = isAuth
-    ? [{ appendPath: true, methodValue: path, label: 'path' }]
-    : [
-      { appendPath: false, methodValue: path, label: 'root+slash' },
-      { appendPath: false, methodValue: dotted, label: 'root+dotted' },
-      { appendPath: true, methodValue: path, label: 'append' },
-    ];
+    ? [{ appendPath: true, label: 'path' }]
+    : [{ appendPath: true, label: 'append' }, { appendPath: false, label: 'root' }];
   let lastError;
   for (const mode of modes) {
     try {
       return await iopPost(path, bizParams, {
         accessToken,
         appendPath: mode.appendPath,
-        methodValue: mode.methodValue,
+        methodValue: path,
       });
     } catch (error) {
       lastError = error;
       console.warn(`[alibaba] ${path} [${mode.label}]: ${error.message}`);
+      if (!isInvalidApiPath(error)) throw error;
     }
   }
   throw lastError;

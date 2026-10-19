@@ -1,13 +1,15 @@
-const { alibabaCall, topCall } = require('./alibabaClient');
+const { alibabaCall } = require('./alibabaClient');
 const { alibabaConfig } = require('../../config/alibaba');
 const { toNumber } = require('../../utils/dropshippingCalculations');
 
 function firstImage(item = {}) {
   const candidates = [
+    item.main_image_url,
     item.imageUrl,
     item.image,
     item.imgUrl,
     item.picUrl,
+    ...(Array.isArray(item.image_url_list) ? item.image_url_list : []),
     ...(Array.isArray(item.main_image?.images) ? item.main_image.images : []),
     ...(Array.isArray(item.mainImage?.images) ? item.mainImage.images : []),
     ...(Array.isArray(item.imageList) ? item.imageList : []),
@@ -33,7 +35,7 @@ function extractImages(item = {}) {
     urls.push({ url });
   };
   push(firstImage(item));
-  (item.main_image?.images || item.mainImage?.images || item.imageList || item.productImageList || item.images || []).forEach(push);
+  (item.image_url_list || item.main_image?.images || item.mainImage?.images || item.imageList || item.productImageList || item.images || []).forEach(push);
   return urls;
 }
 
@@ -58,20 +60,21 @@ function mapSearchItem(item = {}) {
     ),
     currency: item.moq_and_price?.moq_unit_price?.currency || item.priceInfo?.currency || item.price?.currency || item.currency || 'USD',
     stock: toNumber(item.amountOnSale ?? item.quantity ?? item.stock, 0),
-    minOrderQuantity: toNumber(item.minOrderQuantity ?? item.quantityBegin, 1),
-    category: item.categoryName || item.categoryId || '',
-    productUrl: item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
+    minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
+    category: item.leaf_category_name || item.top_category_name || item.categoryName || item.categoryId || '',
+    productUrl: item.detail_url || item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
     raw: item,
   };
 }
 
 function unwrapList(payload) {
   if (Array.isArray(payload)) return payload;
+  const value = payload?.value;
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.distribution_sale_product)) return value.distribution_sale_product;
   return payload?.resultList
     || payload?.toReturn
     || payload?.products
-    || payload?.value?.distribution_sale_product
-    || payload?.value
     || payload?.productList
     || payload?.pageResult?.resultList
     || payload?.result?.resultList
@@ -80,156 +83,97 @@ function unwrapList(payload) {
     || [];
 }
 
-function isProductIdKeyword(keyword) {
-  return /^\d{6,}$/.test(String(keyword || '').trim());
+function extractProductId(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const fromUrl = raw.match(/product-detail\/[^/?#]*?_(\d{6,})/i)
+    || raw.match(/_(\d{8,})\.html/i)
+    || raw.match(/[?&](?:offerId|productId|id)=(\d{6,})/i);
+  if (fromUrl) return fromUrl[1];
+  if (/^\d{6,}$/.test(raw)) return raw;
+  return '';
 }
 
 function getParamsForId(id) {
   const numericId = Number(id);
   const productId = Number.isFinite(numericId) ? numericId : id;
+  const requestJson = JSON.stringify({ product_ids: [productId] });
   return [
     {
-      protocol: 'gop',
       path: '/alibaba/dropshipping/product/get',
-      params: {
-        param_distribution_sale_product_request: JSON.stringify({ product_ids: [productId] }),
-        product_ids: String(productId),
-      },
+      params: { param_distribution_sale_product_request: requestJson },
     },
     {
-      protocol: 'top',
-      path: 'alibaba.dropshipping.product.get',
-      params: { product_ids: JSON.stringify([productId]) },
-    },
-    {
-      protocol: 'gop',
-      path: '/icbu/product/get',
+      path: '/product/get',
       params: {
-        product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
         product_id: String(productId),
-      },
-    },
-    {
-      protocol: 'top',
-      path: 'alibaba.icbu.product.get',
-      params: {
-        product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
-      },
-    },
-  ];
-}
-
-function listAttempts(keyword, page, size, categoryId) {
-  return [
-    {
-      protocol: 'gop',
-      path: '/product/list',
-      params: {
-        pool_id: alibabaConfig.defaultPoolId,
-        keyword,
-        page_no: page,
-        page_size: size,
         country: alibabaConfig.defaultCountry,
       },
     },
     {
-      protocol: 'gop',
-      path: '/alibaba/dropshipping/product/list',
-      params: {
-        keyword,
-        page_no: page,
-        page_size: size,
-      },
-    },
-    {
-      protocol: 'gop',
-      path: '/alibaba/icbu/product/list',
+      path: '/alibaba/icbu/product/get',
       params: {
         language: 'ENGLISH',
-        subject: keyword,
-        category_id: categoryId || undefined,
-        current_page: page,
-        page_size: size,
-        filter_type: 'onSelling',
-      },
-    },
-    {
-      protocol: 'top',
-      path: 'alibaba.icbu.product.list',
-      params: {
-        language: 'ENGLISH',
-        subject: keyword,
-        current_page: String(page),
-        page_size: String(size),
-        filter_type: 'onSelling',
+        product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
       },
     },
   ];
-}
-
-async function callAttempt(attempt) {
-  if (attempt.protocol === 'top') {
-    return topCall(attempt.path, attempt.params);
-  }
-  return alibabaCall(attempt.path, attempt.params);
 }
 
 async function callFirstAllowed(attempts) {
   const errors = [];
   for (const attempt of attempts) {
     try {
-      return await callAttempt(attempt);
+      return await alibabaCall(attempt.path, attempt.params);
     } catch (error) {
-      const message = `${attempt.protocol} ${attempt.path}: ${error.message}`;
+      const message = `${attempt.path}: ${error.message}`;
       errors.push(message);
       console.warn(`[alibaba] ${message}`);
     }
   }
   const err = new Error(
-    `Alibaba n’a accepté aucune API produit. ${errors.slice(0, 4).join(' | ')} `
-    + 'Le groupe ICBU Dropshipping Solution ne permet pas la recherche par mot-clé : collez l’ID numérique du produit (URL alibaba.com/product-detail/…). '
-    + 'Reconnectez Alibaba après un nouveau groupe d’API.',
+    `Alibaba n’a pas renvoyé le produit. ${errors.join(' | ')} `
+    + 'Utilisez l’ID numérique (URL product-detail). eco.taobao.com ne reconnaît pas l’AppKey GOP : rester sur openapi-api.alibaba.com.',
   );
   err.status = 502;
   err.code = 'NO_API_PERMISSION';
   throw err;
 }
 
+function keywordRequiredError() {
+  const err = new Error(
+    'Le groupe ICBU Dropshipping Solution n’a pas de recherche par mot-clé. Collez l’ID produit (chiffres dans l’URL alibaba.com/product-detail/Nom_123456.html) ou l’URL complète.',
+  );
+  err.status = 400;
+  err.code = 'PRODUCT_ID_REQUIRED';
+  return err;
+}
+
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
   const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
-  const keyword = params.keyword ? String(params.keyword).trim() : undefined;
-  const attempts = isProductIdKeyword(keyword)
-    ? getParamsForId(keyword)
-    : listAttempts(keyword, page, size, params.categoryId);
-  const payload = await callFirstAllowed(attempts);
-  const list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
-  if (!list.length && payload && isProductIdKeyword(keyword)) {
-    const mapped = mapSearchItem({ ...payload, offerId: pickOfferId(payload) || keyword });
-    if (mapped.externalProductId) list.push(mapped);
+  const productId = extractProductId(params.keyword);
+  if (!productId) throw keywordRequiredError();
+  const payload = await callFirstAllowed(getParamsForId(productId));
+  let list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
+  if (!list.length && payload) {
+    const mapped = mapSearchItem({ ...payload, offerId: pickOfferId(payload) || productId });
+    if (mapped.externalProductId) list = [mapped];
   }
-  const total = toNumber(
-    payload?.totalRecords ?? payload?.total_item ?? payload?.totalCount ?? payload?.pageResult?.totalRecords,
-    list.length,
-  );
   return {
     products: list,
     pagination: {
       currentPage: page,
-      totalPages: Math.max(1, Math.ceil(total / size) || 1),
-      totalRecords: total,
+      totalPages: 1,
+      totalRecords: list.length,
       itemsPerPage: size,
     },
   };
 }
 
 async function getAlibabaProductDetail(productId) {
-  const id = String(productId || '').trim();
-  if (!id) {
-    const err = new Error('Identifiant produit Alibaba requis.');
-    err.status = 400;
-    throw err;
-  }
+  const id = extractProductId(productId) || String(productId || '').trim();
+  if (!id) throw keywordRequiredError();
   const payload = await callFirstAllowed(getParamsForId(id));
   const product = payload?.product
     || payload?.productInfo
@@ -250,4 +194,5 @@ module.exports = {
   getAlibabaProductDetail,
   mapSearchItem,
   extractImages,
+  extractProductId,
 };
