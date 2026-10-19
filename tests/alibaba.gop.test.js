@@ -22,6 +22,11 @@ test('classifies Alibaba invalid path separately from missing permission', () =>
   assert.equal(keyword.status, 400);
 });
 
+test('classifies unsupported HTTP method', () => {
+  const method = classifyAlibabaError({ message: 'This http method is not supported' });
+  assert.equal(method.code, 'HTTP_METHOD_NOT_SUPPORTED');
+});
+
 test('classifies missing app_key separately from invalid key', () => {
   const missing = classifyAlibabaError({
     message: 'The input parameter “app_key” that is mandatory for processing this request is not supplied',

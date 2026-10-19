@@ -75,16 +75,6 @@ function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = 
   return { url, path, params, append };
 }
 
-function isIncompleteSignature(error) {
-  return error?.code === 'IncompleteSignature'
-    || /IncompleteSignature|does not conform to platform standards/i.test(String(error?.message || ''));
-}
-
-function isMissingAppKey(error) {
-  return error?.code === 'MISSING_APP_KEY'
-    || /app_key.+not supplied|mandatory for processing this request is not supplied/i.test(String(error?.message || ''));
-}
-
 function logSafeAlibabaError(path, error, style) {
   const prefix = style ? `${path} [${style}]` : path;
   console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
@@ -153,12 +143,6 @@ async function iopGet(apiPath, bizParams = {}, { accessToken } = {}) {
     return await getJson(built.queryUrl, built.headerHeaders);
   } catch (error) {
     logSafeAlibabaError(built.path, error, 'query-get');
-    if (!isIncompleteSignature(error) && !isMissingAppKey(error)) throw error;
-  }
-  try {
-    return await iopPost(apiPath, bizParams, { accessToken, appendPath: false });
-  } catch (error) {
-    logSafeAlibabaError(apiPath, error, 'form-post');
     throw error;
   }
 }

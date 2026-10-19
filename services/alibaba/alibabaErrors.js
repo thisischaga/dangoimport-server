@@ -9,6 +9,14 @@ function classifyAlibabaError(error) {
       message: message || 'The request signature does not conform to platform standards',
     };
   }
+  if (/http method is not supported/i.test(message)) {
+    return {
+      code: 'HTTP_METHOD_NOT_SUPPORTED',
+      alibaba: true,
+      status: 502,
+      message: message || 'This http method is not supported',
+    };
+  }
   if (/specified API Path is invalid|invalid.?api.?path/i.test(message) || code === 'INVALID_API_PATH') {
     return {
       code: 'INVALID_API_PATH',
