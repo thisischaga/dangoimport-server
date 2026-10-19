@@ -94,12 +94,16 @@ test('buyer search sends keyword and param0 together', () => {
   const search = buildEcoGetRequest('/eco/buyer/product/search', {
     keyword: 'phone',
     country: 'US',
+    index: 1,
     page_index: 1,
+    size: 20,
     page_size: 20,
   }, { accessToken: 'tok' });
   assert.equal(search.params.keyword, 'phone');
+  assert.equal(search.params.index, '1');
   assert.equal(search.params.country, 'US');
   assert.equal(JSON.parse(search.params.param0).keyword, 'phone');
+  assert.equal(JSON.parse(search.params.param0).index, 1);
   const description = buildEcoGetRequest('/eco/buyer/product/description', {
     product_id: '1600123456789',
     country: 'US',

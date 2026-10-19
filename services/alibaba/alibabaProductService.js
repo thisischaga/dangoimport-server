@@ -266,7 +266,9 @@ async function searchAlibabaProducts(params = {}) {
       const payload = await alibabaCall(searchPath, {
         keyword,
         country: alibabaConfig.defaultCountry,
+        index: page,
         page_index: page,
+        size,
         page_size: size,
       });
       const ids = extractIdList(payload);
