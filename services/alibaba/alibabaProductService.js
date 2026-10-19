@@ -121,18 +121,6 @@ function assertAllowedPath(path) {
   }
 }
 
-function emptyPage(page, size) {
-  return {
-    products: [],
-    pagination: {
-      currentPage: page,
-      totalPages: 1,
-      totalRecords: 0,
-      itemsPerPage: size,
-    },
-  };
-}
-
 async function fetchProductById(id) {
   const path = alibabaConfig.productGetPath;
   assertAllowedPath(path);
@@ -235,5 +223,4 @@ module.exports = {
   extractImages,
   extractProductId,
   REJECTED_API_PATHS,
-  emptyPage,
 };

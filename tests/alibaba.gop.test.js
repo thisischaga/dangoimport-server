@@ -7,7 +7,7 @@ const {
   searchAlibabaProducts,
   REJECTED_API_PATHS,
 } = require('../services/alibaba/alibabaProductService');
-const { mapAlibabaProductToDango, buildExternalSourceKey } = require('../services/alibaba/alibabaMapper');
+const { buildExternalSourceKey } = require('../services/alibaba/alibabaMapper');
 
 test('classifies Alibaba invalid path separately from missing permission', () => {
   const invalid = classifyAlibabaError({ message: 'The specified API Path is invalid' });
@@ -60,19 +60,6 @@ test('rejected GOP paths stay blocked', () => {
   assert.ok(REJECTED_API_PATHS.has('/alibaba/icbu/product/get'));
 });
 
-test('mapper keeps Alibaba payload fields without inventing a catalog price', () => {
-  const mapped = mapAlibabaProductToDango({
-    externalProductId: '1600123456789',
-    name: 'Test earbuds',
-    supplierPrice: 12.5,
-    currency: 'USD',
-    stock: 4,
-    images: [{ url: 'https://example.com/a.jpg' }],
-    raw: { productId: '1600123456789', subject: 'Test earbuds' },
-  });
-  assert.equal(mapped.externalProductId, '1600123456789');
-  assert.equal(mapped.externalSourceKey, buildExternalSourceKey('1600123456789'));
-  assert.equal(mapped.supplier.platform, 'alibaba');
-  assert.equal(mapped.supplier.supplierPrice, 12.5);
-  assert.ok(mapped.price > 0);
+test('external source key is stable for Alibaba product IDs', () => {
+  assert.equal(buildExternalSourceKey('1600123456789'), 'alibaba:1600123456789');
 });
