@@ -90,26 +90,22 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(eco.headerHeaders.app_key, undefined);
 });
 
-test('buyer search and description wrap business fields as param0 JSON', () => {
+test('buyer search sends keyword as a GOP field, not param0', () => {
   const search = buildEcoGetRequest('/eco/buyer/product/search', {
-    keywords: 'phone',
+    keyword: 'phone',
     country: 'US',
     page_index: 1,
     page_size: 20,
   }, { accessToken: 'tok' });
-  assert.equal(search.params.keywords, undefined);
-  assert.deepEqual(JSON.parse(search.params.param0), {
-    keywords: 'phone',
-    country: 'US',
-    page_index: 1,
-    page_size: 20,
-  });
+  assert.equal(search.params.keyword, 'phone');
+  assert.equal(search.params.param0, undefined);
+  assert.equal(search.params.country, 'US');
   const description = buildEcoGetRequest('/eco/buyer/product/description', {
     product_id: '1600123456789',
     country: 'US',
   }, { accessToken: 'tok' });
-  assert.equal(description.params.product_id, undefined);
-  assert.equal(JSON.parse(description.params.param0).product_id, '1600123456789');
+  assert.equal(description.params.product_id, '1600123456789');
+  assert.equal(description.params.param0, undefined);
 });
 
 test('classifies missing param0 separately from missing app_key', () => {
@@ -117,6 +113,10 @@ test('classifies missing param0 separately from missing app_key', () => {
     message: 'The input parameter “param0” that is mandatory for processing this request is not supplied',
   });
   assert.equal(missing.code, 'MISSING_PARAM0');
+  const keyword = classifyAlibabaError({
+    message: 'The input parameter “keyword” that is mandatory for processing this request is not supplied',
+  });
+  assert.equal(keyword.code, 'MISSING_KEYWORD');
 });
 
 test('rejected GOP paths stay blocked', () => {

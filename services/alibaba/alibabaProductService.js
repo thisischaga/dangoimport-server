@@ -264,7 +264,7 @@ async function searchAlibabaProducts(params = {}) {
     assertAllowedPath(searchPath);
     try {
       const payload = await alibabaCall(searchPath, {
-        keywords: keyword,
+        keyword,
         country: alibabaConfig.defaultCountry,
         page_index: page,
         page_size: size,

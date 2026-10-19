@@ -49,6 +49,14 @@ function classifyAlibabaError(error) {
       message: message || 'The input parameter “param0” that is mandatory for processing this request is not supplied',
     };
   }
+  if (/[“"]keyword[”"].+not supplied/i.test(message)) {
+    return {
+      code: 'MISSING_KEYWORD',
+      alibaba: true,
+      status: 502,
+      message: message || 'The input parameter “keyword” that is mandatory for processing this request is not supplied',
+    };
+  }
   if (/mandatory for processing this request is not supplied/i.test(message)) {
     return {
       code: 'MISSING_PARAMETER',
