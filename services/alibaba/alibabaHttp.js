@@ -14,6 +14,9 @@ function extractErrorMessage(data = {}) {
   if (/非法的AppKey|illegal.?app.?key/i.test(String(raw))) {
     return 'Alibaba Open Platform refuse l’AppKey. Vérifiez ALIBABA_APP_KEY sur Render (console openapi.alibaba.com).';
   }
+  if (/does not have permission|no permission|insufficient isv permissions/i.test(String(raw))) {
+    return 'NO_API_PERMISSION';
+  }
   return String(raw || 'Erreur API Alibaba Open Platform.');
 }
 

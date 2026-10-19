@@ -16,11 +16,10 @@ async function alibabaCall(apiName, bizParams = {}) {
 
 async function testConnection() {
   const started = Date.now();
-  const result = await iopCall('/alibaba/icbu/product/list', {
-    language: 'ENGLISH',
-    current_page: 1,
+  const result = await iopCall('/alibaba/dropshipping/product/list', {
+    keyword: 'phone',
+    page_no: 1,
     page_size: 1,
-    filter_type: 'onSelling',
   });
   const list = result?.resultList || result?.products || result?.productList || (Array.isArray(result) ? result : []);
   return {

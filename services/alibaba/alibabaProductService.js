@@ -48,8 +48,15 @@ function mapSearchItem(item = {}) {
     name: item.subject || item.productTitle || item.title || item.name || `Produit ${id}`,
     image: firstImage(item),
     images: extractImages(item),
-    supplierPrice: toNumber(item.priceInfo?.price || item.price?.amount || item.price || item.referencePrice || item.minPrice),
-    currency: item.priceInfo?.currency || item.price?.currency || item.currency || 'USD',
+    supplierPrice: toNumber(
+      item.moq_and_price?.moq_unit_price?.amount
+      || item.priceInfo?.price
+      || item.price?.amount
+      || item.price
+      || item.referencePrice
+      || item.minPrice,
+    ),
+    currency: item.moq_and_price?.moq_unit_price?.currency || item.priceInfo?.currency || item.price?.currency || item.currency || 'USD',
     stock: toNumber(item.amountOnSale ?? item.quantity ?? item.stock, 0),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.quantityBegin, 1),
     category: item.categoryName || item.categoryId || '',
@@ -63,26 +70,88 @@ function unwrapList(payload) {
   return payload?.resultList
     || payload?.toReturn
     || payload?.products
+    || payload?.value?.distribution_sale_product
+    || payload?.value
+    || payload?.productList
     || payload?.pageResult?.resultList
     || payload?.result?.resultList
+    || payload?.result?.products
     || [];
+}
+
+function isSkippableApiError(error) {
+  const msg = String(error?.message || error?.code || '');
+  return /NO_API_PERMISSION|does not have permission|specified API Path is invalid|invalid.?api.?path/i.test(msg);
+}
+
+function permissionError(lastError) {
+  const err = new Error(
+    'L’app n’a pas la permission d’accéder aux API produit. Dans openapi.alibaba.com → App Console → API Permission Group, demandez le groupe Dropshipping / Product (Product List, Product Get). OAuth seul ne suffit pas. API actuellement nécessaires : /alibaba/dropshipping/product/list ou /product/list (pool) ou /alibaba/icbu/product/list.',
+  );
+  err.status = 502;
+  err.code = 'NO_API_PERMISSION';
+  err.cause = lastError;
+  return err;
+}
+
+async function callFirstAllowed(attempts) {
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      return await alibabaCall(attempt.path, attempt.params);
+    } catch (error) {
+      lastError = error;
+      if (isSkippableApiError(error)) continue;
+      throw error;
+    }
+  }
+  throw permissionError(lastError);
 }
 
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
   const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
   const keyword = params.keyword ? String(params.keyword).trim() : undefined;
-  const payload = await alibabaCall('/alibaba/icbu/product/list', {
-    language: 'ENGLISH',
-    subject: keyword,
-    category_id: params.categoryId || undefined,
-    current_page: page,
-    page_size: size,
-    filter_type: 'onSelling',
-  });
+  const payload = await callFirstAllowed([
+    {
+      path: '/alibaba/dropshipping/product/list',
+      params: {
+        keyword,
+        keywords: keyword,
+        subject: keyword,
+        page_no: page,
+        pageNo: page,
+        current_page: page,
+        page_size: size,
+        pageSize: size,
+      },
+    },
+    {
+      path: '/product/list',
+      params: {
+        pool_id: alibabaConfig.defaultPoolId,
+        poolId: alibabaConfig.defaultPoolId,
+        keyword,
+        page_no: page,
+        page_size: size,
+        country: alibabaConfig.defaultCountry,
+      },
+    },
+    {
+      path: '/alibaba/icbu/product/list',
+      params: {
+        language: 'ENGLISH',
+        subject: keyword,
+        category_id: params.categoryId || undefined,
+        current_page: page,
+        page_size: size,
+        filter_type: 'onSelling',
+      },
+    },
+  ]);
   const list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
   const total = toNumber(
-    payload?.totalRecords ?? payload?.totalCount ?? payload?.pageResult?.totalRecords,
+    payload?.totalRecords ?? payload?.total_item ?? payload?.totalCount ?? payload?.pageResult?.totalRecords,
     list.length,
   );
   return {
@@ -103,18 +172,36 @@ async function getAlibabaProductDetail(productId) {
     err.status = 400;
     throw err;
   }
-  const payload = await alibabaCall('/icbu/product/get', {
-    product_get_request: {
-      productId: Number.isFinite(Number(id)) ? Number(id) : id,
-      webSite: 'ICBU',
+  const numericId = Number(id);
+  const payload = await callFirstAllowed([
+    {
+      path: '/alibaba/dropshipping/product/get',
+      params: {
+        param_distribution_sale_product_request: {
+          product_ids: [Number.isFinite(numericId) ? numericId : id],
+        },
+      },
     },
-  });
-  const product = payload?.product || payload?.productInfo || payload || {};
+    {
+      path: '/icbu/product/get',
+      params: {
+        product_get_request: {
+          productId: Number.isFinite(numericId) ? numericId : id,
+          webSite: 'ICBU',
+        },
+      },
+    },
+  ]);
+  const product = payload?.product
+    || payload?.productInfo
+    || unwrapList(payload)[0]
+    || payload
+    || {};
   return {
     ...mapSearchItem({ ...product, offerId: pickOfferId(product) || id }),
     description: product.description || product.productDescription || product.subject || '',
     weight: product.productShippingInfo?.weight || product.weight || product.netWeight,
-    skuInfos: product.skuInfos || product.skuList || product.productSkuInfos || [],
+    skuInfos: product.skuInfos || product.skuList || product.productSkuInfos || product.product_sku_list || [],
     raw: product,
   };
 }

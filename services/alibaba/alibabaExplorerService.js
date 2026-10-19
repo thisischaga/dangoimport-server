@@ -68,7 +68,9 @@ async function searchAlibabaForAdmin(params = {}) {
   return {
     products: (result.products || []).map((p) => ({
       ...p,
-      supplierPriceUsd: convertCnyToUsd(p.supplierPrice),
+      supplierPriceUsd: String(p.currency || 'USD').toUpperCase() === 'CNY'
+        ? convertCnyToUsd(p.supplierPrice)
+        : p.supplierPrice,
       imported: imported[p.externalProductId] || null,
     })),
     pagination: result.pagination,

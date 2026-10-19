@@ -32,6 +32,7 @@ const alibabaConfig = {
   cnyToUsdRate: Math.max(0.01, toNumber(process.env.ALIBABA_CNY_TO_USD_RATE, 7.2)),
   defaultPublicStock: Math.max(1, toNumber(process.env.ALIBABA_DEFAULT_PUBLIC_STOCK, 50)),
   defaultCountry: trimEnv(process.env.ALIBABA_DEFAULT_COUNTRY) || 'US',
+  defaultPoolId: trimEnv(process.env.ALIBABA_DEFAULT_POOL_ID) || '9031800410',
   platformKey: 'alibaba',
   supplierName: 'Alibaba.com',
 };
