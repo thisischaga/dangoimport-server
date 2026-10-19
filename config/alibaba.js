@@ -18,8 +18,9 @@ const productionBackend = (process.env.BACKEND_URL || process.env.API_BASE_URL |
 const productionAdmin = (process.env.ADMIN_FRONTEND_URL || 'https://dangoimport-admin-eiim.vercel.app').replace(/\/$/, '');
 
 const alibabaConfig = {
-  gateway: (process.env.ALIBABA_API_GATEWAY || 'https://gw.open.1688.com/openapi').replace(/\/$/, ''),
-  appKey: trimEnv(process.env.ALIBABA_APP_KEY).replace(/\D/g, ''),
+  gateway: (process.env.ALIBABA_API_GATEWAY || 'https://openapi-api.alibaba.com/rest').replace(/\/$/, ''),
+  authorizeUrl: (process.env.ALIBABA_AUTHORIZE_URL || 'https://openapi-auth.alibaba.com/oauth/authorize').replace(/\/$/, ''),
+  appKey: trimEnv(process.env.ALIBABA_APP_KEY),
   appSecret: trimEnv(process.env.ALIBABA_APP_SECRET),
   accessToken: trimEnv(process.env.ALIBABA_ACCESS_TOKEN),
   redirectUri: trimEnv(process.env.ALIBABA_REDIRECT_URI) || `${productionBackend}/api/admin/suppliers/alibaba/oauth/callback`,
@@ -30,8 +31,9 @@ const alibabaConfig = {
   cnyToXofRate: Math.max(1, toNumber(process.env.ALIBABA_CNY_TO_XOF_RATE, 85)),
   cnyToUsdRate: Math.max(0.01, toNumber(process.env.ALIBABA_CNY_TO_USD_RATE, 7.2)),
   defaultPublicStock: Math.max(1, toNumber(process.env.ALIBABA_DEFAULT_PUBLIC_STOCK, 50)),
+  defaultCountry: trimEnv(process.env.ALIBABA_DEFAULT_COUNTRY) || 'US',
   platformKey: 'alibaba',
-  supplierName: 'Alibaba / 1688',
+  supplierName: 'Alibaba.com',
 };
 
 function assertAlibabaConfigured() {

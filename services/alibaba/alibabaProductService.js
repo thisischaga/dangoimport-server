@@ -1,4 +1,5 @@
 const { alibabaCall } = require('./alibabaClient');
+const { alibabaConfig } = require('../../config/alibaba');
 const { toNumber } = require('../../utils/dropshippingCalculations');
 
 function firstImage(item = {}) {
@@ -45,12 +46,12 @@ function mapSearchItem(item = {}) {
     name: item.subject || item.productTitle || item.title || item.name || `Produit ${id}`,
     image: firstImage(item),
     images: extractImages(item),
-    supplierPrice: toNumber(item.priceInfo?.price || item.price || item.referencePrice || item.minPrice),
-    currency: item.priceInfo?.currency || item.currency || 'CNY',
+    supplierPrice: toNumber(item.priceInfo?.price || item.price?.amount || item.price || item.referencePrice || item.minPrice),
+    currency: item.priceInfo?.currency || item.price?.currency || item.currency || 'USD',
     stock: toNumber(item.amountOnSale ?? item.quantity ?? item.stock, 0),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.quantityBegin, 1),
     category: item.categoryName || item.categoryId || '',
-    productUrl: item.detailUrl || item.productUrl || (id ? `https://detail.1688.com/offer/${id}.html` : ''),
+    productUrl: item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
     raw: item,
   };
 }
@@ -68,11 +69,17 @@ function unwrapList(payload) {
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
   const size = Math.min(50, Math.max(1, toNumber(params.size, 20)));
-  const payload = await alibabaCall('alibaba.product.search', {
-    keywords: params.keyword ? String(params.keyword).trim() : undefined,
+  const keyword = params.keyword ? String(params.keyword).trim() : undefined;
+  const payload = await alibabaCall('/product/search', {
+    keyword,
+    keywords: keyword,
     categoryId: params.categoryId || undefined,
+    page: page,
     pageNo: page,
+    page_no: page,
     pageSize: size,
+    page_size: size,
+    country: params.country || alibabaConfig.defaultCountry,
     priceStart: params.minPrice || undefined,
     priceEnd: params.maxPrice || undefined,
   });
@@ -99,10 +106,11 @@ async function getAlibabaProductDetail(productId) {
     err.status = 400;
     throw err;
   }
-  const payload = await alibabaCall('alibaba.product.get', {
-    productID: id,
+  const payload = await alibabaCall('/product/get', {
+    product_id: id,
     productId: id,
-    offerId: id,
+    productID: id,
+    country: alibabaConfig.defaultCountry,
   });
   const product = payload?.product || payload?.productInfo || payload || {};
   return {

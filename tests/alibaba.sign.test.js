@@ -1,10 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { signRequest } = require('../services/alibaba/alibabaClient');
+const { signIop } = require('../services/alibaba/alibabaSign');
 
-test('Alibaba HMAC-SHA1 signature is stable for sorted params', () => {
-  const path = 'param2/1/com.alibaba.product/alibaba.product.search/APPKEY';
-  const sign = signRequest(path, { b: '2', a: '1' }, 'secret');
-  assert.equal(sign, signRequest(path, { a: '1', b: '2' }, 'secret'));
-  assert.equal(sign.length, 40);
+test('Alibaba Open Platform HMAC-SHA256 signature is stable for sorted params', () => {
+  const path = '/auth/token/create';
+  const sign = signIop(path, { b: '2', a: '1', app_key: '504934' }, 'secret');
+  assert.equal(sign, signIop(path, { a: '1', app_key: '504934', b: '2' }, 'secret'));
+  assert.equal(sign.length, 64);
+  assert.equal(sign, sign.toUpperCase());
 });

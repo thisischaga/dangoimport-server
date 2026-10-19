@@ -40,8 +40,10 @@ function mapAlibabaVariants(skuInfos = []) {
 function mapAlibabaProductToDango(listItem = {}, detail = null) {
   const source = detail || listItem;
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
-  const priceCny = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price);
-  const supplierUsd = convertCnyToUsd(priceCny);
+  const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || 'USD').toUpperCase();
+  const rawPrice = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price?.amount ?? source.raw?.price);
+  const supplierUsd = rawCurrency === 'CNY' ? convertCnyToUsd(rawPrice) : rawPrice;
+  const priceCny = rawCurrency === 'CNY' ? rawPrice : 0;
   const costPriceXof = convertUsdPriceToXof(supplierUsd);
   const sellingPrice = applyProductMarkup(costPriceXof, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
   const margin = calculateMargin({
@@ -90,7 +92,7 @@ function mapAlibabaProductToDango(listItem = {}, detail = null) {
       name: source.raw?.sellerLoginId || alibabaConfig.supplierName,
       platform: alibabaConfig.platformKey,
       productId: externalProductId,
-      productUrl: source.productUrl || `https://detail.1688.com/offer/${externalProductId}.html`,
+      productUrl: source.productUrl || `https://www.alibaba.com/product-detail/${externalProductId}.html`,
       supplierPrice: supplierUsd,
       supplierCurrency: 'USD',
       shippingCost: 0,

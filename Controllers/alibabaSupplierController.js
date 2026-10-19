@@ -57,7 +57,7 @@ exports.oauthStart = async (_req, res) => {
     if (!getRedirectUri()) {
       return res.status(503).json({
         success: false,
-        message: 'Définissez ALIBABA_REDIRECT_URI (même URL que dans la console 1688).',
+        message: 'Définissez ALIBABA_REDIRECT_URI (même URL que dans la console openapi.alibaba.com).',
       });
     }
     const state = createOauthState();
