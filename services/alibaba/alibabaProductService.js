@@ -172,7 +172,13 @@ async function searchAlibabaProducts(params = {}) {
         },
       };
     } catch (error) {
-      throw applyAlibabaError(error);
+      const wrapped = applyAlibabaError(error);
+      if (wrapped.code === 'NO_API_PERMISSION') {
+        wrapped.message = `Alibaba refuse ${alibabaConfig.productGetPath} : ${error.message}. `
+          + 'OAuth n’est pas en cause. Ce Path est le Product Get vendeur ICBU. '
+          + 'Dans openapi.alibaba.com → App Console → API Permission Group (ISV-Dropshipping), copiez le Path exact de Get Product Description dans ALIBABA_PRODUCT_GET_PATH.';
+      }
+      throw wrapped;
     }
   }
 

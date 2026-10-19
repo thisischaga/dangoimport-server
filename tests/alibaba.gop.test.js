@@ -23,7 +23,7 @@ test('classifies Alibaba invalid path separately from missing permission', () =>
 });
 
 test('GOP product calls POST to /rest without appending the API path', () => {
-  assert.equal(shouldAppendPath('/auth/token/create'), true);
+  assert.equal(shouldAppendPath('/auth/token/create'), false);
   assert.equal(shouldAppendPath('/icbu/product/get'), false);
   const product = buildGopRequest('/icbu/product/get', { product_get_request: '{"productId":1}' }, { accessToken: 'tok' });
   assert.equal(product.append, false);
@@ -33,14 +33,15 @@ test('GOP product calls POST to /rest without appending the API path', () => {
   assert.equal(product.params.sign_method, 'sha256');
   assert.equal(product.params.sign.length, 64);
   assert.equal(product.params.access_token, 'tok');
-  const auth = buildGopRequest('/auth/token/create', { code: 'abc' });
-  assert.equal(auth.append, true);
-  assert.match(auth.url, /\/rest\/auth\/token\/create$/);
-  assert.equal(auth.params.method, undefined);
-  assert.equal(auth.params.format, undefined);
-  assert.equal(auth.params.redirect_uri, undefined);
-  assert.equal(auth.params.code, 'abc');
-  assert.equal(auth.params.sign_method, 'sha256');
+  const authRoot = buildGopRequest('/auth/token/create', { code: 'abc' }, { appendPath: false, includeMethod: true });
+  assert.equal(authRoot.append, false);
+  assert.equal(authRoot.params.method, '/auth/token/create');
+  assert.equal(authRoot.params.code, 'abc');
+  const authPython = buildGopRequest('/auth/token/create', { code: 'abc' }, { appendPath: true, includeMethod: false });
+  assert.equal(authPython.append, true);
+  assert.match(authPython.url, /\/rest\/auth\/token\/create$/);
+  assert.equal(authPython.params.method, undefined);
+  assert.equal(authPython.params.format, undefined);
 });
 
 test('classifies IncompleteSignature before permission wording', () => {

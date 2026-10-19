@@ -47,43 +47,53 @@ function isAuthPath(apiPath) {
 }
 
 function shouldAppendPath(apiPath) {
-  return isAuthPath(apiPath);
+  return false;
 }
 
-function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
+function isIncompleteSignature(error) {
+  return error?.code === 'IncompleteSignature'
+    || /IncompleteSignature|does not conform to platform standards/i.test(String(error?.message || ''));
+}
+
+function buildGopRequest(apiPath, bizParams = {}, {
+  accessToken,
+  appendPath,
+  includeMethod = true,
+} = {}) {
   const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   const append = appendPath ?? shouldAppendPath(path);
   const timestamp = String(Date.now());
-  const params = isAuthPath(path)
+  const params = includeMethod
     ? {
-      app_key: alibabaConfig.appKey,
-      sign_method: 'sha256',
-      timestamp,
-      ...stringifyParams(bizParams),
-    }
-    : {
       app_key: alibabaConfig.appKey,
       format: 'json',
       method: path,
       timestamp,
       sign_method: 'sha256',
       ...stringifyParams(bizParams),
+    }
+    : {
+      app_key: alibabaConfig.appKey,
+      sign_method: 'sha256',
+      timestamp,
+      ...stringifyParams(bizParams),
     };
-  if (accessToken && !isAuthPath(path)) params.access_token = accessToken;
+  if (accessToken) params.access_token = accessToken;
   params.sign = signIop(path, params, alibabaConfig.appSecret);
   const url = append ? `${alibabaConfig.gateway}${path}` : alibabaConfig.gateway;
-  return { url, path, params, append };
+  return { url, path, params, append, includeMethod };
 }
 
-function logSafeAlibabaError(path, error) {
-  console.warn(`[alibaba] ${path}: ${error.code || ''} ${error.message}`.trim());
+function logSafeAlibabaError(path, error, style) {
+  const prefix = style ? `${path} [${style}]` : path;
+  console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
 }
 
 async function postForm(url, params) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+      'Content-Type': 'application/x-www-form-urlencoded',
       'X-Protocol': 'GOP',
     },
     body: new URLSearchParams(params),
@@ -95,14 +105,36 @@ async function postForm(url, params) {
   return data;
 }
 
-async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}) {
-  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath });
-  try {
-    return await postForm(built.url, built.params);
-  } catch (error) {
-    logSafeAlibabaError(built.path, error);
-    throw error;
-  }
+async function iopPostOnce(apiPath, bizParams, options) {
+  const built = buildGopRequest(apiPath, bizParams, options);
+  return postForm(built.url, built.params);
 }
 
-module.exports = { iopPost, buildGopRequest, shouldAppendPath };
+async function iopPost(apiPath, bizParams = {}, options = {}) {
+  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const styles = isAuthPath(path) && options.appendPath === undefined && options.includeMethod === undefined
+    ? [
+      { name: 'root-gop', appendPath: false, includeMethod: true },
+      { name: 'append-python', appendPath: true, includeMethod: false },
+      { name: 'append-gop', appendPath: true, includeMethod: true },
+    ]
+    : [{ name: 'default', appendPath: options.appendPath, includeMethod: options.includeMethod }];
+
+  let lastError;
+  for (const style of styles) {
+    try {
+      return await iopPostOnce(path, bizParams, {
+        accessToken: options.accessToken,
+        appendPath: style.appendPath,
+        includeMethod: style.includeMethod,
+      });
+    } catch (error) {
+      lastError = error;
+      logSafeAlibabaError(path, error, style.name);
+      if (!isAuthPath(path) || !isIncompleteSignature(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+module.exports = { iopPost, buildGopRequest, shouldAppendPath, isIncompleteSignature };
