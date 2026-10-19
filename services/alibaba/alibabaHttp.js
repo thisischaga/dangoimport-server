@@ -81,21 +81,12 @@ function logSafeAlibabaError(path, error, style) {
 }
 
 function buildEcoGetRequest(apiPath, bizParams = {}, { accessToken } = {}) {
-  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const biz = stringifyParams(bizParams);
-  const sys = {
-    app_key: alibabaConfig.appKey,
-    timestamp: String(Date.now()),
-    sign_method: 'sha256',
-  };
-  if (accessToken) sys.access_token = accessToken;
-  const signParams = { ...sys, ...biz };
-  const sign = signIop(path, signParams, alibabaConfig.appSecret);
-  const query = new URLSearchParams({ ...signParams, sign });
+  const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath: false });
   return {
-    path,
-    queryUrl: `${alibabaConfig.gateway}${path}?${query}`,
-    headerHeaders: { ...sys, sign, 'X-Protocol': 'GOP' },
+    path: built.path,
+    params: built.params,
+    queryUrl: `${built.url}?${new URLSearchParams(built.params)}`,
+    headerHeaders: { 'X-Protocol': 'GOP' },
   };
 }
 

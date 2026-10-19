@@ -72,14 +72,16 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.equal(alibabaConfig.productListPath, '/eco/buyer/product/check');
   assert.equal(shouldAppendPath('/eco/buyer/product/description'), false);
   const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
-  assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
+  assert.match(eco.queryUrl, /\/rest\?/);
+  assert.equal(eco.queryUrl.includes('/rest/eco/'), false);
+  assert.match(eco.queryUrl, /method=%2Feco%2Fbuyer%2Fproduct%2Fcheck/);
   assert.match(eco.queryUrl, /app_key=/);
   assert.match(eco.queryUrl, /access_token=tok/);
+  assert.match(eco.queryUrl, /sign_method=sha256/);
+  assert.match(eco.queryUrl, /format=json/);
   assert.match(eco.queryUrl, /sign=/);
-  assert.equal(eco.headerHeaders.app_key, alibabaConfig.appKey);
-  assert.equal(eco.headerHeaders.access_token, 'tok');
-  assert.equal(eco.headerHeaders.sign_method, 'sha256');
-  assert.match(eco.headerHeaders.sign, /^[A-F0-9]{64}$/);
+  assert.equal(eco.headerHeaders['X-Protocol'], 'GOP');
+  assert.equal(eco.headerHeaders.app_key, undefined);
 });
 
 test('rejected GOP paths stay blocked', () => {
