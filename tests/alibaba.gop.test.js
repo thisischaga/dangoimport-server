@@ -1,10 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyAlibabaError } = require('../services/alibaba/alibabaErrors');
-const { buildGopRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
+const { buildGopRequest, buildEcoGetRequest, shouldAppendPath } = require('../services/alibaba/alibabaHttp');
+const { alibabaConfig } = require('../config/alibaba');
 const {
   extractProductId,
-  searchAlibabaProducts,
   REJECTED_API_PATHS,
 } = require('../services/alibaba/alibabaProductService');
 const { buildExternalSourceKey } = require('../services/alibaba/alibabaMapper');
@@ -54,24 +54,24 @@ test('extractProductId reads numeric IDs and product-detail URLs', () => {
   );
 });
 
-test('keyword search is rejected locally when no Product List path is configured', async () => {
-  await assert.rejects(
-    () => searchAlibabaProducts({ keyword: 'laptop' }),
-    (error) => error.code === 'PRODUCT_ID_REQUIRED' && error.status === 400,
-  );
-});
-
-test('product ID lookup is blocked until ALIBABA_PRODUCT_GET_PATH is set', async () => {
-  await assert.rejects(
-    () => searchAlibabaProducts({ keyword: '1600123456789' }),
-    (error) => error.code === 'PRODUCT_GET_PATH_REQUIRED' && error.status === 503,
-  );
+test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
+  assert.equal(alibabaConfig.productGetPath, '/eco/buyer/product/description');
+  assert.equal(alibabaConfig.productSearchPath, '/eco/buyer/product/search');
+  assert.equal(alibabaConfig.productListPath, '/eco/buyer/product/check');
+  assert.equal(shouldAppendPath('/eco/buyer/product/description'), false);
+  const eco = buildEcoGetRequest('/eco/buyer/product/check', { query_req: '{"pool_id":"9031800410"}' }, { accessToken: 'tok' });
+  assert.match(eco.headerUrl, /\/rest\/eco\/buyer\/product\/check\?/);
+  assert.equal(eco.headerHeaders.app_key, alibabaConfig.appKey);
+  assert.equal(eco.headerHeaders.access_token, 'tok');
+  assert.equal(eco.headerHeaders.sign_method, 'sha256');
+  assert.match(eco.headerHeaders.sign, /^[A-F0-9]{64}$/);
 });
 
 test('rejected GOP paths stay blocked', () => {
   assert.ok(REJECTED_API_PATHS.has('/alibaba/dropshipping/product/get'));
   assert.ok(REJECTED_API_PATHS.has('/product/get'));
   assert.ok(REJECTED_API_PATHS.has('/alibaba/icbu/product/get'));
+  assert.ok(REJECTED_API_PATHS.has('/icbu/product/get'));
 });
 
 test('external source key is stable for Alibaba product IDs', () => {

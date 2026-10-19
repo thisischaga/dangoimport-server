@@ -7,7 +7,9 @@ const REJECTED_API_PATHS = new Set([
   '/alibaba/dropshipping/product/get',
   '/product/get',
   '/alibaba/icbu/product/get',
+  '/icbu/product/get',
   '/product/list',
+  '/alibaba/icbu/product/list',
   '/alibaba/dropshipping/product/list',
 ]);
 
@@ -49,7 +51,37 @@ function extractImages(item = {}) {
 }
 
 function pickOfferId(item = {}) {
-  return String(item.offerId || item.productID || item.productId || item.product_id || item.id || '').trim();
+  return String(
+    item.offerId
+    || item.productID
+    || item.productId
+    || item.product_id
+    || item.basic_info?.product_id
+    || item.id
+    || '',
+  ).trim();
+}
+
+function flattenBuyerProduct(item = {}, fallbackId = '') {
+  if (!item || typeof item !== 'object') return { productId: fallbackId };
+  const basic = item.basic_info || item.product_info?.basic_info || {};
+  const trade = item.trade_info || item.product_info?.trade_info || {};
+  const imageUrls = []
+    .concat(basic.product_images || [], item.product_images || [], item.images || [])
+    .map((img) => (typeof img === 'string' ? img : img?.image_url || img?.url))
+    .filter(Boolean);
+  return {
+    ...item,
+    productId: basic.product_id || item.product_id || item.productId || fallbackId,
+    subject: basic.title || item.subject || item.title,
+    title: basic.title || item.title,
+    image: imageUrls[0] || item.image,
+    images: imageUrls.length ? imageUrls.map((url) => ({ url })) : item.images,
+    price: trade.price?.range_price?.min_price || trade.price?.price || trade.unit_price || item.price,
+    currency: trade.price?.currency || item.currency || 'USD',
+    minOrderQuantity: trade.moq || trade.min_order_quantity || item.minOrderQuantity,
+    description: item.description || basic.description || item.subject,
+  };
 }
 
 function mapSearchItem(item = {}) {
@@ -82,6 +114,9 @@ function unwrapList(payload) {
   const value = payload?.value;
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.distribution_sale_product)) return value.distribution_sale_product;
+  const resultData = payload?.result?.result_data ?? payload?.result_data;
+  if (Array.isArray(resultData)) return resultData;
+  if (resultData && typeof resultData === 'object' && !Array.isArray(resultData)) return [resultData];
   return payload?.resultList
     || payload?.toReturn
     || payload?.products
@@ -89,6 +124,14 @@ function unwrapList(payload) {
     || payload?.result?.resultList
     || payload?.productList
     || [];
+}
+
+function extractIdList(payload) {
+  const list = unwrapList(payload);
+  if (list.length && list.every((item) => typeof item === 'number' || (typeof item === 'string' && /^\d+$/.test(item)))) {
+    return list.map(String);
+  }
+  return null;
 }
 
 function extractProductId(input) {
@@ -103,10 +146,7 @@ function extractProductId(input) {
 }
 
 function keywordRequiredError() {
-  const err = new Error(
-    'Aucune API de recherche par mot-clé n’est configurée pour cette app ISV-Dropshipping. Collez l’ID produit ou l’URL alibaba.com/product-detail/… '
-    + 'Pour une liste pool, copiez le API Path exact depuis openapi.alibaba.com → App Console → API Permission Group vers ALIBABA_PRODUCT_LIST_PATH.',
-  );
+  const err = new Error('Indiquez un mot-clé, un ID produit Alibaba.com ou une URL product-detail.');
   err.status = 400;
   err.code = 'PRODUCT_ID_REQUIRED';
   return err;
@@ -128,105 +168,133 @@ function permissionDeniedOnProductGet(error) {
   const wrapped = applyAlibabaError(error);
   if (wrapped.code === 'NO_API_PERMISSION') {
     wrapped.message = `Alibaba refuse ${alibabaConfig.productGetPath} : App does not have permission to access this api. `
-      + 'OAuth n’est pas en cause. Ce Path est le Product Get vendeur ICBU. '
-      + 'Dans openapi.alibaba.com → App Console → API Permission Group (ISV-Dropshipping), copiez le Path exact de Get Product Description dans ALIBABA_PRODUCT_GET_PATH.';
+      + 'Ce Path doit être Get Product Description acheteur (/eco/buyer/product/description), pas une API vendeur ICBU.';
   }
   return wrapped;
 }
 
+function mapPayloadItem(item, fallbackId) {
+  const flat = flattenBuyerProduct(typeof item === 'object' ? item : { productId: item }, fallbackId);
+  const mapped = mapSearchItem({ ...flat, offerId: pickOfferId(flat) || fallbackId });
+  return {
+    ...mapped,
+    description: flat.description || '',
+    weight: flat.productShippingInfo?.weight || flat.weight || flat.netWeight || flat.logistics_info?.weight,
+    skuInfos: flat.skuInfos || flat.skuList || flat.productSkuInfos || flat.product_sku_list || flat.sku_info || [],
+    raw: item,
+  };
+}
+
 async function fetchProductById(id) {
   const path = alibabaConfig.productGetPath;
-  if (!path) {
-    const err = new Error(
-      'Aucun Path « Get Product Description » n’est configuré. Dans openapi.alibaba.com → App Console → API Permission Group → ISV-Dropshipping, ouvrez Get Product Description, copiez le API Path, puis définissez ALIBABA_PRODUCT_GET_PATH sur Render. /icbu/product/get est une API vendeur refusée pour cette app.',
-    );
-    err.status = 503;
-    err.code = 'PRODUCT_GET_PATH_REQUIRED';
-    throw err;
-  }
   assertAllowedPath(path);
-  const numericId = Number(id);
-  const productId = Number.isFinite(numericId) ? numericId : id;
   let payload;
   try {
     payload = await alibabaCall(path, {
-      product_get_request: JSON.stringify({ productId, webSite: 'ICBU' }),
-      language: 'ENGLISH',
+      product_id: String(id),
+      country: alibabaConfig.defaultCountry,
     });
   } catch (error) {
     throw permissionDeniedOnProductGet(error);
   }
-  const product = payload?.product
-    || unwrapList(payload)[0]
-    || payload?.result
-    || null;
-  if (!product || typeof product !== 'object') {
+  const product = unwrapList(payload)[0] || payload?.product || payload?.result || null;
+  if (!product || typeof product !== 'object' || Array.isArray(product)) {
     const err = new Error('Produit Alibaba introuvable pour cet ID.');
     err.status = 404;
     err.code = 'PRODUCT_NOT_FOUND';
     throw err;
   }
+  const mapped = mapPayloadItem(product, id);
+  if (!mapped.externalProductId) {
+    const err = new Error('Produit Alibaba introuvable pour cet ID.');
+    err.status = 404;
+    err.code = 'PRODUCT_NOT_FOUND';
+    throw err;
+  }
+  return mapped;
+}
+
+async function hydrateProductIds(ids, size) {
+  const slice = ids.slice(0, Math.min(size, 8));
+  const items = await Promise.all(slice.map(async (id) => {
+    try {
+      return await fetchProductById(id);
+    } catch {
+      return mapSearchItem({ productId: String(id) });
+    }
+  }));
+  return items.filter((item) => item.externalProductId);
+}
+
+function paginateFromPayload(payload, list, page, size) {
+  const total = toNumber(
+    payload?.result?.result_total
+    ?? payload?.totalRecords
+    ?? payload?.total_item
+    ?? payload?.totalCount,
+    list.length,
+  );
   return {
-    ...mapSearchItem({ ...product, offerId: pickOfferId(product) || id }),
-    description: product.description || product.productDescription || product.subject || '',
-    weight: product.productShippingInfo?.weight || product.weight || product.netWeight,
-    skuInfos: product.skuInfos || product.skuList || product.productSkuInfos || product.product_sku_list || [],
-    raw: product,
+    products: list,
+    pagination: {
+      currentPage: page,
+      totalPages: Math.max(1, Math.ceil(total / size) || 1),
+      totalRecords: total,
+      itemsPerPage: size,
+    },
   };
 }
 
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
   const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
-  const productId = extractProductId(params.keyword);
+  const keyword = String(params.keyword || '').trim();
+  const productId = extractProductId(keyword);
   if (productId) {
     try {
       const item = await fetchProductById(productId);
-      if (!item.externalProductId) {
-        const err = new Error('Produit Alibaba introuvable pour cet ID.');
-        err.status = 404;
-        err.code = 'PRODUCT_NOT_FOUND';
-        throw err;
-      }
-      return {
-        products: [item],
-        pagination: {
-          currentPage: 1,
-          totalPages: 1,
-          totalRecords: 1,
-          itemsPerPage: size,
-        },
-      };
+      return paginateFromPayload({}, [item], 1, size);
     } catch (error) {
       throw permissionDeniedOnProductGet(error);
     }
   }
 
+  if (keyword) {
+    const searchPath = alibabaConfig.productSearchPath;
+    assertAllowedPath(searchPath);
+    try {
+      const payload = await alibabaCall(searchPath, {
+        keywords: keyword,
+        country: alibabaConfig.defaultCountry,
+        page_index: page,
+        page_size: size,
+      });
+      const ids = extractIdList(payload);
+      const list = ids
+        ? await hydrateProductIds(ids, size)
+        : unwrapList(payload).map((item) => mapPayloadItem(item)).filter((item) => item.externalProductId);
+      return paginateFromPayload(payload, list, page, size);
+    } catch (error) {
+      throw applyAlibabaError(error);
+    }
+  }
+
   const listPath = alibabaConfig.productListPath;
-  if (!listPath) throw keywordRequiredError();
   assertAllowedPath(listPath);
   try {
     const payload = await alibabaCall(listPath, {
-      pool_id: alibabaConfig.defaultPoolId,
-      keyword: params.keyword ? String(params.keyword).trim() : undefined,
-      page_no: page,
-      page_size: size,
-      country: alibabaConfig.defaultCountry,
-      language: 'ENGLISH',
-      subject: params.keyword ? String(params.keyword).trim() : undefined,
-      current_page: page,
-    });
-    const list = unwrapList(payload).map(mapSearchItem).filter((item) => item.externalProductId);
-    const total = toNumber(payload?.totalRecords ?? payload?.total_item ?? payload?.totalCount, list.length);
-    return {
-      products: list,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.max(1, Math.ceil(total / size) || 1),
-        totalRecords: total,
-        itemsPerPage: size,
+      query_req: {
+        pool_id: alibabaConfig.defaultPoolId,
+        page_index: page,
+        page_size: size,
+        country: alibabaConfig.defaultCountry,
       },
-    };
+    });
+    const ids = extractIdList(payload);
+    const list = ids
+      ? await hydrateProductIds(ids, size)
+      : unwrapList(payload).map((item) => mapPayloadItem(item)).filter((item) => item.externalProductId);
+    return paginateFromPayload(payload, list, page, size);
   } catch (error) {
     throw applyAlibabaError(error);
   }

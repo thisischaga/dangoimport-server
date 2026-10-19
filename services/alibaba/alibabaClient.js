@@ -1,6 +1,6 @@
 const { alibabaConfig, assertAlibabaConfigured } = require('../../config/alibaba');
 const { getValidAccessToken } = require('./alibabaTokenService');
-const { iopPost } = require('./alibabaHttp');
+const { iopPost, iopGet } = require('./alibabaHttp');
 const { signIop } = require('./alibabaSign');
 
 async function iopCall(apiPath, bizParams = {}, { needsToken = true } = {}) {
@@ -13,6 +13,9 @@ async function alibabaCall(apiName, bizParams = {}) {
   assertAlibabaConfigured();
   const accessToken = await getValidAccessToken();
   const path = String(apiName || '').startsWith('/') ? apiName : `/${String(apiName || '').replace(/\./g, '/')}`;
+  if (path.startsWith('/eco/')) {
+    return iopGet(path, bizParams, { accessToken });
+  }
   return iopPost(path, bizParams, { accessToken });
 }
 
@@ -24,8 +27,9 @@ async function testConnection() {
     latencyMs: Date.now() - started,
     gateway: alibabaConfig.gateway,
     productGetPath: alibabaConfig.productGetPath,
-    productListPath: alibabaConfig.productListPath || null,
-    note: 'Token OAuth présent. La recherche mot-clé n’est appelée que si ALIBABA_PRODUCT_LIST_PATH est défini.',
+    productSearchPath: alibabaConfig.productSearchPath,
+    productListPath: alibabaConfig.productListPath,
+    note: 'Token OAuth présent. Catalogue acheteur : /eco/buyer/product/*',
   };
 }
 

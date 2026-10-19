@@ -23,20 +23,28 @@ function parseAlibabaPayload(text) {
 
 function throwIfFailed(data, response) {
   const code = data.code ?? data.error_code ?? data.errorCode;
-  const raw = data.error_message || data.errorMsg || data.message || data.msg || data.sub_msg || data.exception || data.error || '';
+  const nestedResultCode = data.result?.result_code;
+  const nestedFailed = nestedResultCode !== undefined
+    && nestedResultCode !== null
+    && String(nestedResultCode) !== '200'
+    && String(nestedResultCode) !== '0';
+  const raw = data.error_message || data.errorMsg || data.message || data.msg || data.sub_msg
+    || data.exception || data.error || data.result?.result_msg || '';
   const failed = (code !== undefined && code !== null && String(code) !== '0' && String(code) !== '200')
+    || nestedFailed
     || data.error_response
     || data.error_message
     || data.exception;
   const nested = data.error_response || {};
-  const message = raw
+  const message = (nestedFailed ? data.result?.result_msg : '')
+    || raw
     || nested.sub_msg
     || nested.msg
     || (!response.ok ? `Erreur Alibaba HTTP ${response.status}` : '');
   if ((failed || !response.ok) && !data.access_token) {
     const err = new Error(String(message || 'Erreur API Alibaba Open Platform.'));
     err.status = 502;
-    err.code = String(nested.code || code || 'ALIBABA');
+    err.code = String(nested.code || code || nestedResultCode || 'ALIBABA');
     err.alibaba = { code: nested.code || code, message };
     throw applyAlibabaError(err);
   }
@@ -67,8 +75,33 @@ function buildGopRequest(apiPath, bizParams = {}, { accessToken, appendPath } = 
   return { url, path, params, append };
 }
 
-function logSafeAlibabaError(path, error) {
-  console.warn(`[alibaba] ${path}: ${error.code || ''} ${error.message}`.trim());
+function isIncompleteSignature(error) {
+  return error?.code === 'IncompleteSignature'
+    || /IncompleteSignature|does not conform to platform standards/i.test(String(error?.message || ''));
+}
+
+function logSafeAlibabaError(path, error, style) {
+  const prefix = style ? `${path} [${style}]` : path;
+  console.warn(`[alibaba] ${prefix}: ${error.code || ''} ${error.message}`.trim());
+}
+
+function buildEcoGetRequest(apiPath, bizParams = {}, { accessToken } = {}) {
+  const path = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const biz = stringifyParams(bizParams);
+  const sys = {
+    app_key: alibabaConfig.appKey,
+    timestamp: String(Date.now()),
+    sign_method: 'sha256',
+  };
+  if (accessToken) sys.access_token = accessToken;
+  const signParams = { ...sys, ...biz };
+  const sign = signIop(path, signParams, alibabaConfig.appSecret);
+  return {
+    path,
+    headerUrl: `${alibabaConfig.gateway}${path}?${new URLSearchParams(biz)}`,
+    headerHeaders: { ...sys, sign, 'X-Protocol': 'GOP' },
+    queryUrl: `${alibabaConfig.gateway}${path}?${new URLSearchParams({ ...signParams, sign })}`,
+  };
 }
 
 async function postForm(url, params) {
@@ -97,4 +130,33 @@ async function iopPost(apiPath, bizParams = {}, { accessToken, appendPath } = {}
   }
 }
 
-module.exports = { iopPost, buildGopRequest, shouldAppendPath };
+async function getJson(url, headers = {}) {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(alibabaConfig.requestTimeoutMs),
+  });
+  const text = await response.text();
+  const data = parseAlibabaPayload(text);
+  throwIfFailed(data, response);
+  return data;
+}
+
+async function iopGet(apiPath, bizParams = {}, { accessToken } = {}) {
+  const built = buildEcoGetRequest(apiPath, bizParams, { accessToken });
+  try {
+    return await getJson(built.headerUrl, built.headerHeaders);
+  } catch (error) {
+    logSafeAlibabaError(built.path, error, 'header-get');
+    if (!isIncompleteSignature(error)) throw error;
+  }
+  const retry = buildEcoGetRequest(apiPath, bizParams, { accessToken });
+  try {
+    return await getJson(retry.queryUrl, { 'X-Protocol': 'GOP' });
+  } catch (error) {
+    logSafeAlibabaError(retry.path, error, 'query-get');
+    throw error;
+  }
+}
+
+module.exports = { iopPost, iopGet, buildGopRequest, buildEcoGetRequest, shouldAppendPath };
