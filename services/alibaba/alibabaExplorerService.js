@@ -92,16 +92,24 @@ async function getAlibabaProductForAdmin(pid) {
       image: sku.skuImageUrl || '',
     };
   });
+  const currency = String(detail.currency || 'USD').toUpperCase();
+  const supplierPriceUsd = currency === 'CNY'
+    ? convertCnyToUsd(detail.supplierPrice)
+    : detail.supplierPrice;
   return {
     externalProductId: detail.externalProductId,
     source: alibabaConfig.platformKey,
     name: detail.name,
     description: String(detail.description || '').replace(/<[^>]+>/g, ' ').slice(0, 4000),
     category: detail.category,
-    images: detail.images,
-    supplierPriceCny: detail.supplierPrice,
-    supplierPriceUsd: convertCnyToUsd(detail.supplierPrice),
-    currency: 'CNY',
+    image: detail.image || detail.images?.[0]?.url || '',
+    images: (detail.images && detail.images.length)
+      ? detail.images
+      : (detail.image ? [{ url: detail.image }] : []),
+    supplierPrice: detail.supplierPrice,
+    supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
+    supplierPriceUsd,
+    currency,
     stock: detail.stock,
     weight: detail.weight != null ? String(detail.weight) : '',
     sku: detail.raw?.productSkuInfos?.[0]?.skuId || '',
@@ -111,7 +119,8 @@ async function getAlibabaProductForAdmin(pid) {
       ? { productId: String(existing._id), isPublished: Boolean(existing.isPublished), name: existing.name }
       : null,
     pricingPreview: buildPricingPreview({
-      supplierPriceCny: detail.supplierPrice,
+      supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : undefined,
+      supplierPriceUsd,
       weight: detail.weight,
       name: detail.name,
       category: detail.category,

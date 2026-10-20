@@ -65,15 +65,46 @@ function firstImage(item = {}) {
     const url = asImageUrl(raw);
     if (url) return url;
   }
+  return findImageUrl(item);
+}
+
+function findImageUrl(node, depth = 0) {
+  if (node == null || depth > 5) return '';
+  if (typeof node === 'string') {
+    const url = asImageUrl(node);
+    if (url && /alicdn|alibaba|\.(jpe?g|png|webp|gif)(\?|$)/i.test(url)) return url;
+    return '';
+  }
+  if (Array.isArray(node)) {
+    for (const entry of node.slice(0, 24)) {
+      const found = findImageUrl(entry, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof node !== 'object') return '';
+  for (const [key, value] of Object.entries(node)) {
+    if (/desc|html|title|name|subject|price|token|sign/i.test(key) && !/image|img|pic|photo|media|cover|thumb/i.test(key)) {
+      continue;
+    }
+    const found = findImageUrl(value, depth + 1);
+    if (found) return found;
+  }
   return '';
+}
+
+function sanePrice(n) {
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n >= 100000 && Number.isInteger(n)) return 0;
+  return n;
 }
 
 function pickPrice(value, depth = 0) {
   if (value == null || value === '' || depth > 4) return 0;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'number') return sanePrice(value);
   if (typeof value === 'string') {
     const nums = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/g);
-    return nums ? Number(nums[0]) : 0;
+    return nums ? sanePrice(Number(nums[0])) : 0;
   }
   if (typeof value === 'object') {
     return pickPrice(
@@ -216,8 +247,8 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
   return {
     ...item,
     productId: basic.product_id || item.product_id || item.productId || fallbackId,
-    subject: basic.title || item.subject || item.title,
-    title: basic.title || item.title,
+    subject: basic.title || item.subject || item.title || item.product_name || item.productName || item.product_title,
+    title: basic.title || item.title || item.product_name || item.productName || item.product_title,
     image: imageUrls[0] || item.image,
     images: imageUrls.length ? imageUrls.map((url) => ({ url })) : item.images,
     price: pickPrice(trade.price) || pickPrice(item.price) || pickPrice(item.unit_price),
@@ -232,7 +263,7 @@ function mapSearchItem(item = {}) {
   const id = pickOfferId(item);
   return {
     externalProductId: id,
-    name: item.subject || item.productTitle || item.title || item.name || `Produit ${id}`,
+    name: item.subject || item.productTitle || item.product_title || item.product_name || item.productName || item.title || item.name || `Produit ${id}`,
     image: firstImage(item),
     images: extractImages(item),
     supplierPrice: pickPrice(item.moq_and_price?.moq_unit_price)
@@ -259,7 +290,10 @@ function unwrapList(payload) {
   const data = parseJsonValue(root.result?.data ?? root.data);
   const preferred = parseJsonValue(data?.products ?? data?.product_list ?? data?.dataList ?? data?.productList);
   if (Array.isArray(preferred)) return preferred;
-  if (data && typeof data === 'object' && !Array.isArray(data) && (pickOfferId(data) || data.basic_info || data.product_info)) {
+  if (data?.product && typeof data.product === 'object' && !Array.isArray(data.product)) {
+    return [data.product];
+  }
+  if (data && typeof data === 'object' && !Array.isArray(data) && (pickOfferId(data) || data.basic_info || data.product_info || data.sku_info || data.trade_info)) {
     return [data];
   }
   if (root.product && typeof root.product === 'object' && !Array.isArray(root.product)) {
@@ -386,8 +420,21 @@ async function fetchProductById(id) {
   } catch (error) {
     throw permissionDeniedOnProductGet(error);
   }
-  const product = unwrapList(payload)[0] || payload?.product || payload?.result || null;
-  if (!product || typeof product !== 'object' || Array.isArray(product)) {
+  const isEnvelope = (node) => Boolean(
+    node && typeof node === 'object'
+    && !pickOfferId(node)
+    && (node.request_id || (node.code != null && node.data !== undefined && node.message != null)),
+  );
+  const nested = parseJsonValue(payload?.result?.data ?? payload?.data);
+  let product = unwrapList(payload)[0];
+  if (isEnvelope(product)) product = null;
+  if (!product) {
+    product = nested?.product
+      || (nested && typeof nested === 'object' && !Array.isArray(nested) && !Array.isArray(nested.products) ? nested : null)
+      || payload?.product
+      || null;
+  }
+  if (isEnvelope(product) || !product || typeof product !== 'object' || Array.isArray(product)) {
     const err = new Error('Produit Alibaba introuvable pour cet ID.');
     err.status = 404;
     err.code = 'PRODUCT_NOT_FOUND';
