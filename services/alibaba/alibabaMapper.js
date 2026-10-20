@@ -54,7 +54,8 @@ function mapAlibabaProductToDango(listItem = {}, detail = null) {
   });
   const variants = mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos);
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  const stock = stockFromVariants || toNumber(source.stock, alibabaConfig.defaultPublicStock);
+  const listedStock = toNumber(source.stock, 0);
+  const stock = stockFromVariants || listedStock || alibabaConfig.defaultPublicStock;
   const images = extractImages(source.raw || source).length
     ? extractImages(source.raw || source)
     : (source.images || []).map((img) => (typeof img === 'string' ? { url: img } : img));

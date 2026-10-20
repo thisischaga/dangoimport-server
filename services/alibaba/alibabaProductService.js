@@ -274,7 +274,11 @@ function mapSearchItem(item = {}) {
       || pickPrice(item.unit_price)
       || pickPrice(item.price),
     currency: pickCurrency(item),
-    stock: toNumber(item.amountOnSale ?? item.quantity ?? item.stock, 0),
+    stock: toNumber(
+      item.amountOnSale ?? item.quantity ?? item.stock ?? item.inventory
+      ?? item.available_quantity ?? item.trade_info?.stock,
+      0,
+    ),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
     category: item.leaf_category_name || item.top_category_name || item.categoryName || item.categoryId || '',
     productUrl: item.detail_url || item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
@@ -485,41 +489,94 @@ function paginateFromPayload(payload, list, page, size) {
   };
 }
 
+function isGenericAlibabaName(name) {
+  return !String(name || '').trim() || /^produit(\s+alibaba)?\s+\d+$/i.test(String(name).trim());
+}
+
+function mergeCatalogProduct(primary, secondary) {
+  if (!primary) return secondary || null;
+  if (!secondary) return primary;
+  const primaryPrice = pickPrice(primary.supplierPrice);
+  const secondaryPrice = pickPrice(secondary.supplierPrice);
+  const supplierPrice = primaryPrice || secondaryPrice;
+  const images = (primary.images && primary.images.length) ? primary.images : (secondary.images || []);
+  return {
+    ...secondary,
+    ...primary,
+    name: isGenericAlibabaName(primary.name) ? (secondary.name || primary.name) : primary.name,
+    image: primary.image || secondary.image || images[0]?.url || '',
+    images,
+    supplierPrice,
+    currency: primaryPrice ? primary.currency : (secondary.currency || primary.currency),
+    stock: toNumber(primary.stock, 0) || toNumber(secondary.stock, 0) || alibabaConfig.defaultPublicStock,
+    minOrderQuantity: toNumber(primary.minOrderQuantity, 0) || toNumber(secondary.minOrderQuantity, 1) || 1,
+    description: (!primary.description || primary.description === primary.name)
+      ? (secondary.description || primary.description || '')
+      : primary.description,
+    skuInfos: (primary.skuInfos && primary.skuInfos.length) ? primary.skuInfos : (secondary.skuInfos || []),
+    category: primary.category && primary.category !== 'Général'
+      ? primary.category
+      : (secondary.category || primary.category || ''),
+    productUrl: primary.productUrl || secondary.productUrl,
+    raw: { ...(secondary.raw || {}), ...(primary.raw || {}) },
+    externalProductId: primary.externalProductId || secondary.externalProductId,
+  };
+}
+
+async function runBuyerSearch(keyword, page, size) {
+  const searchPath = alibabaConfig.productSearchPath;
+  assertAllowedPath(searchPath);
+  const payload = await alibabaCall(searchPath, {
+    keyword,
+    country: alibabaConfig.defaultCountry,
+    index: page,
+    page_index: page,
+    size,
+    page_size: size,
+  });
+  assertBuyerResult(payload);
+  const { ids, items } = listFromSearchPayload(payload);
+  const list = ids
+    ? await hydrateProductIds(ids, size)
+    : items.map((item) => mapPayloadItem(item)).filter((item) => item.externalProductId);
+  if (!list.length) {
+    console.warn('[alibaba] searchProducts empty', summarizePayload(payload));
+  }
+  return paginateFromPayload(payload, list, page, size);
+}
+
 async function searchAlibabaProducts(params = {}) {
   const page = Math.max(1, toNumber(params.page, 1));
   const size = Math.min(30, Math.max(1, toNumber(params.size, 20)));
   const keyword = String(params.keyword || '').trim();
   const productId = extractProductId(keyword);
   if (productId) {
+    let fromGet = null;
     try {
-      const item = await fetchProductById(productId);
-      return paginateFromPayload({}, [item], 1, size);
+      fromGet = await fetchProductById(productId);
     } catch (error) {
-      throw permissionDeniedOnProductGet(error);
+      fromGet = { __error: error };
     }
+    let fromSearch = null;
+    try {
+      const searched = await runBuyerSearch(productId, 1, size);
+      fromSearch = (searched.products || []).find((item) => item.externalProductId === productId)
+        || (searched.products || [])[0]
+        || null;
+    } catch {
+      fromSearch = null;
+    }
+    const merged = mergeCatalogProduct(
+      fromGet && !fromGet.__error ? fromGet : null,
+      fromSearch,
+    );
+    if (merged?.externalProductId) return paginateFromPayload({}, [merged], 1, size);
+    if (fromGet?.__error) throw permissionDeniedOnProductGet(fromGet.__error);
   }
 
   if (keyword) {
-    const searchPath = alibabaConfig.productSearchPath;
-    assertAllowedPath(searchPath);
     try {
-      const payload = await alibabaCall(searchPath, {
-        keyword,
-        country: alibabaConfig.defaultCountry,
-        index: page,
-        page_index: page,
-        size,
-        page_size: size,
-      });
-      assertBuyerResult(payload);
-      const { ids, items } = listFromSearchPayload(payload);
-      const list = ids
-        ? await hydrateProductIds(ids, size)
-        : items.map((item) => mapPayloadItem(item)).filter((item) => item.externalProductId);
-      if (!list.length) {
-        console.warn('[alibaba] searchProducts empty', summarizePayload(payload));
-      }
-      return paginateFromPayload(payload, list, page, size);
+      return await runBuyerSearch(keyword, page, size);
     } catch (error) {
       throw applyAlibabaError(error);
     }
@@ -553,11 +610,31 @@ async function searchAlibabaProducts(params = {}) {
 async function getAlibabaProductDetail(productId) {
   const id = extractProductId(productId) || String(productId || '').trim();
   if (!id) throw keywordRequiredError();
+  let fromGet = null;
+  let getError = null;
   try {
-    return await fetchProductById(id);
+    fromGet = await fetchProductById(id);
   } catch (error) {
-    throw permissionDeniedOnProductGet(error);
+    getError = error;
   }
+  let fromSearch = null;
+  try {
+    const searched = await runBuyerSearch(id, 1, 8);
+    fromSearch = (searched.products || []).find((item) => item.externalProductId === id)
+      || (searched.products || [])[0]
+      || null;
+  } catch {
+    fromSearch = null;
+  }
+  const merged = mergeCatalogProduct(fromGet, fromSearch);
+  if (!merged?.externalProductId) {
+    throw permissionDeniedOnProductGet(getError || Object.assign(new Error('Produit Alibaba introuvable pour cet ID.'), {
+      status: 404,
+      code: 'PRODUCT_NOT_FOUND',
+    }));
+  }
+  if (!toNumber(merged.stock, 0)) merged.stock = alibabaConfig.defaultPublicStock;
+  return merged;
 }
 
 module.exports = {
