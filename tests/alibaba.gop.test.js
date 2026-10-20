@@ -7,6 +7,7 @@ const {
   extractProductId,
   unwrapList,
   extractIdList,
+  mapSearchItem,
   REJECTED_API_PATHS,
 } = require('../services/alibaba/alibabaProductService');
 const { buildExternalSourceKey } = require('../services/alibaba/alibabaMapper');
@@ -79,7 +80,7 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.match(eco.queryUrl, /\/rest\/eco\/buyer\/product\/check\?/);
   assert.equal(eco.params.method, undefined);
   assert.equal(eco.params.format, undefined);
-  assert.equal(eco.params.query_req, undefined);
+  assert.equal(JSON.parse(eco.params.query_req).pool_id, '9031800410');
   assert.equal(JSON.parse(eco.params.param0).pool_id, '9031800410');
   assert.equal(/(?:^|[?&])method=/.test(eco.queryUrl), false);
   assert.equal(/(?:^|[?&])format=/.test(eco.queryUrl), false);
@@ -107,10 +108,9 @@ test('buyer search sends keyword and param0 together', () => {
   assert.equal(JSON.parse(search.params.param0).keyword, 'phone');
   assert.equal(JSON.parse(search.params.param0).index, 1);
   const description = buildEcoGetRequest('/eco/buyer/product/description', {
-    product_id: '1600123456789',
-    country: 'US',
+    query_req: { product_id: '1600123456789', country: 'US' },
   }, { accessToken: 'tok' });
-  assert.equal(description.params.product_id, '1600123456789');
+  assert.equal(JSON.parse(description.params.query_req).product_id, '1600123456789');
   assert.equal(JSON.parse(description.params.param0).product_id, '1600123456789');
 });
 
@@ -145,6 +145,21 @@ test('unwraps GOP search payloads nested under result_data or JSON body', () => 
     extractIdList({ code: '0', result: { code: 200, data: [16005, 16006], message: 'ok' } }),
     ['16005', '16006'],
   );
+  const searchHits = unwrapList({
+    code: '0',
+    result: {
+      code: '200',
+      data: {
+        pagination: { total: 2, page_index: 1 },
+        products: [{ product_id: '16007', title: 'Dress', price: '1.20-3.50', image: { url: 'https://img.alicdn.com/a.jpg' } }],
+      },
+      message: 'request success',
+    },
+  });
+  assert.equal(searchHits[0].product_id, '16007');
+  const mapped = mapSearchItem(searchHits[0]);
+  assert.equal(mapped.supplierPrice, 1.2);
+  assert.equal(mapped.image, 'https://img.alicdn.com/a.jpg');
 });
 
 test('rejected GOP paths stay blocked', () => {

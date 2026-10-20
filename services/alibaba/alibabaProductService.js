@@ -13,40 +13,117 @@ const REJECTED_API_PATHS = new Set([
   '/alibaba/dropshipping/product/list',
 ]);
 
+function asImageUrl(raw, depth = 0) {
+  if (raw == null || depth > 3) return '';
+  if (Array.isArray(raw)) return asImageUrl(raw[0], depth + 1);
+  if (typeof raw === 'string') {
+    const url = raw.startsWith('//') ? `https:${raw}` : raw.trim();
+    if (/^https?:\/\//i.test(url)) return url;
+    return '';
+  }
+  if (typeof raw === 'object') {
+    return asImageUrl(
+      raw.url || raw.imageUrl || raw.image_url || raw.src || raw.main_url
+      || raw.file_url || raw.pic_url || raw.image || raw.img,
+      depth + 1,
+    );
+  }
+  return '';
+}
+
 function firstImage(item = {}) {
   const candidates = [
     item.main_image_url,
+    item.mainImageUrl,
+    item.main_image,
+    item.mainImage,
+    item.image_url,
     item.imageUrl,
-    item.image,
+    item.img_url,
     item.imgUrl,
+    item.pic_url,
     item.picUrl,
+    item.product_image,
+    item.productImage,
+    item.cover_image,
+    item.thumbnail,
+    item.thumb,
+    item.white_image,
+    item.image,
+    item.media,
+    item.basic_info?.main_image,
+    item.basic_info?.product_image,
     ...(Array.isArray(item.image_url_list) ? item.image_url_list : []),
+    ...(Array.isArray(item.product_images) ? item.product_images : []),
     ...(Array.isArray(item.main_image?.images) ? item.main_image.images : []),
     ...(Array.isArray(item.mainImage?.images) ? item.mainImage.images : []),
     ...(Array.isArray(item.imageList) ? item.imageList : []),
     ...(Array.isArray(item.productImageList) ? item.productImageList : []),
-    item.productImage?.url,
+    ...(Array.isArray(item.images) ? item.images : []),
   ];
   for (const raw of candidates) {
-    const url = typeof raw === 'string' ? raw : raw?.url || raw?.imageUrl;
-    if (url) return url.startsWith('//') ? `https:${url}` : url;
+    const url = asImageUrl(raw);
+    if (url) return url;
   }
   return '';
+}
+
+function pickPrice(value, depth = 0) {
+  if (value == null || value === '' || depth > 4) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const nums = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/g);
+    return nums ? Number(nums[0]) : 0;
+  }
+  if (typeof value === 'object') {
+    return pickPrice(
+      value.min_price ?? value.minPrice ?? value.min
+      ?? value.amount ?? value.price ?? value.value
+      ?? value.sale_price ?? value.unit_price ?? value.fob_price
+      ?? value.range_price?.min_price ?? value.range_price,
+      depth + 1,
+    );
+  }
+  return 0;
+}
+
+function pickCurrency(item = {}) {
+  const price = item.price;
+  const raw = item.currency
+    || item.price_currency
+    || (price && typeof price === 'object' && (price.currency || price.currency_code))
+    || item.moq_and_price?.moq_unit_price?.currency
+    || item.priceInfo?.currency
+    || item.trade_info?.price?.currency
+    || '';
+  const code = String(raw || '').trim().toUpperCase();
+  if (code === 'CNY' || code === 'RMB' || code === '¥') return 'CNY';
+  if (code) return code;
+  return 'USD';
 }
 
 function extractImages(item = {}) {
   const urls = [];
   const seen = new Set();
   const push = (value) => {
-    let url = typeof value === 'string' ? value : value?.url || value?.imageUrl || '';
-    if (!url) return;
-    if (url.startsWith('//')) url = `https:${url}`;
-    if (seen.has(url)) return;
+    const url = asImageUrl(value);
+    if (!url || seen.has(url)) return;
     seen.add(url);
     urls.push({ url });
   };
   push(firstImage(item));
-  (item.image_url_list || item.main_image?.images || item.mainImage?.images || item.imageList || item.productImageList || item.images || []).forEach(push);
+  [
+    item.image_url_list,
+    item.product_images,
+    item.main_image?.images,
+    item.mainImage?.images,
+    item.imageList,
+    item.productImageList,
+    item.images,
+    item.basic_info?.product_images,
+  ].forEach((list) => {
+    if (Array.isArray(list)) list.forEach(push);
+  });
   return urls;
 }
 
@@ -59,7 +136,9 @@ function pickOfferId(item = {}) {
     || item.product_id
     || item.item_id
     || item.itemId
-    || item.basic_info?.product_id
+    ||     item.basic_info?.product_id
+    || item.product?.product_id
+    || item.product?.productId
     || item.id
     || '',
   ).trim();
@@ -100,6 +179,10 @@ function summarizePayload(payload) {
     dataKeys: data && typeof data === 'object' && !Array.isArray(data)
       ? Object.keys(data).slice(0, 20)
       : [],
+    productCount: Array.isArray(data?.products) ? data.products.length : null,
+    productKeys: data?.products?.[0] && typeof data.products[0] === 'object'
+      ? Object.keys(data.products[0]).slice(0, 25)
+      : [],
   };
 }
 
@@ -137,8 +220,9 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     title: basic.title || item.title,
     image: imageUrls[0] || item.image,
     images: imageUrls.length ? imageUrls.map((url) => ({ url })) : item.images,
-    price: trade.price?.range_price?.min_price || trade.price?.price || trade.unit_price || item.price,
-    currency: trade.price?.currency || item.currency || 'USD',
+    price: pickPrice(trade.price) || pickPrice(item.price) || pickPrice(item.unit_price),
+    currency: pickCurrency({ ...item, price: trade.price || item.price }),
+    image: firstImage(item) || imageUrls[0] || '',
     minOrderQuantity: trade.moq || trade.min_order_quantity || item.minOrderQuantity,
     description: item.description || basic.description || item.subject,
   };
@@ -151,15 +235,14 @@ function mapSearchItem(item = {}) {
     name: item.subject || item.productTitle || item.title || item.name || `Produit ${id}`,
     image: firstImage(item),
     images: extractImages(item),
-    supplierPrice: toNumber(
-      item.moq_and_price?.moq_unit_price?.amount
-      || item.priceInfo?.price
-      || item.price?.amount
-      || item.price
-      || item.referencePrice
-      || item.minPrice,
-    ),
-    currency: item.moq_and_price?.moq_unit_price?.currency || item.priceInfo?.currency || item.price?.currency || item.currency || 'USD',
+    supplierPrice: pickPrice(item.moq_and_price?.moq_unit_price)
+      || pickPrice(item.priceInfo)
+      || pickPrice(item.referencePrice)
+      || pickPrice(item.minPrice)
+      || pickPrice(item.min_price)
+      || pickPrice(item.unit_price)
+      || pickPrice(item.price),
+    currency: pickCurrency(item),
     stock: toNumber(item.amountOnSale ?? item.quantity ?? item.stock, 0),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
     category: item.leaf_category_name || item.top_category_name || item.categoryName || item.categoryId || '',
@@ -173,6 +256,12 @@ function unwrapList(payload) {
   if (root == null) return [];
   if (Array.isArray(root)) return root;
   if (typeof root !== 'object') return [];
+  const data = parseJsonValue(root.result?.data ?? root.data);
+  const preferred = parseJsonValue(data?.products ?? data?.product_list ?? data?.dataList ?? data?.productList);
+  if (Array.isArray(preferred)) return preferred;
+  if (data && typeof data === 'object' && !Array.isArray(data) && (pickOfferId(data) || data.basic_info || data.product_info)) {
+    return [data];
+  }
   if (root.product && typeof root.product === 'object' && !Array.isArray(root.product)) {
     return [root.product];
   }
@@ -289,8 +378,10 @@ async function fetchProductById(id) {
   let payload;
   try {
     payload = await alibabaCall(path, {
-      product_id: String(id),
-      country: alibabaConfig.defaultCountry,
+      query_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry,
+      },
     });
   } catch (error) {
     throw permissionDeniedOnProductGet(error);
@@ -325,8 +416,12 @@ async function hydrateProductIds(ids, size) {
 }
 
 function paginateFromPayload(payload, list, page, size) {
+  const paging = payload?.result?.data?.pagination || payload?.result?.pagination || {};
   const total = toNumber(
-    payload?.result?.result_total
+    paging.total
+    ?? paging.total_count
+    ?? paging.totalCount
+    ?? payload?.result?.result_total
     ?? payload?.totalRecords
     ?? payload?.total_item
     ?? payload?.totalCount,
