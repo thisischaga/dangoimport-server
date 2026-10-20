@@ -160,6 +160,13 @@ test('prix public hors frais d’import, pack MOQ exposé', () => {
   assert.ok(publicProduct.price < 32750);
 });
 
+test('calculateImportPricing ignore les produits nuls ou absents', () => {
+  const pricing = calculateImportPricing(null);
+  assert.equal(pricing.productMarkupMultiplier, 1.3);
+  assert.equal(pricing.unitPrice, 0);
+  assert.equal(pricing.shippingCost, 0);
+});
+
 test('poids CJ en grammes et spec Poids', () => {
   assert.equal(parseProductWeightKg({ weight: '350' }), 0.35);
   assert.equal(parseProductWeightKg({ weight: '350 g' }), 0.35);

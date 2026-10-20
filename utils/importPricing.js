@@ -89,22 +89,24 @@ function parseWeightToKg(raw) {
 }
 
 function weightFromSpecifications(product = {}) {
-  const rows = Array.isArray(product.specifications) ? product.specifications : [];
+  const safeProduct = product && typeof product === 'object' ? product : {};
+  const rows = Array.isArray(safeProduct.specifications) ? safeProduct.specifications : [];
   const row = rows.find((entry) => /poids|weight|masse/i.test(String(entry?.key || '')));
   return row?.value;
 }
 
 function parseProductWeightKg(product = {}) {
-  const storedWeight = product.weightKg ?? product.weight;
+  const safeProduct = product && typeof product === 'object' ? product : {};
+  const storedWeight = safeProduct.weightKg ?? safeProduct.weight;
   const storedKg = parseWeightToKg(storedWeight);
-  const specKg = parseWeightToKg(weightFromSpecifications(product));
+  const specKg = parseWeightToKg(weightFromSpecifications(safeProduct));
   const supplierKg = parseWeightToKg(
-    product.supplier?.productWeight
-    ?? product.productWeight
-    ?? product.supplier?.weight
-    ?? product.supplier?.cjProductWeight
-    ?? product.variants?.[0]?.weight
-    ?? product.variants?.[0]?.attributes?.weight,
+    safeProduct.supplier?.productWeight
+    ?? safeProduct.productWeight
+    ?? safeProduct.supplier?.weight
+    ?? safeProduct.supplier?.cjProductWeight
+    ?? safeProduct.variants?.[0]?.weight
+    ?? safeProduct.variants?.[0]?.attributes?.weight,
   );
 
   if (specKg > 0 && (storedKg <= 0 || storedKg === 0.5)) return specKg;
@@ -117,13 +119,14 @@ function parseProductWeightKg(product = {}) {
 }
 
 function inferShippingCategory(product = {}) {
-  const stored = String(product.shippingCategory || '').trim().toLowerCase();
+  const safeProduct = product && typeof product === 'object' ? product : {};
+  const stored = String(safeProduct.shippingCategory || '').trim().toLowerCase();
   if (SHIPPING_CATEGORIES.includes(stored)) return stored;
   const hay = [
-    product.category,
-    product.subCategory,
-    product.name,
-    product.tags?.join?.(' '),
+    safeProduct.category,
+    safeProduct.subCategory,
+    safeProduct.name,
+    safeProduct.tags?.join?.(' '),
   ].join(' ').toLowerCase();
   if (/téléphone|telephone|smartphone|iphone|samsung galaxy/.test(hay)) return 'telephone';
   if (/ordinateur|laptop|computer|\bpc\b|macbook/.test(hay)) return 'ordinateur';
@@ -134,10 +137,11 @@ function inferShippingCategory(product = {}) {
 }
 
 function convertSupplierPriceFcfa(product = {}) {
-  const stored = toNumber(product.convertedSupplierPriceFCFA ?? product.supplier?.convertedSupplierPriceFCFA, 0);
+  const safeProduct = product && typeof product === 'object' ? product : {};
+  const stored = toNumber(safeProduct.convertedSupplierPriceFCFA ?? safeProduct.supplier?.convertedSupplierPriceFCFA, 0);
   if (stored > 0) return Math.round(stored);
-  const supplierPrice = toNumber(product.supplierRealPrice ?? product.supplier?.supplierPrice ?? product.costPrice, 0);
-  const currency = String(product.supplier?.supplierCurrency || product.currency || 'XOF').toUpperCase();
+  const supplierPrice = toNumber(safeProduct.supplierRealPrice ?? safeProduct.supplier?.supplierPrice ?? safeProduct.costPrice, 0);
+  const currency = String(safeProduct.supplier?.supplierCurrency || safeProduct.currency || 'XOF').toUpperCase();
   if (currency === 'USD') {
     return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig.usdToXofRate, 610)));
   }
@@ -189,15 +193,16 @@ function lightProductMoqFromWeight(weightKg, thresholdKg = 1) {
 }
 
 function resolveMoqRules(product = {}, config = {}) {
+  const safeProduct = product && typeof product === 'object' ? product : {};
   const cfg = mergeImportPricingConfig(config || {});
   const explicitMoq = Math.max(
     1,
-    Math.round(toNumber(product.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
+    Math.round(toNumber(safeProduct.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
   );
-  const converted = convertSupplierPriceFcfa(product);
-  const multiplier = Math.max(1, toNumber(product.productMarkupMultiplier, cfg.productMarkupMultiplier));
+  const converted = convertSupplierPriceFcfa(safeProduct);
+  const multiplier = Math.max(1, toNumber(safeProduct.productMarkupMultiplier, cfg.productMarkupMultiplier));
   const unitPrice = applyProductMarkup(converted, multiplier, 0);
-  const weight = parseProductWeightKg(product);
+  const weight = parseProductWeightKg(safeProduct);
   const underWeight = weight > 0 && weight < cfg.lightProductMaxWeightKg;
   const underPrice = unitPrice > 0 && unitPrice < cfg.lightProductMaxPrice;
   const autoMoq = (underWeight && underPrice)
@@ -239,25 +244,26 @@ function assertValidOrderQuantity(product, quantity, config) {
 }
 
 function calculateImportPricing(product = {}, { quantity = 1, config, includeShippingMarkup = false } = {}) {
+  const safeProduct = product && typeof product === 'object' ? product : {};
   const cfg = mergeImportPricingConfig(config || {});
   const qty = Math.max(1, Math.round(toNumber(quantity, 1)));
   const multiplier = Math.max(
     1,
-    toNumber(product.productMarkupMultiplier, cfg.productMarkupMultiplier),
+    toNumber(safeProduct.productMarkupMultiplier, cfg.productMarkupMultiplier),
   );
   const minUnitPrice = Math.max(
     0,
-    Math.round(toNumber(product.minimumProductPrice, 0)),
+    Math.round(toNumber(safeProduct.minimumProductPrice, 0)),
   );
-  const convertedSupplierPriceFCFA = convertSupplierPriceFcfa(product);
+  const convertedSupplierPriceFCFA = convertSupplierPriceFcfa(safeProduct);
   const unitPrice = applyProductMarkup(convertedSupplierPriceFCFA, multiplier, minUnitPrice);
-  const moq = resolveMoqRules(product, cfg);
+  const moq = resolveMoqRules(safeProduct, cfg);
   const packSize = moq.soldAsLot ? moq.minimumOrderQuantity : 1;
   const packPrice = unitPrice * packSize;
-  const category = inferShippingCategory(product);
+  const category = inferShippingCategory(safeProduct);
   const rate = cfg.shippingRates[category] || cfg.shippingRates.normal;
   const ratePerKg = toNumber(cfg.shippingRatePerKg, rate.ratePerKg);
-  const unitWeight = parseProductWeightKg(product);
+  const unitWeight = parseProductWeightKg(safeProduct);
   const billedWeight = roundKg(unitWeight * qty);
   const shippingBaseCost = Math.round(ratePerKg * billedWeight);
   const shippingMarkup = includeShippingMarkup ? Math.round(cfg.shippingMarkup) : 0;
@@ -280,12 +286,12 @@ function calculateImportPricing(product = {}, { quantity = 1, config, includeShi
     shippingCost,
     total: productLineTotal + shippingCost,
     estimatedDays,
-    supplier: String(product.supplier?.platform || product.supplier?.name || 'CJ').toUpperCase().startsWith('CJ')
+    supplier: String(safeProduct.supplier?.platform || safeProduct.supplier?.name || 'CJ').toUpperCase().startsWith('CJ')
       ? 'CJ'
-      : (product.supplier?.platform || product.supplier?.name || ''),
-    supplierProductId: product.supplier?.productId || '',
-    supplierRealPrice: toNumber(product.supplier?.supplierPrice, 0),
-    currency: String(product.supplier?.supplierCurrency || 'XOF').toUpperCase(),
+      : (safeProduct.supplier?.platform || safeProduct.supplier?.name || ''),
+    supplierProductId: safeProduct.supplier?.productId || '',
+    supplierRealPrice: toNumber(safeProduct.supplier?.supplierPrice, 0),
+    currency: String(safeProduct.supplier?.supplierCurrency || 'XOF').toUpperCase(),
     convertedSupplierPriceFCFA,
     productMarkupMultiplier: multiplier,
     minimumProductPrice: minUnitPrice,

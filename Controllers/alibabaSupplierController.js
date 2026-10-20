@@ -1,5 +1,5 @@
 const { alibabaConfig } = require('../config/alibaba');
-const { testConnection } = require('../services/alibaba/alibabaClient');
+const { testConnection, alibabaCall } = require('../services/alibaba/alibabaClient');
 const {
   getAuthStatus,
   getAuthorizeUrl,
@@ -131,7 +131,7 @@ exports.searchProducts = async (req, res) => {
     });
     return res.json({ success: true, ...result });
   } catch (error) {
-    console.error('[alibaba] searchProducts:', error.message);
+    console.error('[alibaba] searchProducts:', error.code, error.message);
     return handleError(res, error);
   }
 };
@@ -141,7 +141,7 @@ exports.getProductDetail = async (req, res) => {
     const data = await getAlibabaProductForAdmin(req.params.pid);
     return res.json({ success: true, data });
   } catch (error) {
-    console.error('[alibaba] getProductDetail:', error.message);
+    console.error('[alibaba] getProductDetail:', error.code, error.message);
     return handleError(res, error);
   }
 };
@@ -204,7 +204,7 @@ exports.importProduct = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[alibaba] importProduct:', error.message);
+    console.error('[alibaba] importProduct:', error.code, error.message);
     return handleError(res, error);
   }
 };
@@ -222,6 +222,32 @@ exports.importSelected = async (req, res) => {
       }
     }
     return res.json({ success: true, data: { results, imported: results.filter((r) => r.ok).length } });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * TEMPORAIRE : renvoie la réponse brute d'Alibaba pour caler le mapper.
+ * GET /debug/raw?keyword=wireless earbuds   ou   GET /debug/raw?pid=1600123456789
+ * À SUPPRIMER (route + fonction) une fois le mapping validé.
+ */
+exports.debugRaw = async (req, res) => {
+  try {
+    const pid = String(req.query.pid || '').trim();
+    const payload = pid
+      ? await alibabaCall(alibabaConfig.productGetPath, {
+        query_req: { product_id: pid, country: alibabaConfig.defaultCountry },
+      })
+      : await alibabaCall(alibabaConfig.productSearchPath, {
+        keyword: String(req.query.keyword || 'phone case'),
+        country: alibabaConfig.defaultCountry,
+        index: 1,
+        page_index: 1,
+        size: 5,
+        page_size: 5,
+      });
+    return res.json({ success: true, data: payload });
   } catch (error) {
     return handleError(res, error);
   }

@@ -24,6 +24,13 @@ async function mapImportedStatus(ids = []) {
   return map;
 }
 
+// Convertit un montant vers USD selon sa devise (USD par défaut sur Alibaba.com).
+function toUsd(amount, currency) {
+  const code = String(currency || 'USD').toUpperCase();
+  if (code === 'CNY') return convertCnyToUsd(amount);
+  return toNumber(amount);
+}
+
 function buildPricingPreview({ supplierPriceCny, supplierPriceUsd, weight, name, category }) {
   const usd = supplierPriceUsd != null
     ? toNumber(supplierPriceUsd)
@@ -66,11 +73,9 @@ async function searchAlibabaForAdmin(params = {}) {
   const result = await searchAlibabaProducts(params);
   const imported = await mapImportedStatus((result.products || []).map((p) => p.externalProductId));
   return {
-    products: (result.products || []).map((p) => ({
+    products: (result.products || []).map(({ raw, skuInfos, ...p }) => ({
       ...p,
-      supplierPriceUsd: String(p.currency || 'USD').toUpperCase() === 'CNY'
-        ? convertCnyToUsd(p.supplierPrice)
-        : p.supplierPrice,
+      supplierPriceUsd: toUsd(p.supplierPrice, p.currency),
       imported: imported[p.externalProductId] || null,
     })),
     pagination: result.pagination,
@@ -80,32 +85,49 @@ async function searchAlibabaForAdmin(params = {}) {
 async function getAlibabaProductForAdmin(pid) {
   const detail = await getAlibabaProductDetail(pid);
   const existing = await findExistingAlibabaProduct(detail.externalProductId);
+  const currency = String(detail.currency || 'USD').toUpperCase();
+
   const variants = (detail.skuInfos || []).map((sku, index) => {
-    const priceCny = toNumber(sku.price || sku.consignPrice);
+    const variantCurrency = String(sku.currency || currency).toUpperCase();
+    const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
     return {
-      externalVariantId: String(sku.skuId || sku.specId || index),
-      name: sku.skuName || sku.name || `Variante ${index + 1}`,
-      sku: sku.skuId || '',
-      supplierPriceCny: priceCny,
-      supplierPriceUsd: convertCnyToUsd(priceCny),
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount, 0),
-      image: sku.skuImageUrl || '',
+      externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
+      name: sku.skuName || sku.sku_name || sku.name || `Variante ${index + 1}`,
+      sku: sku.skuId || sku.sku_id || '',
+      supplierPriceCny: variantCurrency === 'CNY' ? price : null,
+      supplierPriceUsd: toUsd(price, variantCurrency),
+      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock, 0),
+      image: sku.skuImageUrl || sku.image || '',
     };
   });
-  const currency = String(detail.currency || 'USD').toUpperCase();
-  const supplierPriceUsd = currency === 'CNY'
-    ? convertCnyToUsd(detail.supplierPrice)
-    : detail.supplierPrice;
+
+  const supplierPriceUsd = toUsd(detail.supplierPrice, currency);
+  const images = (detail.images && detail.images.length)
+    ? detail.images
+    : (detail.image ? [{ url: detail.image }] : []);
+
+  let pricingPreview = null;
+  try {
+    pricingPreview = buildPricingPreview({
+      supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : undefined,
+      supplierPriceUsd,
+      weight: detail.weight,
+      name: detail.name,
+      category: detail.category,
+    });
+  } catch (error) {
+    // L'aperçu prix ne doit jamais bloquer l'affichage du produit.
+    console.warn('[alibaba] pricingPreview failed:', error.message);
+  }
+
   return {
     externalProductId: detail.externalProductId,
     source: alibabaConfig.platformKey,
     name: detail.name,
-    description: String(detail.description || '').replace(/<[^>]+>/g, ' ').slice(0, 4000),
+    description: String(detail.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 4000),
     category: detail.category,
-    image: detail.image || detail.images?.[0]?.url || '',
-    images: (detail.images && detail.images.length)
-      ? detail.images
-      : (detail.image ? [{ url: detail.image }] : []),
+    image: detail.image || images[0]?.url || '',
+    images,
     supplierPrice: detail.supplierPrice,
     supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
     supplierPriceUsd,
@@ -113,19 +135,13 @@ async function getAlibabaProductForAdmin(pid) {
     stock: detail.stock || alibabaConfig.defaultPublicStock,
     minOrderQuantity: detail.minOrderQuantity,
     weight: detail.weight != null ? String(detail.weight) : '',
-    sku: detail.raw?.productSkuInfos?.[0]?.skuId || '',
+    sku: detail.skuInfos?.[0]?.skuId || detail.skuInfos?.[0]?.sku_id || '',
     productUrl: detail.productUrl,
     variants,
     imported: existing
       ? { productId: String(existing._id), isPublished: Boolean(existing.isPublished), name: existing.name }
       : null,
-    pricingPreview: buildPricingPreview({
-      supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : undefined,
-      supplierPriceUsd,
-      weight: detail.weight,
-      name: detail.name,
-      category: detail.category,
-    }),
+    pricingPreview,
   };
 }
 

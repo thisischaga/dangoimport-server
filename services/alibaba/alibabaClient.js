@@ -12,7 +12,9 @@ async function iopCall(apiPath, bizParams = {}, { needsToken = true } = {}) {
 async function alibabaCall(apiName, bizParams = {}) {
   assertAlibabaConfigured();
   const accessToken = await getValidAccessToken();
-  const path = String(apiName || '').startsWith('/') ? apiName : `/${String(apiName || '').replace(/\./g, '/')}`;
+  const name = String(apiName || '');
+  const path = name.startsWith('/') ? name : `/${name.replace(/\./g, '/')}`;
+  // Les endpoints acheteur /eco/* sont en GET, le reste en POST.
   if (path.startsWith('/eco/')) {
     return iopGet(path, bizParams, { accessToken });
   }
