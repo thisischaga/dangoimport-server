@@ -364,7 +364,7 @@ async function searchAlibabaProducts(params = {}) {
       const payload = await alibabaCall(searchPath, {
         keyword,
         country: alibabaConfig.defaultCountry,
-        index: Math.max(0, page - 1),
+        index: page,
         page_index: page,
         size,
         page_size: size,
