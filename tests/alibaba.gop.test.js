@@ -162,6 +162,19 @@ test('unwraps GOP search payloads nested under result_data or JSON body', () => 
   assert.equal(mapped.image, 'https://img.alicdn.com/a.jpg');
 });
 
+test('maps nested product_info title and price for ID search results', () => {
+  const mapped = mapSearchItem({
+    product_id: '1600123456789',
+    product_info: {
+      basic_info: { title: 'Bouteille isotherme', product_id: '1600123456789' },
+      trade_info: { price: { currency: 'USD', value: '18.50' } },
+    },
+  });
+  assert.equal(mapped.name, 'Bouteille isotherme');
+  assert.equal(mapped.supplierPrice, 18.5);
+  assert.equal(mapped.currency, 'USD');
+});
+
 test('rejected GOP paths stay blocked', () => {
   assert.ok(REJECTED_API_PATHS.has('/alibaba/dropshipping/product/get'));
   assert.ok(REJECTED_API_PATHS.has('/product/get'));

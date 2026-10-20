@@ -107,25 +107,45 @@ function pickPrice(value, depth = 0) {
     return nums ? sanePrice(Number(nums[0])) : 0;
   }
   if (typeof value === 'object') {
-    return pickPrice(
-      value.min_price ?? value.minPrice ?? value.min
-      ?? value.amount ?? value.price ?? value.value
-      ?? value.sale_price ?? value.unit_price ?? value.fob_price
-      ?? value.range_price?.min_price ?? value.range_price,
-      depth + 1,
-    );
+    const candidates = [
+      value.min_price,
+      value.minPrice,
+      value.min,
+      value.amount,
+      value.price,
+      value.value,
+      value.sale_price,
+      value.unit_price,
+      value.fob_price,
+      value.range_price?.min_price,
+      value.range_price,
+      value.product_info?.trade_info?.price,
+      value.trade_info?.price,
+      value.product_info?.price,
+      value.priceInfo,
+      value.basic_info?.price,
+    ];
+    for (const candidate of candidates) {
+      const found = pickPrice(candidate, depth + 1);
+      if (found > 0) return found;
+    }
+    return 0;
   }
   return 0;
 }
 
 function pickCurrency(item = {}) {
-  const price = item.price;
+  const price = item.price || item.product_info?.trade_info?.price || item.trade_info?.price;
   const raw = item.currency
     || item.price_currency
+    || item.product_info?.trade_info?.price?.currency
+    || item.trade_info?.price?.currency
+    || item.product_info?.basic_info?.currency
     || (price && typeof price === 'object' && (price.currency || price.currency_code))
     || item.moq_and_price?.moq_unit_price?.currency
     || item.priceInfo?.currency
     || item.trade_info?.price?.currency
+    || item.product_info?.trade_info?.price?.currency
     || '';
   const code = String(raw || '').trim().toUpperCase();
   if (code === 'CNY' || code === 'RMB' || code === '¥') return 'CNY';
@@ -261,22 +281,35 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
 
 function mapSearchItem(item = {}) {
   const id = pickOfferId(item);
+  const basic = item.basic_info || item.product_info?.basic_info || {};
+  const trade = item.trade_info || item.product_info?.trade_info || {};
+  const priceNode = trade.price || item.moq_and_price?.moq_unit_price || item.priceInfo || item.referencePrice || item.minPrice || item.min_price || item.unit_price || item.price || item.product_info?.trade_info?.price;
   return {
     externalProductId: id,
-    name: item.subject || item.productTitle || item.product_title || item.product_name || item.productName || item.title || item.name || `Produit ${id}`,
+    name: basic.title
+      || item.subject
+      || item.productTitle
+      || item.product_title
+      || item.product_name
+      || item.productName
+      || item.title
+      || item.name
+      || basic.product_name
+      || `Produit ${id}`,
     image: firstImage(item),
     images: extractImages(item),
-    supplierPrice: pickPrice(item.moq_and_price?.moq_unit_price)
+    supplierPrice: pickPrice(priceNode)
+      || pickPrice(item.moq_and_price?.moq_unit_price)
       || pickPrice(item.priceInfo)
       || pickPrice(item.referencePrice)
       || pickPrice(item.minPrice)
       || pickPrice(item.min_price)
       || pickPrice(item.unit_price)
       || pickPrice(item.price),
-    currency: pickCurrency(item),
+    currency: pickCurrency({ ...item, price: priceNode }),
     stock: toNumber(
       item.amountOnSale ?? item.quantity ?? item.stock ?? item.inventory
-      ?? item.available_quantity ?? item.trade_info?.stock,
+      ?? item.available_quantity ?? trade.stock ?? item.product_info?.trade_info?.stock,
       0,
     ),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
