@@ -895,15 +895,67 @@ async function fetchProductFromCheck(id) {
   }
 }
 
+const SPEC_TRANSLATIONS = {
+  color: 'Couleur',
+  colour: 'Couleur',
+  capacity: 'Capacité',
+  volume: 'Volume',
+  material: 'Matériau',
+  materials: 'Matériaux',
+  size: 'Taille',
+  dimensions: 'Dimensions',
+  dimension: 'Dimensions',
+  weight: 'Poids',
+  brand: 'Marque',
+  brand_name: 'Marque',
+  model: 'Modèle',
+  model_number: 'Numéro de modèle',
+  feature: 'Fonctionnalité',
+  features: 'Fonctionnalités',
+  function: 'Fonction',
+  certification: 'Certification',
+  certifications: 'Certifications',
+  origin: 'Origine',
+  place_of_origin: "Lieu d'origine",
+  package: 'Emballage',
+  packaging: 'Emballage',
+  warranty: 'Garantie',
+  gender: 'Genre',
+  style: 'Style',
+  type: 'Type',
+  usage: 'Utilisation',
+  application: 'Application',
+  pattern: 'Motif',
+  season: 'Saison',
+  shape: 'Forme',
+  drinkware_type: 'Type de récipient',
+  plastic_type: 'Type de plastique',
+  thermal_insulation_performance: 'Isolation thermique',
+  water_flowing_method: "Mode d'écoulement",
+  boiling_water: 'Résistance eau bouillante',
+  bottle_mouth: 'Goulot',
+  outdoor_activity: 'Activité',
+  supply_type: "Type d'approvisionnement",
+};
+
 function extractAlibabaSpecifications(source = {}) {
   const specs = [];
   const seenKeys = new Set();
 
   const add = (rawKey, rawVal) => {
     if (!rawKey || rawVal == null) return;
-    const key = String(rawKey).trim();
+    let key = String(rawKey).trim().replace(/_/g, ' ');
     const value = String(rawVal).trim();
-    if (!key || !value || value.startsWith('http')) return;
+    if (!key || !value || value.startsWith('http') || value.length > 500) return;
+    
+    // Traduire la clé en français si connue
+    const kNormalized = key.toLowerCase().replace(/\s+/g, '_');
+    if (SPEC_TRANSLATIONS[kNormalized]) {
+      key = SPEC_TRANSLATIONS[kNormalized];
+    } else {
+      key = key.charAt(0).toUpperCase() + key.slice(1);
+    }
+
     const kLower = key.toLowerCase();
     if (seenKeys.has(kLower)) return;
     seenKeys.add(kLower);
@@ -951,23 +1003,37 @@ function extractAlibabaSpecifications(source = {}) {
     for (const [k, v] of Object.entries(keyAttrs)) {
       if (ignore.has(k)) continue;
       if (typeof v === 'string' || typeof v === 'number') {
-        add(k.replace(/_/g, ' '), v);
+        add(k, v);
       }
     }
   }
 
-  // 3. Extraire depuis les attributs du produit (fromGet / raw)
-  const productAttrs = source.raw?.product_attributes
-    || source.raw?.attributes
-    || source.raw?.property_list
+  // 3. Extraire depuis les attributs et propriétés du produit (fromGet / raw / result_data)
+  const rawObj = source.raw || {};
+  const rdObj = rawObj.result_data || source.result_data || {};
+  const productAttrs = rawObj.product_attributes
+    || rawObj.attributes
+    || rawObj.property_list
+    || rawObj.properties
+    || rdObj.properties
+    || rdObj.attributes
+    || rdObj.product_attributes
+    || rdObj.product_properties
     || source.product_attributes;
+
   if (Array.isArray(productAttrs)) {
     productAttrs.forEach((item) => {
       if (!item || typeof item !== 'object') return;
-      const k = item.attr_name_desc || item.attr_name || item.attributeName || item.prop_name || item.name || item.key;
-      const v = item.attr_value_desc || item.attr_value || item.attributeValue || item.prop_value || item.value;
+      const k = item.attr_name_desc || item.attr_name || item.attributeName || item.prop_name || item.name || item.key || item.property_name;
+      const v = item.attr_value_desc || item.attr_value || item.attributeValue || item.prop_value || item.value || item.property_value;
       add(k, v);
     });
+  } else if (productAttrs && typeof productAttrs === 'object') {
+    for (const [k, v] of Object.entries(productAttrs)) {
+      if (typeof v === 'string' || typeof v === 'number') {
+        add(k, v);
+      }
+    }
   }
 
   // 4. Caractéristiques physiques et commerciales clés
