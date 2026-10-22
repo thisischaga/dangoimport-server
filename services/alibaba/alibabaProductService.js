@@ -17,15 +17,21 @@ function asImageUrl(raw, depth = 0) {
   if (raw == null || depth > 3) return '';
   if (Array.isArray(raw)) return asImageUrl(raw[0], depth + 1);
   if (typeof raw === 'string') {
-    const url = raw.startsWith('//') ? `https:${raw}` : raw.trim();
-    if (/^https?:\/\//i.test(url)) return url;
+    let url = raw.startsWith('//') ? `https:${raw}` : raw.trim();
+    if (/^https?:\/\//i.test(url)) {
+      // Retirer les suffixes de redimensionnement Alibaba CDN pour obtenir l'image haute définition
+      url = url.replace(/_\d+x\d+\.(?:jpg|png|webp|jpeg)/i, '');
+      url = url.replace(/\.jpg_\.webp$/i, '.jpg');
+      url = url.replace(/\.png_\.webp$/i, '.png');
+      return url;
+    }
     return '';
   }
   if (typeof raw === 'object') {
     return asImageUrl(
       raw.url || raw.imageUrl || raw.image_url || raw.src || raw.main_url
       || raw.file_url || raw.pic_url || raw.main_image || raw.mainImage
-      || raw.image || raw.img
+      || raw.image || raw.img || raw.attr_value_image
       || (Array.isArray(raw.multi_image) ? raw.multi_image[0] : '')
       || (Array.isArray(raw.images) ? raw.images[0] : ''),
       depth + 1,
@@ -196,6 +202,27 @@ function extractImages(item = {}) {
   ].forEach((list) => {
     if (Array.isArray(list)) list.forEach(push);
   });
+
+  // Extraire les images des variantes (skus / skuInfos)
+  const skus = Array.isArray(item.skus) ? item.skus : (Array.isArray(item.skuInfos) ? item.skuInfos : []);
+  skus.forEach((sku) => {
+    push(sku.image || sku.skuImageUrl || sku.imageUrl || sku.pic_url);
+    if (Array.isArray(sku.sku_attr_list)) {
+      sku.sku_attr_list.forEach((attr) => {
+        if (attr.attr_value_image) push(attr.attr_value_image);
+      });
+    }
+  });
+
+  // Extraire les images haute définition de la description HTML
+  const desc = item.description || item.result_data?.description || '';
+  if (typeof desc === 'string' && desc.includes('<img')) {
+    const imgMatches = desc.matchAll(/(?:src|data-src)=["']([^"']+)["']/gi);
+    for (const m of imgMatches) {
+      if (m && m[1]) push(m[1]);
+    }
+  }
+
   return urls;
 }
 
