@@ -37,6 +37,12 @@ async function upsertAlibabaProduct(externalProductId, { publish = false, update
 
   const detail = await getAlibabaProductDetail(id);
   const mapped = mapAlibabaProductToDango(detail, detail);
+  if (!(mapped?.pricing?.supplierPrice > 0)) {
+    const err = new Error('Prix fournisseur introuvable : import refusé.');
+    err.status = 422;
+    err.code = 'SUPPLIER_PRICE_REQUIRED';
+    throw err;
+  }
   if (Array.isArray(variantIds) && variantIds.length) {
     const allowed = new Set(variantIds.map((v) => String(v).trim()));
     mapped.variants = (mapped.variants || []).filter((v) => allowed.has(String(v.attributes?.externalVariantId || '')));

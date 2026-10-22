@@ -822,6 +822,13 @@ async function getAlibabaProductDetail(productId) {
     }));
   }
 
+  if (isGenericAlibabaName(merged.name) && pickPrice(merged.supplierPrice) === 0) {
+    const err = new Error('Données produit Alibaba incomplètes (titre et prix introuvables).');
+    err.status = 422;
+    err.code = 'PRODUCT_DATA_INCOMPLETE';
+    throw applyAlibabaError(err);
+  }
+
   return merged;
 }
 
