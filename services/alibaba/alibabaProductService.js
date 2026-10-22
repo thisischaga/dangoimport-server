@@ -666,33 +666,135 @@ async function searchAlibabaProducts(params = {}) {
   }
 }
 
+async function fetchProductInventory(id) {
+  try {
+    const payload = await alibabaCall('/eco/buyer/product/inventory', {
+      product_id: String(id),
+      country: alibabaConfig.defaultCountry || 'US',
+    });
+    return parseJsonValue(payload?.result?.data ?? payload?.data);
+  } catch (error) {
+    console.warn('[alibaba] fetchProductInventory notice:', error.message);
+    return null;
+  }
+}
+
+async function fetchProductKeyAttributes(id) {
+  try {
+    const payload = await alibabaCall('/eco/buyer/product/keyattributes', {
+      product_id: String(id),
+      country: alibabaConfig.defaultCountry || 'US',
+    });
+    return parseJsonValue(payload?.result?.data ?? payload?.data);
+  } catch (error) {
+    console.warn('[alibaba] fetchProductKeyAttributes notice:', error.message);
+    return null;
+  }
+}
+
 async function getAlibabaProductDetail(productId) {
   const id = extractProductId(productId) || String(productId || '').trim();
   if (!id) throw keywordRequiredError();
-  let fromGet = null;
-  let getError = null;
-  try {
-    fromGet = await fetchProductById(id);
-  } catch (error) {
-    getError = error;
-  }
-  let fromSearch = null;
-  try {
-    const searched = await runBuyerSearch(id, 1, 8);
-    fromSearch = (searched.products || []).find((item) => item.externalProductId === id)
-      || (searched.products || [])[0]
-      || null;
-  } catch {
-    fromSearch = null;
-  }
-  const merged = mergeCatalogProduct(fromGet, fromSearch);
-  if (!merged?.externalProductId) {
-    throw permissionDeniedOnProductGet(getError || Object.assign(new Error('Produit Alibaba introuvable pour cet ID.'), {
+
+  const [fromGetResult, keyAttrsResult, invResult, searchResult] = await Promise.allSettled([
+    fetchProductById(id),
+    fetchProductKeyAttributes(id),
+    fetchProductInventory(id),
+    runBuyerSearch(id, 1, 8),
+  ]);
+
+  const fromGet = fromGetResult.status === 'fulfilled' ? fromGetResult.value : null;
+  const keyAttrs = keyAttrsResult.status === 'fulfilled' ? keyAttrsResult.value : null;
+  const inv = invResult.status === 'fulfilled' ? invResult.value : null;
+  const searched = searchResult.status === 'fulfilled' ? searchResult.value : null;
+  const fromSearch = (searched?.products || []).find((item) => item.externalProductId === id)
+    || (searched?.products || [])[0]
+    || null;
+
+  // Unpack inventory data & SKU variants
+  const invStock = toNumber(
+    inv?.amountOnSale ?? inv?.inventory ?? inv?.stock ?? inv?.total_stock ?? inv?.total_inventory,
+    0,
+  );
+  const invSkus = parseJsonValue(inv?.sku_list ?? inv?.sku_inventory ?? inv?.sku_infos ?? inv?.skus ?? inv?.productSkuInfos);
+  const rawSkuList = Array.isArray(invSkus) ? invSkus : (fromGet?.skuInfos || []);
+
+  const skuInfos = rawSkuList.map((sku, index) => ({
+    skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
+    name: sku.skuName || sku.sku_name || sku.name || sku.specName || `Variante ${index + 1}`,
+    price: pickPrice(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price || sku.retailPrice),
+    stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
+    image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
+    currency: pickCurrency(sku),
+  }));
+
+  const skuStockTotal = skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0);
+  const finalStock = skuStockTotal || invStock || fromGet?.stock || fromSearch?.stock || alibabaConfig.defaultPublicStock;
+
+  // Key attributes
+  const keyTitle = keyAttrs?.title || keyAttrs?.subject || keyAttrs?.product_name || keyAttrs?.product_title;
+  const keyCategory = keyAttrs?.category_name || keyAttrs?.leaf_category_name || keyAttrs?.category;
+  const keyWeight = keyAttrs?.weight || keyAttrs?.net_weight || keyAttrs?.gross_weight || keyAttrs?.productShippingInfo?.weight;
+  const keyImages = extractImages(keyAttrs || {});
+
+  // Best Price
+  const skuMinPrice = skuInfos.map((s) => s.price).filter((p) => p > 0).sort((a, b) => a - b)[0] || 0;
+  const price = pickPrice(fromSearch?.supplierPrice)
+    || skuMinPrice
+    || pickPrice(fromGet?.supplierPrice)
+    || pickPrice(inv?.price);
+
+  // Best Title / Name
+  const candidateName = fromSearch?.name || keyTitle || fromGet?.name;
+  const finalName = !isGenericAlibabaName(candidateName)
+    ? candidateName
+    : (keyTitle || fromSearch?.name || `Produit Alibaba ${id}`);
+
+  // Best Images
+  const allImages = []
+    .concat(fromSearch?.images || [], fromGet?.images || [], keyImages)
+    .filter((img) => img && (typeof img === 'string' ? img : img.url));
+  const uniqueImages = [];
+  const seenUrls = new Set();
+  allImages.forEach((img) => {
+    const url = typeof img === 'string' ? img : img.url;
+    if (url && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      uniqueImages.push({ url });
+    }
+  });
+
+  const finalImage = fromSearch?.image || keyImages[0]?.url || fromGet?.image || uniqueImages[0]?.url || '';
+
+  const merged = {
+    externalProductId: id,
+    name: finalName,
+    description: fromGet?.description || '',
+    category: keyCategory || fromSearch?.category || fromGet?.category || 'Général',
+    weight: keyWeight != null ? String(keyWeight) : (fromGet?.weight || ''),
+    image: finalImage,
+    images: uniqueImages.length ? uniqueImages : (finalImage ? [{ url: finalImage }] : []),
+    supplierPrice: price,
+    currency: fromSearch?.currency || fromGet?.currency || 'USD',
+    stock: finalStock,
+    minOrderQuantity: fromSearch?.minOrderQuantity || fromGet?.minOrderQuantity || 1,
+    skuInfos,
+    productUrl: fromSearch?.productUrl || fromGet?.productUrl || `https://www.alibaba.com/product-detail/${id}.html`,
+    raw: {
+      ...(fromSearch?.raw || {}),
+      ...(fromGet?.raw || {}),
+      keyAttributes: keyAttrs,
+      inventory: inv,
+    },
+  };
+
+  if (!merged.name && !merged.externalProductId) {
+    throw permissionDeniedOnProductGet(fromGetResult.reason || Object.assign(new Error('Produit Alibaba introuvable pour cet ID.'), {
       status: 404,
       code: 'PRODUCT_NOT_FOUND',
     }));
   }
-  if (!toNumber(merged.stock, 0)) merged.stock = alibabaConfig.defaultPublicStock;
+
   return merged;
 }
 
