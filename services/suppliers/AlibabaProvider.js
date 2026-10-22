@@ -16,7 +16,7 @@ class AlibabaProvider extends SupplierProvider {
   async getProduct(productId) {
     assertAlibabaConfigured();
     const detail = await getAlibabaProductDetail(productId);
-    return mapAlibabaProductToDango(detail, detail);
+    return await mapAlibabaProductToDango(detail, detail);
   }
 
   async getVariants(productId) {

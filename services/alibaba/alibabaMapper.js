@@ -1,8 +1,10 @@
 const slugify = require('slugify');
 const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
 const { calculateMargin, toNumber, applyProductMarkup } = require('../../utils/dropshippingCalculations');
-const { DEFAULT_IMPORT_PRICING, inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
-const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
+const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
+const { inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
+const { convertUsdPriceToXof, isInvalidTranslationText, mapCjCategoryToDangoStore } = require('../../utils/cjCatalogHelpers');
+const { translateCatalogTextForImport } = require('../cj/cjLocalization');
 const { extractImages } = require('./alibabaProductService');
 
 function buildExternalSourceKey(externalProductId) {
@@ -16,8 +18,11 @@ function parseCnyPrice(value) {
   return match ? Number(match[1]) : 0;
 }
 
-function mapAlibabaVariants(skuInfos = []) {
-  return (Array.isArray(skuInfos) ? skuInfos : []).map((sku, index) => {
+async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false } = {}) {
+  const list = Array.isArray(skuInfos) ? skuInfos : [];
+  const results = [];
+  for (let index = 0; index < list.length; index++) {
+    const sku = list[index];
     // Ladder price : prendre le min (premier palier quantité 1)
     const ladderPriceArr = Array.isArray(sku.ladder_price) ? sku.ladder_price : [];
     const ladderMinPrice = ladderPriceArr.length
@@ -32,18 +37,30 @@ function mapAlibabaVariants(skuInfos = []) {
       : rawPriceValue;
     const priceXof = applyProductMarkup(convertUsdPriceToXof(supplierUsd), DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
     // Nom : depuis sku_attr_list (format Alibaba description API)
-    let skuName = sku.skuName || sku.name || sku.attributes?.[0]?.attributeValue || '';
+    let skuName = sku.name || sku.skuName || sku.attributes?.[0]?.attributeValue || '';
     if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
       skuName = sku.sku_attr_list
         .map((a) => `${a.attr_name_desc || ''}: ${a.attr_value_desc || ''}`.trim())
         .filter(Boolean).join(' / ');
     }
     if (!skuName) skuName = `Variante ${index + 1}`;
-    return {
+    if (!skipTranslation && skuName) {
+      try {
+        const translated = await translateCatalogTextForImport(skuName);
+        if (translated && !isInvalidTranslationText(translated)) {
+          skuName = translated;
+        }
+      } catch (_e) { /* fallback original */ }
+    }
+
+    const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
+    const stock = rawStock > 0 ? rawStock : (alibabaConfig.defaultPublicStock || 50);
+
+    results.push({
       name: skuName,
       sku: String(sku.skuId || sku.sku_id || sku.specId || ''),
       price: priceXof,
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
+      stock,
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: {
         externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
@@ -51,11 +68,12 @@ function mapAlibabaVariants(skuInfos = []) {
         supplierPriceUsd: supplierUsd,
       },
       isDefault: index === 0,
-    };
-  });
+    });
+  }
+  return results;
 }
 
-function mapAlibabaProductToDango(listItem = {}, detail = null) {
+async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTranslation = false } = {}) {
   const source = detail || listItem;
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
   const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || 'USD').toUpperCase();
@@ -80,7 +98,7 @@ function mapAlibabaProductToDango(listItem = {}, detail = null) {
     supplierShippingCost: 0,
     otherCosts: 0,
   });
-  const variants = mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos);
+  const variants = await mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos, { skipTranslation });
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
   const listedStock = toNumber(source.stock, 0);
   const stock = stockFromVariants || listedStock || alibabaConfig.defaultPublicStock;
@@ -88,11 +106,27 @@ function mapAlibabaProductToDango(listItem = {}, detail = null) {
     ? extractImages(source.raw || source)
     : (source.images || []).map((img) => (typeof img === 'string' ? { url: img } : img));
   const primaryImage = images[0]?.url || source.image || '';
-  const name = String(source.name || source.subject || `Produit Alibaba ${externalProductId}`).trim();
-  const description = String(source.description || name).replace(/<[^>]+>/g, ' ').slice(0, 4000).trim() || name;
+  let name = String(source.name || source.subject || `Produit Alibaba ${externalProductId}`).trim();
+  let description = String(source.description || name).replace(/<[^>]+>/g, ' ').slice(0, 4000).trim() || name;
+
+  if (!skipTranslation) {
+    try {
+      const translatedName = await translateCatalogTextForImport(name);
+      if (translatedName && !isInvalidTranslationText(translatedName)) {
+        name = translatedName;
+      }
+    } catch (_e) { /* fallback */ }
+    try {
+      const translatedDesc = await translateCatalogTextForImport(description);
+      if (translatedDesc && !isInvalidTranslationText(translatedDesc)) {
+        description = translatedDesc;
+      }
+    } catch (_e) { /* fallback */ }
+  }
+
   const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight);
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
-  const category = String(source.category || 'Général').trim() || 'Général';
+  const category = mapCjCategoryToDangoStore(source.category || 'Général');
 
   return {
     source: alibabaConfig.platformKey,

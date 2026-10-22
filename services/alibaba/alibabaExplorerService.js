@@ -94,11 +94,11 @@ async function getAlibabaProductForAdmin(pid) {
     const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
     return {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
-      name: sku.skuName || sku.sku_name || sku.name || `Variante ${index + 1}`,
+      name: sku.name || sku.skuName || sku.sku_name || `Variante ${index + 1}`,
       sku: sku.skuId || sku.sku_id || '',
       supplierPriceCny: variantCurrency === 'CNY' ? price : null,
       supplierPriceUsd: toUsd(price, variantCurrency),
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock, 0),
+      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock, 0) || alibabaConfig.defaultPublicStock,
       image: sku.skuImageUrl || sku.image || '',
     };
   });

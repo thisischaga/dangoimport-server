@@ -395,11 +395,17 @@ function unwrapList(payload) {
   if (Array.isArray(root)) return root;
   if (typeof root !== 'object') return [];
   const resultNode = root.result && typeof root.result === 'object' ? root.result : {};
-  // /eco/buyer/product/description : données dans result.result_data (objet produit unique)
+  // /eco/buyer/* : données dans result.result_data
   if (resultNode.result_data && typeof resultNode.result_data === 'object' && !Array.isArray(resultNode.result_data)) {
     const rd = resultNode.result_data;
-    // Injecter result_data dans un objet porteur pour que flattenBuyerProduct le détecte
-    return [{ result_data: rd, ...rd }];
+    const listInRd = rd.products || rd.product_list || rd.productList || rd.product_id_list || rd.product_ids || rd.dataList;
+    if (Array.isArray(listInRd)) {
+      return listInRd;
+    }
+    // Objet produit unique (ex: /eco/buyer/product/description)
+    if (rd.product_id || rd.skus || rd.detail_url || rd.basic_info || rd.trade_info || (rd.title && (rd.description || rd.images || rd.price))) {
+      return [{ result_data: rd, ...rd }];
+    }
   }
   // Autres /eco/buyer/* : result.result.data (double nesting) ou result.data
   const innerResult = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
@@ -799,6 +805,7 @@ async function fetchProductInventory(id) {
       ?? ((resultNode.result && typeof resultNode.result === 'object') ? resultNode.result.data : undefined)
       ?? payload?.data,
     );
+    console.warn('[alibaba-diag] fetchProductInventory', id, 'keys=' + JSON.stringify(data && typeof data === 'object' ? Object.keys(data).slice(0, 20) : data));
     return data;
   } catch (error) {
     console.warn('[alibaba] fetchProductInventory notice:', error.message);
@@ -899,11 +906,15 @@ async function getAlibabaProductDetail(productId) {
       || pickPrice(ladderPrice);
     // Devise : depuis ladder_price[0].currency ou sku.currency
     const skuCurrency = (ladderPrice?.[0]?.currency) || sku.currency || 'USD';
+    const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
+    const skuStock = rawStock > 0
+      ? rawStock
+      : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? (alibabaConfig.defaultPublicStock || 50) : 0);
     return {
       skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
       name: skuName,
       price: skuPrice,
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
+      stock: skuStock,
       image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
       currency: skuCurrency,
     };

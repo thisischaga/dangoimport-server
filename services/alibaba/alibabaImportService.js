@@ -36,7 +36,7 @@ async function upsertAlibabaProduct(externalProductId, { publish = false, update
   }
 
   const detail = await getAlibabaProductDetail(id);
-  const mapped = mapAlibabaProductToDango(detail, detail);
+  const mapped = await mapAlibabaProductToDango(detail, detail);
   if (!(mapped?.pricing?.supplierPrice > 0)) {
     const err = new Error('Prix fournisseur introuvable : import refusé.');
     err.status = 422;
