@@ -320,8 +320,9 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
   const categoryRaw = rd.category || rd.leaf_category_name || rd.category_name || item.leaf_category_name || item.top_category_name;
   const category = categoryRaw && typeof categoryRaw === 'string' ? categoryRaw : (categoryRaw?.name || categoryRaw?.category_name || '');
   return {
+    // Champs de base depuis item (sans les clés internes Alibaba de result_data)
     ...item,
-    ...rd,
+    // Champs calculés — NE PAS spreader ...rd directement (pollue supplier, status, mode_id, etc.)
     productId: basic.product_id || rd.product_id || rd.productId || item.product_id || item.productId || fallbackId,
     subject: title,
     title,
@@ -335,7 +336,6 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     productUrl: rd.detail_url || rd.permalink || rd.detailUrl || rd.productUrl
       || item.detail_url || item.permalink || item.detailUrl || item.productUrl,
     category,
-    // skuInfos from result_data.skus
     skuInfos: rdSkus.length ? rdSkus : (item.skuInfos || item.skuList || item.productSkuInfos || item.product_sku_list || item.sku_info || []),
   };
 }
