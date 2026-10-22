@@ -3,9 +3,113 @@ const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
 const { calculateMargin, toNumber, applyProductMarkup } = require('../../utils/dropshippingCalculations');
 const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const { inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
-const { convertUsdPriceToXof, isInvalidTranslationText, mapCjCategoryToDangoStore } = require('../../utils/cjCatalogHelpers');
 const { translateCatalogTextForImport } = require('../cj/cjLocalization');
 const { extractImages, extractAlibabaSpecifications } = require('./alibabaProductService');
+
+function convertUsdPriceToXof(amountUsd) {
+  const usd = Number(amountUsd) || 0;
+  if (usd <= 0) return 0;
+  return Math.round(usd * 655);
+}
+
+function isInvalidTranslationText(text) {
+  if (!text || typeof text !== 'string') return true;
+  const t = text.trim();
+  if (!t) return true;
+  return /^(undefined|null|none|n\/a)$/i.test(t);
+}
+
+const DANGO_STORE_CATEGORIES = [
+  'Montres', 'Électronique', 'Beauté', 'Vêtements',
+  'Accessoires', 'Maison', 'Sport', 'Alimentation', 'Parfum', 'Evènement',
+];
+
+function mapAlibabaCategoryToDangoStore(rawCategory, title = '') {
+  const raw = (typeof rawCategory === 'object' && rawCategory !== null)
+    ? (rawCategory.name || rawCategory.category_name || rawCategory.categoryName || '')
+    : String(rawCategory || '').trim();
+
+  const combined = `${raw} ${title}`.toLowerCase();
+
+  if (/montre|smartwatch|watch\b|horlog/i.test(combined)) return 'Montres';
+  if (/electronic|téléphone|phone|smartphone|tablette|tablet|computer|laptop|ordinateur|audio|écouteur|earphone|headphone|bluetooth|speaker|câble|cable|chargeur|charger|caméra|camera|gadget/i.test(combined)) {
+    return 'Électronique';
+  }
+  if (/beauté|beauty|cosmetic|cosmétique|skin|maquillage|makeup|cheveux|hair|soin|creme|cream|hygiène/i.test(combined)) {
+    return 'Beauté';
+  }
+  if (/parfum|perfume|fragrance|eau de toilette|eau de parfum/i.test(combined)) {
+    return 'Parfum';
+  }
+  if (/sport|fitness|running|gym|yoga|cycling|vélo|musculation|water bottle|gourde|bouteille de sport|outdoor/i.test(combined)) {
+    return 'Sport';
+  }
+  if (/vêtement|clothing|apparel|robe|dress|pantalon|pants|t-shirt|tee|chemise|shirt|veste|jacket|manteau|coat|hoodie|pull|sweater|sweat|chaussette|sock|sous-vêtement|underwear/i.test(combined)) {
+    return 'Vêtements';
+  }
+  if (/maison|home|kitchen|cuisine|jardin|garden|furniture|meuble|décor|decor|tableware|vaisselle|mug|tasse|verre|glass|bouteille|bottle|rangement|bain|bathroom/i.test(combined)) {
+    return 'Maison';
+  }
+  if (/chaussure|shoe|sneaker|basket|sandale|sandal|botte|boot|sac|bag|sacoche|wallet|portefeuille|bijou|jewel|collier|necklace|bague|ring|ceinture|belt|chapeau|hat|casquette|cap|lunette|sunglass/i.test(combined)) {
+    return 'Accessoires';
+  }
+  if (/aliment|food|thé|tea|café|coffee|snack|épice|boisson|beverage/i.test(combined)) {
+    return 'Alimentation';
+  }
+  if (/fête|party|mariage|wedding|event|anniversaire|décoration fête/i.test(combined)) {
+    return 'Evènement';
+  }
+
+  const directMatch = DANGO_STORE_CATEGORIES.find((cat) => combined.includes(cat.toLowerCase()));
+  if (directMatch) return directMatch;
+
+  return 'Accessoires';
+}
+
+function cleanAlibabaDescription(raw, title = '', specifications = []) {
+  if (!raw || typeof raw !== 'string') {
+    return buildFallbackDescription(title, specifications);
+  }
+  let text = raw;
+  // 1. Supprimer le contenu CSS complet dans les balises <style>
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  // 2. Supprimer les balises <script>
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+  // 3. Supprimer tout reste de règle CSS (ex: #detail_decorate_root ... { ... })
+  text = text.replace(/#detail_decorate_root[^{]*\{[^}]*\}/gi, ' ');
+  text = text.replace(/@media[^{]*\{[^{}]*\{[^}]*\}[^}]*\}/gi, ' ');
+  text = text.replace(/([#\.\w\-\s,>:+*]+)\{[^}]*\}/g, ' ');
+  // 4. Supprimer les balises HTML restantes
+  text = text.replace(/<[^>]+>/g, ' ');
+  // 5. Décoder les entités HTML
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"');
+  // 6. Nettoyer les espaces multiples
+  text = text.replace(/\s+/g, ' ').trim();
+  // 7. Si le texte résultant est vide ou est un fragment CSS résiduel
+  if (text.length < 25 || /^([#\.\w\-\s,>:+*]+;)+$/.test(text) || text.startsWith('#detail_decorate_root')) {
+    return buildFallbackDescription(title, specifications);
+  }
+  return text.slice(0, 4000);
+}
+
+function buildFallbackDescription(title = '', specifications = []) {
+  const parts = [];
+  if (title) parts.push(title.trim());
+  if (Array.isArray(specifications) && specifications.length) {
+    const specsList = specifications
+      .slice(0, 8)
+      .map((s) => `${s.key} : ${s.value}`)
+      .join(' · ');
+    if (specsList) parts.push(`Caractéristiques : ${specsList}.`);
+  }
+  return parts.join(' - ') || 'Produit de qualité supérieure importé depuis Alibaba.';
+}
 
 const ATTR_TRANSLATIONS = {
   color: 'Couleur',
@@ -49,6 +153,45 @@ const ATTR_TRANSLATIONS = {
   outdoor_activity: 'Activité de plein air',
 };
 
+const COLOR_TRANSLATIONS = {
+  black: 'Noir',
+  white: 'Blanc',
+  red: 'Rouge',
+  blue: 'Bleu',
+  green: 'Vert',
+  yellow: 'Jaune',
+  orange: 'Orange',
+  purple: 'Violet',
+  pink: 'Rose',
+  grey: 'Gris',
+  gray: 'Gris',
+  brown: 'Marron',
+  khaki: 'Kaki',
+  beige: 'Beige',
+  navy: 'Bleu marine',
+  'dark blue': 'Bleu foncé',
+  'light blue': 'Bleu ciel',
+  'army green': 'Vert armée',
+  silver: 'Argenté',
+  gold: 'Doré',
+  coffee: 'Café',
+};
+
+function translateVariantText(rawName) {
+  if (!rawName || typeof rawName !== 'string') return rawName;
+  let text = rawName;
+  // Traduire les clés d'attributs standard
+  text = text.replace(/\bColor\b/gi, 'Couleur');
+  text = text.replace(/\bSize\b/gi, 'Taille');
+  text = text.replace(/\bEUR Size\b/gi, 'Pointure');
+  // Traduire les couleurs courantes
+  Object.entries(COLOR_TRANSLATIONS).forEach(([en, fr]) => {
+    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    text = text.replace(reg, fr);
+  });
+  return text;
+}
+
 function buildExternalSourceKey(externalProductId) {
   return `${alibabaConfig.platformKey}:${String(externalProductId).trim()}`;
 }
@@ -60,32 +203,50 @@ function parseCnyPrice(value) {
   return match ? Number(match[1]) : 0;
 }
 
-async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false } = {}) {
+async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, productTotalStock = 0 } = {}) {
   const list = Array.isArray(skuInfos) ? skuInfos : [];
+  if (!list.length) return [];
+
+  // Détection de stock individuel réel
+  const hasIndividualStock = list.some((sku) => {
+    const raw = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
+    return raw > 0;
+  });
+
+  const baseTotalStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 50);
+  const fallbackPerSku = Math.max(1, Math.floor(baseTotalStock / list.length));
+
   const results = [];
   for (let index = 0; index < list.length; index++) {
     const sku = list[index];
-    // Ladder price : prendre le min (premier palier quantité 1)
     const ladderPriceArr = Array.isArray(sku.ladder_price) ? sku.ladder_price : [];
     const ladderMinPrice = ladderPriceArr.length
       ? Math.min(...ladderPriceArr.map((t) => Number(t.price) || 0).filter((p) => p > 0))
       : 0;
     const ladderCurrency = ladderPriceArr[0]?.currency || 'USD';
-    // Prix brut : ladder_price > price direct
     const rawPriceValue = Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price || 0) || ladderMinPrice;
     const rawCurrency = sku.currency || ladderCurrency;
     const supplierUsd = String(rawCurrency).toUpperCase() === 'CNY'
       ? convertCnyToUsd(rawPriceValue)
       : rawPriceValue;
     const priceXof = applyProductMarkup(convertUsdPriceToXof(supplierUsd), DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
-    // Nom : depuis sku_attr_list (format Alibaba description API)
+
     let skuName = sku.name || sku.skuName || sku.attributes?.[0]?.attributeValue || '';
     if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
       skuName = sku.sku_attr_list
-        .map((a) => `${a.attr_name_desc || ''}: ${a.attr_value_desc || ''}`.trim())
+        .map((a) => {
+          const keyRaw = (a.attr_name_desc || '').toLowerCase();
+          const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attr_name_desc || '';
+          let val = a.attr_value_desc || '';
+          const lowerVal = val.toLowerCase();
+          if (COLOR_TRANSLATIONS[lowerVal]) val = COLOR_TRANSLATIONS[lowerVal];
+          return `${keyFr}: ${val}`.trim();
+        })
         .filter(Boolean).join(' / ');
     }
     if (!skuName) skuName = `Variante ${index + 1}`;
+    skuName = translateVariantText(skuName);
+
     if (!skipTranslation && skuName) {
       try {
         const translated = await translateCatalogTextForImport(skuName);
@@ -96,7 +257,9 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false } = {
     }
 
     const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
-    const stock = rawStock > 0 ? rawStock : (alibabaConfig.defaultPublicStock || 50);
+    const stock = hasIndividualStock
+      ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
+      : fallbackPerSku;
 
     results.push({
       name: skuName,
@@ -106,9 +269,9 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false } = {
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: {
         externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
-        supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
-        supplierPriceUsd: supplierUsd,
       },
+      supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
+      supplierPriceUsd: supplierUsd,
       isDefault: index === 0,
     });
   }
@@ -120,7 +283,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
   const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || 'USD').toUpperCase();
   const rawPrice = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price?.amount ?? source.raw?.price);
-  // Si prix toujours 0, tenter le min des skuInfos (ladder_price)
+
   const skuLadderMin = (() => {
     const skus = source.skuInfos || source.raw?.skuInfos || [];
     const prices = (Array.isArray(skus) ? skus : []).flatMap((sku) => {
@@ -140,35 +303,21 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     supplierShippingCost: 0,
     otherCosts: 0,
   });
-  const variants = await mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos, { skipTranslation });
+
+  const productTotalStock = toNumber(source.stock, 0);
+  const variants = await mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos, {
+    skipTranslation,
+    productTotalStock,
+  });
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  const listedStock = toNumber(source.stock, 0);
-  const stock = stockFromVariants || listedStock || alibabaConfig.defaultPublicStock;
+  const stock = stockFromVariants || productTotalStock || alibabaConfig.defaultPublicStock;
+
   const images = extractImages(source.raw || source).length
     ? extractImages(source.raw || source)
     : (source.images || []).map((img) => (typeof img === 'string' ? { url: img } : img));
   const primaryImage = images[0]?.url || source.image || '';
+
   let name = String(source.name || source.subject || `Produit Alibaba ${externalProductId}`).trim();
-  let description = String(source.description || name).replace(/<[^>]+>/g, ' ').slice(0, 4000).trim() || name;
-
-  if (!skipTranslation) {
-    try {
-      const translatedName = await translateCatalogTextForImport(name);
-      if (translatedName && !isInvalidTranslationText(translatedName)) {
-        name = translatedName;
-      }
-    } catch (_e) { /* fallback */ }
-    try {
-      const translatedDesc = await translateCatalogTextForImport(description);
-      if (translatedDesc && !isInvalidTranslationText(translatedDesc)) {
-        description = translatedDesc;
-      }
-    } catch (_e) { /* fallback */ }
-  }
-
-  const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight);
-  const weightRaw = weightKg > 0 ? String(weightKg) : '';
-  const category = mapCjCategoryToDangoStore(source.category || 'Général');
 
   let specifications = extractAlibabaSpecifications(source);
   if (!skipTranslation && specifications.length) {
@@ -191,6 +340,27 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
       return { key, value };
     }));
   }
+
+  let description = cleanAlibabaDescription(source.description || name, name, specifications);
+
+  if (!skipTranslation) {
+    try {
+      const translatedName = await translateCatalogTextForImport(name);
+      if (translatedName && !isInvalidTranslationText(translatedName)) {
+        name = translatedName;
+      }
+    } catch (_e) { /* fallback */ }
+    try {
+      const translatedDesc = await translateCatalogTextForImport(description);
+      if (translatedDesc && !isInvalidTranslationText(translatedDesc)) {
+        description = translatedDesc;
+      }
+    } catch (_e) { /* fallback */ }
+  }
+
+  const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight);
+  const weightRaw = weightKg > 0 ? String(weightKg) : '';
+  const category = mapAlibabaCategoryToDangoStore(source.category || 'Général', name);
 
   return {
     source: alibabaConfig.platformKey,
@@ -279,6 +449,9 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
 
 module.exports = {
   buildExternalSourceKey,
+  cleanAlibabaDescription,
+  convertUsdPriceToXof,
+  mapAlibabaCategoryToDangoStore,
   mapAlibabaProductToDango,
   mapToDropshippingPayload,
 };
