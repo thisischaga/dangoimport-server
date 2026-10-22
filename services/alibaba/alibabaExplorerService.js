@@ -140,6 +140,7 @@ async function getAlibabaProductForAdmin(pid) {
     sku: detail.skuInfos?.[0]?.skuId || detail.skuInfos?.[0]?.sku_id || '',
     productUrl: detail.productUrl,
     variants,
+    specifications: detail.specifications || [],
     imported: existing
       ? { productId: String(existing._id), isPublished: Boolean(existing.isPublished), name: existing.name }
       : null,

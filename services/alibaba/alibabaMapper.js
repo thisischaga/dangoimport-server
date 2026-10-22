@@ -5,7 +5,49 @@ const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const { inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
 const { convertUsdPriceToXof, isInvalidTranslationText, mapCjCategoryToDangoStore } = require('../../utils/cjCatalogHelpers');
 const { translateCatalogTextForImport } = require('../cj/cjLocalization');
-const { extractImages } = require('./alibabaProductService');
+const { extractImages, extractAlibabaSpecifications } = require('./alibabaProductService');
+
+const ATTR_TRANSLATIONS = {
+  color: 'Couleur',
+  colour: 'Couleur',
+  capacity: 'Capacité',
+  volume: 'Volume',
+  material: 'Matériau',
+  materials: 'Matériaux',
+  size: 'Taille',
+  dimensions: 'Dimensions',
+  dimension: 'Dimensions',
+  weight: 'Poids',
+  brand: 'Marque',
+  brand_name: 'Marque',
+  model: 'Modèle',
+  model_number: 'Numéro de modèle',
+  feature: 'Fonctionnalité',
+  features: 'Fonctionnalités',
+  function: 'Fonction',
+  certification: 'Certification',
+  certifications: 'Certifications',
+  origin: 'Origine',
+  place_of_origin: "Lieu d'origine",
+  package: 'Emballage',
+  packaging: 'Emballage',
+  warranty: 'Garantie',
+  gender: 'Genre',
+  style: 'Style',
+  type: 'Type',
+  usage: 'Utilisation',
+  application: 'Application',
+  pattern: 'Motif',
+  season: 'Saison',
+  shape: 'Forme',
+  drinkware_type: 'Type de récipient',
+  plastic_type: 'Type de plastique',
+  thermal_insulation_performance: 'Isolation thermique',
+  water_flowing_method: "Mode d'écoulement",
+  boiling_water: 'Eau bouillante',
+  anti_corrosion_coating: 'Revêtement anti-corrosion',
+  outdoor_activity: 'Activité de plein air',
+};
 
 function buildExternalSourceKey(externalProductId) {
   return `${alibabaConfig.platformKey}:${String(externalProductId).trim()}`;
@@ -128,6 +170,28 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
   const category = mapCjCategoryToDangoStore(source.category || 'Général');
 
+  let specifications = extractAlibabaSpecifications(source);
+  if (!skipTranslation && specifications.length) {
+    specifications = await Promise.all(specifications.map(async (row) => {
+      let key = row.key;
+      let value = row.value;
+      const lowerKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+      if (ATTR_TRANSLATIONS[lowerKey]) {
+        key = ATTR_TRANSLATIONS[lowerKey];
+      } else {
+        try {
+          const tKey = await translateCatalogTextForImport(key);
+          if (tKey && !isInvalidTranslationText(tKey)) key = tKey;
+        } catch (_e) {}
+      }
+      try {
+        const tVal = await translateCatalogTextForImport(value);
+        if (tVal && !isInvalidTranslationText(tVal)) value = tVal;
+      } catch (_e) {}
+      return { key, value };
+    }));
+  }
+
   return {
     source: alibabaConfig.platformKey,
     externalProductId,
@@ -142,7 +206,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     images,
     image: primaryImage,
     variants,
-    specifications: [],
+    specifications,
     brand: source.raw?.sellerLoginId || alibabaConfig.supplierName,
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,

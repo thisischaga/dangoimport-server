@@ -685,6 +685,7 @@ module.exports = {
   prepareDropshippingProductForPublic,
   extractAllImageUrls,
   mapCjCategoryToFrenchStore,
+  mapCjCategoryToDangoStore,
   extractCjImages,
   stripHtml,
   pickCjTitle,

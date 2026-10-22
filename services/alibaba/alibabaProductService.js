@@ -860,6 +860,95 @@ async function fetchProductFromCheck(id) {
   }
 }
 
+function extractAlibabaSpecifications(source = {}) {
+  const specs = [];
+  const seenKeys = new Set();
+
+  const add = (rawKey, rawVal) => {
+    if (!rawKey || rawVal == null) return;
+    const key = String(rawKey).trim();
+    const value = String(rawVal).trim();
+    if (!key || !value || value.startsWith('http')) return;
+    const kLower = key.toLowerCase();
+    if (seenKeys.has(kLower)) return;
+    seenKeys.add(kLower);
+    specs.push({ key, value });
+  };
+
+  // 1. Extraire depuis sku_attr_list de skuInfos
+  const skuList = Array.isArray(source.skuInfos)
+    ? source.skuInfos
+    : (Array.isArray(source.raw?.skuInfos) ? source.raw.skuInfos : []);
+  const attrMap = new Map();
+  skuList.forEach((sku) => {
+    const list = Array.isArray(sku.sku_attr_list) ? sku.sku_attr_list : [];
+    list.forEach((attr) => {
+      const name = attr.attr_name_desc || attr.attr_name || attr.name;
+      const val = attr.attr_value_desc || attr.attr_value || attr.value;
+      if (name && val) {
+        if (!attrMap.has(name)) attrMap.set(name, new Set());
+        attrMap.get(name).add(String(val).trim());
+      }
+    });
+  });
+  for (const [name, valSet] of attrMap.entries()) {
+    add(name, Array.from(valSet).join(', '));
+  }
+
+  // 2. Extraire depuis keyAttributes (API /eco/buyer/product/keyattributes)
+  const keyAttrs = source.raw?.keyAttributes || source.keyAttributes || {};
+  const attrsFromKey = keyAttrs.attributes
+    || keyAttrs.attribute_list
+    || keyAttrs.attr_list
+    || keyAttrs.product_attributes
+    || keyAttrs.property_list
+    || (Array.isArray(keyAttrs) ? keyAttrs : null);
+
+  if (Array.isArray(attrsFromKey)) {
+    attrsFromKey.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      const k = item.attr_name_desc || item.attr_name || item.attributeName || item.prop_name || item.name || item.key;
+      const v = item.attr_value_desc || item.attr_value || item.attributeValue || item.prop_value || item.value;
+      add(k, v);
+    });
+  } else if (keyAttrs && typeof keyAttrs === 'object') {
+    const ignore = new Set(['result', 'code', 'message', 'msg', 'request_id', '_trace_id_', 'title', 'subject', 'images', 'image', 'weight']);
+    for (const [k, v] of Object.entries(keyAttrs)) {
+      if (ignore.has(k)) continue;
+      if (typeof v === 'string' || typeof v === 'number') {
+        add(k.replace(/_/g, ' '), v);
+      }
+    }
+  }
+
+  // 3. Extraire depuis les attributs du produit (fromGet / raw)
+  const productAttrs = source.raw?.product_attributes
+    || source.raw?.attributes
+    || source.raw?.property_list
+    || source.product_attributes;
+  if (Array.isArray(productAttrs)) {
+    productAttrs.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      const k = item.attr_name_desc || item.attr_name || item.attributeName || item.prop_name || item.name || item.key;
+      const v = item.attr_value_desc || item.attr_value || item.attributeValue || item.prop_value || item.value;
+      add(k, v);
+    });
+  }
+
+  // 4. Caractéristiques physiques et commerciales clés
+  if (source.weight) {
+    add('Poids', `${source.weight} kg`);
+  }
+  if (source.minOrderQuantity && Number(source.minOrderQuantity) > 1) {
+    add('Quantité minimale (MOQ)', `${source.minOrderQuantity} pièce(s)`);
+  }
+  if (source.brand && !source.brand.startsWith('Produit')) {
+    add('Marque / Fournisseur', source.brand);
+  }
+
+  return specs;
+}
+
 async function getAlibabaProductDetail(productId) {
   const id = extractProductId(productId) || String(productId || '').trim();
   if (!id) throw keywordRequiredError();
@@ -959,6 +1048,19 @@ async function getAlibabaProductDetail(productId) {
 
   const finalImage = fromSearch?.image || keyImages[0]?.url || fromGet?.image || uniqueImages[0]?.url || '';
 
+  const specifications = extractAlibabaSpecifications({
+    ...(fromGet || {}),
+    skuInfos,
+    raw: {
+      ...(fromSearch?.raw || {}),
+      ...(fromGet?.raw || {}),
+      keyAttributes: keyAttrs,
+      inventory: inv,
+    },
+    weight: keyWeight != null ? String(keyWeight) : (fromGet?.weight || ''),
+    minOrderQuantity: fromSearch?.minOrderQuantity || fromGet?.minOrderQuantity || 1,
+  });
+
   const merged = {
     externalProductId: id,
     name: finalName,
@@ -972,6 +1074,7 @@ async function getAlibabaProductDetail(productId) {
     stock: finalStock,
     minOrderQuantity: fromSearch?.minOrderQuantity || fromGet?.minOrderQuantity || 1,
     skuInfos,
+    specifications,
     productUrl: fromSearch?.productUrl || fromGet?.productUrl || `https://www.alibaba.com/product-detail/${id}.html`,
     raw: {
       ...(fromSearch?.raw || {}),
@@ -1003,6 +1106,7 @@ module.exports = {
   getAlibabaProductDetail,
   mapSearchItem,
   extractImages,
+  extractAlibabaSpecifications,
   extractProductId,
   unwrapList,
   extractIdList,
