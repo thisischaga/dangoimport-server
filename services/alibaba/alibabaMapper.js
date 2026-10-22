@@ -454,4 +454,5 @@ module.exports = {
   mapAlibabaCategoryToDangoStore,
   mapAlibabaProductToDango,
   mapToDropshippingPayload,
+  ATTR_TRANSLATIONS,
 };
