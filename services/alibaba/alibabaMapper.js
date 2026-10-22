@@ -18,18 +18,36 @@ function parseCnyPrice(value) {
 
 function mapAlibabaVariants(skuInfos = []) {
   return (Array.isArray(skuInfos) ? skuInfos : []).map((sku, index) => {
-    const priceCny = parseCnyPrice(sku.price || sku.consignPrice || sku.retailPrice);
-    const supplierUsd = convertCnyToUsd(priceCny);
+    // Ladder price : prendre le min (premier palier quantité 1)
+    const ladderPriceArr = Array.isArray(sku.ladder_price) ? sku.ladder_price : [];
+    const ladderMinPrice = ladderPriceArr.length
+      ? Math.min(...ladderPriceArr.map((t) => Number(t.price) || 0).filter((p) => p > 0))
+      : 0;
+    const ladderCurrency = ladderPriceArr[0]?.currency || 'USD';
+    // Prix brut : ladder_price > price direct
+    const rawPriceValue = Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price || 0) || ladderMinPrice;
+    const rawCurrency = sku.currency || ladderCurrency;
+    const supplierUsd = String(rawCurrency).toUpperCase() === 'CNY'
+      ? convertCnyToUsd(rawPriceValue)
+      : rawPriceValue;
     const priceXof = applyProductMarkup(convertUsdPriceToXof(supplierUsd), DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
+    // Nom : depuis sku_attr_list (format Alibaba description API)
+    let skuName = sku.skuName || sku.name || sku.attributes?.[0]?.attributeValue || '';
+    if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
+      skuName = sku.sku_attr_list
+        .map((a) => `${a.attr_name_desc || ''}: ${a.attr_value_desc || ''}`.trim())
+        .filter(Boolean).join(' / ');
+    }
+    if (!skuName) skuName = `Variante ${index + 1}`;
     return {
-      name: sku.skuName || sku.name || sku.attributes?.[0]?.attributeValue || `Variante ${index + 1}`,
-      sku: String(sku.skuId || sku.specId || ''),
+      name: skuName,
+      sku: String(sku.skuId || sku.sku_id || sku.specId || ''),
       price: priceXof,
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock, 0),
-      image: sku.skuImageUrl || sku.imageUrl || '',
+      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
+      image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: {
-        externalVariantId: String(sku.skuId || sku.specId || ''),
-        supplierPriceCny: priceCny,
+        externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
+        supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
         supplierPriceUsd: supplierUsd,
       },
       isDefault: index === 0,
@@ -42,8 +60,18 @@ function mapAlibabaProductToDango(listItem = {}, detail = null) {
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
   const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || 'USD').toUpperCase();
   const rawPrice = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price?.amount ?? source.raw?.price);
-  const supplierUsd = rawCurrency === 'CNY' ? convertCnyToUsd(rawPrice) : rawPrice;
-  const priceCny = rawCurrency === 'CNY' ? rawPrice : 0;
+  // Si prix toujours 0, tenter le min des skuInfos (ladder_price)
+  const skuLadderMin = (() => {
+    const skus = source.skuInfos || source.raw?.skuInfos || [];
+    const prices = (Array.isArray(skus) ? skus : []).flatMap((sku) => {
+      if (Array.isArray(sku.ladder_price)) return sku.ladder_price.map((t) => Number(t.price) || 0);
+      return [Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price) || 0];
+    }).filter((p) => p > 0);
+    return prices.length ? Math.min(...prices) : 0;
+  })();
+  const effectiveRawPrice = rawPrice || skuLadderMin;
+  const supplierUsd = rawCurrency === 'CNY' ? convertCnyToUsd(effectiveRawPrice) : effectiveRawPrice;
+  const priceCny = rawCurrency === 'CNY' ? effectiveRawPrice : 0;
   const costPriceXof = convertUsdPriceToXof(supplierUsd);
   const sellingPrice = applyProductMarkup(costPriceXof, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
   const margin = calculateMargin({
