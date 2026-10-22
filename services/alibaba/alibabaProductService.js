@@ -239,8 +239,10 @@ function isOkBuyerCode(code) {
 
 function summarizePayload(payload) {
   const root = payload && typeof payload === 'object' ? payload : {};
-  const inner = root.result && typeof root.result === 'object' ? root.result : {};
-  const data = parseJsonValue(inner.data);
+  const resultNode = root.result && typeof root.result === 'object' ? root.result : {};
+  // Les endpoints /eco/buyer/* peuvent encapsuler dans result.result.data
+  const inner = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
+  const data = parseJsonValue(inner.data ?? root.data);
   return {
     keys: Object.keys(root).filter((key) => !/token|secret|sign/i.test(key)).slice(0, 20),
     resultKeys: Object.keys(inner).slice(0, 20),
@@ -350,8 +352,13 @@ function unwrapList(payload) {
   if (root == null) return [];
   if (Array.isArray(root)) return root;
   if (typeof root !== 'object') return [];
-  const data = parseJsonValue(root.result?.data ?? root.data);
-  const preferred = parseJsonValue(data?.products ?? data?.product_list ?? data?.dataList ?? data?.productList);
+  // Les endpoints /eco/buyer/* ont souvent result.result.data (double nesting)
+  const resultNode = root.result && typeof root.result === 'object' ? root.result : {};
+  const innerResult = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
+  const data = parseJsonValue(innerResult.data ?? root.result?.data ?? root.data);
+  // Si data est directement un array (ex: result.result.data = "[{...}]" parsé), le retourner directement
+  if (Array.isArray(data)) return data;
+  const preferred = parseJsonValue(data?.products ?? data?.product_list ?? data?.dataList ?? data?.productList ?? data?.result);
   if (Array.isArray(preferred)) return preferred;
   if (data?.product && typeof data.product === 'object' && !Array.isArray(data.product)) {
     return [data.product];
@@ -485,19 +492,31 @@ async function fetchProductById(id) {
   } catch (error) {
     throw permissionDeniedOnProductGet(error);
   }
-  if (process.env.ALIBABA_DEBUG === '1') {
-    const safePayload = payload ? JSON.parse(JSON.stringify(payload, (key, value) => {
+  // Log de diagnostic toujours actif pour déboguer la structure réelle de la réponse Alibaba
+  try {
+    const diagSafe = JSON.parse(JSON.stringify(payload ?? {}, (key, value) => {
       if (/token|secret|sign|app_key/i.test(key)) return '***';
       return value;
-    })) : payload;
-    console.warn('[alibaba] detail raw', id, JSON.stringify(safePayload).slice(0, 3000));
-  }
+    }));
+    const topKeys = Object.keys(diagSafe);
+    const resultNode = diagSafe.result && typeof diagSafe.result === 'object' ? diagSafe.result : {};
+    const innerResult = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
+    console.warn('[alibaba-diag] fetchProductById', id, 'path=' + path,
+      'topKeys=' + JSON.stringify(topKeys),
+      'resultKeys=' + JSON.stringify(Object.keys(resultNode).slice(0, 15)),
+      'innerResultKeys=' + JSON.stringify(Object.keys(innerResult).slice(0, 15)),
+      'innerDataType=' + (Array.isArray(innerResult.data) ? 'array:' + innerResult.data.length : typeof innerResult.data),
+      'summary=' + JSON.stringify(diagSafe).slice(0, 800),
+    );
+  } catch (_e) { /* silent */ }
   const isEnvelope = (node) => Boolean(
     node && typeof node === 'object'
     && !pickOfferId(node)
     && (node.request_id || (node.code != null && node.data !== undefined && node.message != null)),
   );
-  const nested = parseJsonValue(payload?.result?.data ?? payload?.data);
+  const resultNode2 = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+  const innerResult2 = resultNode2.result && typeof resultNode2.result === 'object' ? resultNode2.result : resultNode2;
+  const nested = parseJsonValue(innerResult2.data ?? payload?.result?.data ?? payload?.data);
   let product = unwrapList(payload)[0];
   if (isEnvelope(product)) product = null;
   if (!product) {
@@ -548,7 +567,9 @@ async function hydrateProductIds(ids, size) {
 }
 
 function paginateFromPayload(payload, list, page, size) {
-  const paging = payload?.result?.data?.pagination || payload?.result?.pagination || {};
+  const resultNode3 = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+  const innerResult3 = resultNode3.result && typeof resultNode3.result === 'object' ? resultNode3.result : resultNode3;
+  const paging = innerResult3.pagination || payload?.result?.pagination || {};
   const total = toNumber(
     paging.total_product_count
     ?? paging.total
@@ -622,9 +643,23 @@ async function runBuyerSearch(keyword, page, size) {
     page_size: size,
   });
   assertBuyerResult(payload);
-  if (process.env.ALIBABA_DEBUG === '1') {
-    console.warn('[alibaba] search raw summary', keyword, summarizePayload(payload));
-  }
+  // Log de diagnostic toujours actif
+  try {
+    const diagSafe = JSON.parse(JSON.stringify(payload ?? {}, (key, value) => {
+      if (/token|secret|sign|app_key/i.test(key)) return '***';
+      return value;
+    }));
+    const resultNode = diagSafe.result && typeof diagSafe.result === 'object' ? diagSafe.result : {};
+    const innerResult = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
+    const summary = summarizePayload(payload);
+    console.warn('[alibaba-diag] runBuyerSearch', JSON.stringify(keyword).slice(0, 60), 'page=' + page,
+      'topKeys=' + JSON.stringify(Object.keys(diagSafe).slice(0, 10)),
+      'resultKeys=' + JSON.stringify(Object.keys(resultNode).slice(0, 15)),
+      'innerResultKeys=' + JSON.stringify(Object.keys(innerResult).slice(0, 15)),
+      'innerDataType=' + (Array.isArray(innerResult.data) ? 'array:' + innerResult.data.length : typeof innerResult.data),
+      'summary=' + JSON.stringify(summary),
+    );
+  } catch (_e) { /* silent */ }
   const { ids, items } = listFromSearchPayload(payload);
   const list = ids
     ? await hydrateProductIds(ids, size)
@@ -721,22 +756,54 @@ async function fetchProductKeyAttributes(id) {
   }
 }
 
+async function fetchProductFromCheck(id) {
+  const path = alibabaConfig.productListPath;
+  if (!path || path !== '/eco/buyer/product/check') return null;
+  // TODO: Confirmer avec l'administrateur si /eco/buyer/product/check accepte query_req.product_ids ou un autre paramètre
+  // pour récupérer trade_info (prix, MOQ) par ID directement sans passer par pool_id.
+  try {
+    const payload = await alibabaCall(path, {
+      query_req: {
+        product_ids: [String(id)],
+        product_id_list: [String(id)],
+        country: alibabaConfig.defaultCountry || 'US',
+      },
+    });
+    const items = unwrapList(payload);
+    if (items.length) {
+      const found = items.find((it) => pickOfferId(it) === id) || items[0];
+      return mapPayloadItem(found, id);
+    }
+    return null;
+  } catch (error) {
+    if (process.env.ALIBABA_DEBUG === '1') {
+      console.warn('[alibaba] fetchProductFromCheck notice:', error.message);
+    }
+    return null;
+  }
+}
+
 async function getAlibabaProductDetail(productId) {
   const id = extractProductId(productId) || String(productId || '').trim();
   if (!id) throw keywordRequiredError();
 
-  const [fromGetResult, keyAttrsResult, invResult, searchResult] = await Promise.allSettled([
+  const [fromGetResult, keyAttrsResult, invResult, checkResult, searchResult] = await Promise.allSettled([
     fetchProductById(id),
     fetchProductKeyAttributes(id),
     fetchProductInventory(id),
+    fetchProductFromCheck(id),
     runBuyerSearch(id, 1, 8),
   ]);
 
   const fromGet = fromGetResult.status === 'fulfilled' ? fromGetResult.value : null;
   const keyAttrs = keyAttrsResult.status === 'fulfilled' ? keyAttrsResult.value : null;
   const inv = invResult.status === 'fulfilled' ? invResult.value : null;
+  const fromCheck = checkResult.status === 'fulfilled' ? checkResult.value : null;
   const searched = searchResult.status === 'fulfilled' ? searchResult.value : null;
   const fromSearch = (searched?.products || []).find((item) => item.externalProductId === id) || null;
+
+  // Si /check a répondu avec trade_info/prix, on fusionne /check en primary et /description en secondary
+  const baseFromCheckAndGet = mergeCatalogProduct(fromCheck, fromGet);
 
   // Unpack inventory data & SKU variants
   const invStock = toNumber(
@@ -765,14 +832,15 @@ async function getAlibabaProductDetail(productId) {
   const keyImages = extractImages(keyAttrs || {});
 
   // Best Price
+  const baseProduct = baseFromCheckAndGet || fromGet;
   const skuMinPrice = skuInfos.map((s) => s.price).filter((p) => p > 0).sort((a, b) => a - b)[0] || 0;
-  const price = pickPrice(fromSearch?.supplierPrice)
+  const price = pickPrice(baseProduct?.supplierPrice)
+    || pickPrice(fromSearch?.supplierPrice)
     || skuMinPrice
-    || pickPrice(fromGet?.supplierPrice)
     || pickPrice(inv?.price);
 
   // Best Title / Name
-  const candidateName = fromSearch?.name || keyTitle || fromGet?.name;
+  const candidateName = baseProduct?.name || fromSearch?.name || keyTitle;
   const finalName = !isGenericAlibabaName(candidateName)
     ? candidateName
     : (keyTitle || fromSearch?.name || `Produit Alibaba ${id}`);
