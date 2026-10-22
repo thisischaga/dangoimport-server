@@ -90,7 +90,8 @@ test('buyer catalog uses eco GET paths instead of seller ICBU APIs', () => {
   assert.match(eco.queryUrl, /sign=/);
   assert.match(eco.queryUrl, /param0=/);
   assert.equal(eco.headerHeaders['X-Protocol'], 'GOP');
-  assert.equal(eco.headerHeaders.app_key, undefined);
+  assert.equal(eco.headerHeaders.app_key, alibabaConfig.appKey);
+  assert.equal(eco.headerHeaders.access_token, 'tok');
 });
 
 test('buyer search sends keyword and param0 together', () => {
@@ -184,4 +185,51 @@ test('rejected GOP paths stay blocked', () => {
 
 test('external source key is stable for Alibaba product IDs', () => {
   assert.equal(buildExternalSourceKey('1600123456789'), 'alibaba:1600123456789');
+});
+
+test('unwraps and maps Alibaba Eco Buyer product search payload with nested image object', () => {
+  const ecoPayload = {
+    result: {
+      code: '200',
+      data: {
+        pagination: {
+          current: '1',
+          page_count: '99',
+          page_size: '20',
+          total_product_count: '2000',
+        },
+        products: [
+          {
+            image: {
+              main_image: 'https://s01.alicdn.com/image01.jpg',
+              multi_image: [
+                'https://s01.alicdn.com/image01.jpg',
+                'https://s01.alicdn.com/image02.jpg',
+              ],
+            },
+            price: '99',
+            product_id: '1600398490',
+            permalink: 'https://www.alibaba.com/product-detail/100-Cotton-Men-s-t-shirt_1600736931988.html',
+            title: 'Wireless Bluetooth Earbuds with Charging Case',
+          },
+        ],
+      },
+      message: 'request success',
+    },
+    code: '0',
+    request_id: '0ba2887315178178017221014',
+  };
+
+  const items = unwrapList(ecoPayload);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].product_id, '1600398490');
+
+  const mapped = mapSearchItem(items[0]);
+  assert.equal(mapped.externalProductId, '1600398490');
+  assert.equal(mapped.name, 'Wireless Bluetooth Earbuds with Charging Case');
+  assert.equal(mapped.supplierPrice, 99);
+  assert.equal(mapped.image, 'https://s01.alicdn.com/image01.jpg');
+  assert.equal(mapped.images.length, 2);
+  assert.equal(mapped.images[1].url, 'https://s01.alicdn.com/image02.jpg');
+  assert.equal(mapped.productUrl, 'https://www.alibaba.com/product-detail/100-Cotton-Men-s-t-shirt_1600736931988.html');
 });

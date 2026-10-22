@@ -121,11 +121,21 @@ function logSafeAlibabaError(path, error, style, params) {
 
 function buildEcoGetRequest(apiPath, bizParams = {}, { accessToken } = {}) {
   const built = buildGopRequest(apiPath, bizParams, { accessToken, appendPath: true });
+  const headerHeaders = {
+    'X-Protocol': 'GOP',
+    app_key: String(built.params.app_key || ''),
+    timestamp: String(built.params.timestamp || ''),
+    sign_method: String(built.params.sign_method || 'sha256'),
+    sign: String(built.params.sign || ''),
+  };
+  if (built.params.access_token) {
+    headerHeaders.access_token = String(built.params.access_token);
+  }
   return {
     path: built.path,
     params: built.params,
     queryUrl: `${built.url}?${new URLSearchParams(built.params)}`,
-    headerHeaders: { 'X-Protocol': 'GOP' },
+    headerHeaders,
   };
 }
 

@@ -24,7 +24,10 @@ function asImageUrl(raw, depth = 0) {
   if (typeof raw === 'object') {
     return asImageUrl(
       raw.url || raw.imageUrl || raw.image_url || raw.src || raw.main_url
-      || raw.file_url || raw.pic_url || raw.image || raw.img,
+      || raw.file_url || raw.pic_url || raw.main_image || raw.mainImage
+      || raw.image || raw.img
+      || (Array.isArray(raw.multi_image) ? raw.multi_image[0] : '')
+      || (Array.isArray(raw.images) ? raw.images[0] : ''),
       depth + 1,
     );
   }
@@ -33,6 +36,9 @@ function asImageUrl(raw, depth = 0) {
 
 function firstImage(item = {}) {
   const candidates = [
+    item.image?.main_image,
+    item.image?.mainImage,
+    ...(Array.isArray(item.image?.multi_image) ? item.image.multi_image : []),
     item.main_image_url,
     item.mainImageUrl,
     item.main_image,
@@ -163,6 +169,9 @@ function extractImages(item = {}) {
     urls.push({ url });
   };
   push(firstImage(item));
+  if (item.image?.main_image) push(item.image.main_image);
+  if (item.image?.mainImage) push(item.image.mainImage);
+  if (Array.isArray(item.image?.multi_image)) item.image.multi_image.forEach(push);
   [
     item.image_url_list,
     item.product_images,
@@ -187,7 +196,7 @@ function pickOfferId(item = {}) {
     || item.product_id
     || item.item_id
     || item.itemId
-    ||     item.basic_info?.product_id
+    || item.basic_info?.product_id
     || item.product?.product_id
     || item.product?.productId
     || item.id
@@ -260,22 +269,19 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
   if (!item || typeof item !== 'object') return { productId: fallbackId };
   const basic = item.basic_info || item.product_info?.basic_info || {};
   const trade = item.trade_info || item.product_info?.trade_info || {};
-  const imageUrls = []
-    .concat(basic.product_images || [], item.product_images || [], item.images || [])
-    .map((img) => (typeof img === 'string' ? img : img?.image_url || img?.url))
-    .filter(Boolean);
+  const images = extractImages(item);
   return {
     ...item,
     productId: basic.product_id || item.product_id || item.productId || fallbackId,
-    subject: basic.title || item.subject || item.title || item.product_name || item.productName || item.product_title,
-    title: basic.title || item.title || item.product_name || item.productName || item.product_title,
-    image: imageUrls[0] || item.image,
-    images: imageUrls.length ? imageUrls.map((url) => ({ url })) : item.images,
+    subject: basic.title || item.title || item.subject || item.product_name || item.productName || item.product_title,
+    title: basic.title || item.title || item.subject || item.product_name || item.productName || item.product_title,
+    image: firstImage(item) || images[0]?.url || '',
+    images,
     price: pickPrice(trade.price) || pickPrice(item.price) || pickPrice(item.unit_price),
     currency: pickCurrency({ ...item, price: trade.price || item.price }),
-    image: firstImage(item) || imageUrls[0] || '',
     minOrderQuantity: trade.moq || trade.min_order_quantity || item.minOrderQuantity,
-    description: item.description || basic.description || item.subject,
+    description: item.description || basic.description || item.subject || item.title,
+    productUrl: item.permalink || item.detail_url || item.detailUrl || item.productUrl,
   };
 }
 
@@ -283,19 +289,28 @@ function mapSearchItem(item = {}) {
   const id = pickOfferId(item);
   const basic = item.basic_info || item.product_info?.basic_info || {};
   const trade = item.trade_info || item.product_info?.trade_info || {};
-  const priceNode = trade.price || item.moq_and_price?.moq_unit_price || item.priceInfo || item.referencePrice || item.minPrice || item.min_price || item.unit_price || item.price || item.product_info?.trade_info?.price;
+  const priceNode = trade.price
+    || item.moq_and_price?.moq_unit_price
+    || item.priceInfo
+    || item.referencePrice
+    || item.minPrice
+    || item.min_price
+    || item.unit_price
+    || item.price
+    || item.product_info?.trade_info?.price;
+  const title = basic.title
+    || item.title
+    || item.subject
+    || item.productTitle
+    || item.product_title
+    || item.product_name
+    || item.productName
+    || item.name
+    || basic.product_name
+    || (id ? `Produit Alibaba ${id}` : 'Produit Alibaba');
   return {
     externalProductId: id,
-    name: basic.title
-      || item.subject
-      || item.productTitle
-      || item.product_title
-      || item.product_name
-      || item.productName
-      || item.title
-      || item.name
-      || basic.product_name
-      || `Produit ${id}`,
+    name: title,
     image: firstImage(item),
     images: extractImages(item),
     supplierPrice: pickPrice(priceNode)
@@ -314,7 +329,7 @@ function mapSearchItem(item = {}) {
     ),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
     category: item.leaf_category_name || item.top_category_name || item.categoryName || item.categoryId || '',
-    productUrl: item.detail_url || item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
+    productUrl: item.permalink || item.detail_url || item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
     raw: item,
   };
 }
@@ -449,6 +464,8 @@ async function fetchProductById(id) {
   let payload;
   try {
     payload = await alibabaCall(path, {
+      product_id: String(id),
+      country: alibabaConfig.defaultCountry,
       query_req: {
         product_id: String(id),
         country: alibabaConfig.defaultCountry,
@@ -470,6 +487,9 @@ async function fetchProductById(id) {
       || (nested && typeof nested === 'object' && !Array.isArray(nested) && !Array.isArray(nested.products) ? nested : null)
       || payload?.product
       || null;
+  }
+  if (!product && nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    product = { ...nested, productId: id };
   }
   if (isEnvelope(product) || !product || typeof product !== 'object' || Array.isArray(product)) {
     const err = new Error('Produit Alibaba introuvable pour cet ID.');
@@ -502,7 +522,8 @@ async function hydrateProductIds(ids, size) {
 function paginateFromPayload(payload, list, page, size) {
   const paging = payload?.result?.data?.pagination || payload?.result?.pagination || {};
   const total = toNumber(
-    paging.total
+    paging.total_product_count
+    ?? paging.total
     ?? paging.total_count
     ?? paging.totalCount
     ?? payload?.result?.result_total
@@ -511,13 +532,18 @@ function paginateFromPayload(payload, list, page, size) {
     ?? payload?.totalCount,
     list.length,
   );
+  const totalPages = toNumber(
+    paging.page_count
+    ?? paging.totalPages,
+    Math.max(1, Math.ceil(total / size) || 1),
+  );
   return {
     products: list,
     pagination: {
-      currentPage: page,
-      totalPages: Math.max(1, Math.ceil(total / size) || 1),
+      currentPage: toNumber(paging.current, page),
+      totalPages: Math.max(1, totalPages),
       totalRecords: total,
-      itemsPerPage: size,
+      itemsPerPage: toNumber(paging.page_size, size),
     },
   };
 }
