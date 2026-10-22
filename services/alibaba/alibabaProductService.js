@@ -358,6 +358,12 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     price: pickPrice(priceRaw) || pickPrice(item.price) || pickPrice(item.unit_price),
     currency: pickCurrency({ ...item, ...rd, price: trade.price || rd.price || item.price }),
     minOrderQuantity: moq,
+    stock: toNumber(
+      rd.stock ?? rd.inventory ?? rd.amount_on_sale ?? rd.available_quantity
+      ?? trade.stock ?? wholesaleTrade?.stock ?? wholesaleTrade?.inventory
+      ?? item.stock ?? item.amountOnSale ?? item.inventory,
+      0,
+    ),
     description: rd.description || basic.description || rd.subject || rd.title
       || item.description || item.subject || item.title,
     productUrl: rd.detail_url || rd.permalink || rd.detailUrl || rd.productUrl
@@ -1006,12 +1012,35 @@ async function getAlibabaProductDetail(productId) {
   const invSkus = parseJsonValue(inv?.sku_list ?? inv?.sku_inventory ?? inv?.sku_infos ?? inv?.skus ?? inv?.productSkuInfos);
   const rawSkuList = Array.isArray(invSkus) ? invSkus : (fromGet?.skuInfos || []);
 
+  const productTotalStock = toNumber(
+    invStock || fromGet?.stock || fromSearch?.stock,
+    0,
+  );
+  const targetStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 50);
+  const hasIndividualStock = rawSkuList.some((s) => toNumber(s.amountOnSale ?? s.canBookCount ?? s.stock ?? s.inventory ?? s.quantity, 0) > 0);
+  const fallbackPerSku = Math.max(1, Math.floor(targetStock / (rawSkuList.length || 1)));
+
   const skuInfos = rawSkuList.map((sku, index) => {
     // Nom du SKU : construit depuis sku_attr_list (format result_data.skus) ou nom direct
     let skuName = sku.skuName || sku.sku_name || sku.name || sku.specName || '';
     if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
       skuName = sku.sku_attr_list
-        .map((attr) => `${attr.attr_name_desc || ''}: ${attr.attr_value_desc || ''}`.trim())
+        .map((attr) => {
+          let nameDesc = (attr.attr_name_desc || '').trim();
+          if (/^color$/i.test(nameDesc)) nameDesc = 'Couleur';
+          else if (/^size$/i.test(nameDesc)) nameDesc = 'Taille';
+          else if (/^eur size$/i.test(nameDesc)) nameDesc = 'Pointure';
+          let valDesc = (attr.attr_value_desc || '').trim();
+          const lowerVal = valDesc.toLowerCase();
+          const colorMap = {
+            black: 'Noir', white: 'Blanc', red: 'Rouge', blue: 'Bleu', green: 'Vert',
+            yellow: 'Jaune', orange: 'Orange', purple: 'Violet', pink: 'Rose', grey: 'Gris',
+            gray: 'Gris', brown: 'Marron', khaki: 'Kaki', beige: 'Beige', navy: 'Bleu marine',
+            'dark blue': 'Bleu foncé', 'light blue': 'Bleu ciel', 'army green': 'Vert armée',
+          };
+          if (colorMap[lowerVal]) valDesc = colorMap[lowerVal];
+          return `${nameDesc}: ${valDesc}`.trim();
+        })
         .filter(Boolean)
         .join(' / ');
     }
@@ -1023,9 +1052,9 @@ async function getAlibabaProductDetail(productId) {
     // Devise : depuis ladder_price[0].currency ou sku.currency
     const skuCurrency = (ladderPrice?.[0]?.currency) || sku.currency || 'USD';
     const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
-    const skuStock = rawStock > 0
-      ? rawStock
-      : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? (alibabaConfig.defaultPublicStock || 50) : 0);
+    const skuStock = hasIndividualStock
+      ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
+      : fallbackPerSku;
     return {
       skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
       name: skuName,
@@ -1036,8 +1065,9 @@ async function getAlibabaProductDetail(productId) {
     };
   });
 
-  const skuStockTotal = skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0);
-  const finalStock = skuStockTotal || invStock || fromGet?.stock || fromSearch?.stock || alibabaConfig.defaultPublicStock;
+  const finalStock = hasIndividualStock
+    ? skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0)
+    : targetStock;
 
   // Key attributes
   const keyTitle = keyAttrs?.title || keyAttrs?.subject || keyAttrs?.product_name || keyAttrs?.product_title;
@@ -1088,10 +1118,29 @@ async function getAlibabaProductDetail(productId) {
     minOrderQuantity: fromSearch?.minOrderQuantity || fromGet?.minOrderQuantity || 1,
   });
 
+  const cleanedDescription = (() => {
+    const rawDesc = fromGet?.description || '';
+    if (!rawDesc || typeof rawDesc !== 'string') return finalName;
+    let text = rawDesc;
+    text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+    text = text.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+    text = text.replace(/#detail_decorate_root[^{]*\{[^}]*\}/gi, ' ');
+    text = text.replace(/@media[^{]*\{[^{}]*\{[^}]*\}[^}]*\}/gi, ' ');
+    text = text.replace(/([#\.\w\-\s,>:+*]+)\{[^}]*\}/g, ' ');
+    text = text.replace(/<[^>]+>/g, ' ');
+    text = text.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;/gi, "'").replace(/&quot;/gi, '"');
+    text = text.replace(/\s+/g, ' ').trim();
+    if (text.length < 25 || /^([#\.\w\-\s,>:+*]+;)+$/.test(text) || text.startsWith('#detail_decorate_root')) {
+      const specText = specifications.slice(0, 6).map((s) => `${s.key}: ${s.value}`).join(' · ');
+      return specText ? `${finalName}. ${specText}.` : finalName;
+    }
+    return text.slice(0, 4000);
+  })();
+
   const merged = {
     externalProductId: id,
     name: finalName,
-    description: fromGet?.description || '',
+    description: cleanedDescription,
     category: keyCategory || fromSearch?.category || fromGet?.category || 'Général',
     weight: keyWeight != null ? String(keyWeight) : (fromGet?.weight || ''),
     image: finalImage,

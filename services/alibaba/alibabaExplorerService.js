@@ -3,10 +3,9 @@ const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
 const { searchAlibabaProducts, getAlibabaProductDetail } = require('./alibabaProductService');
 const { calculateImportPricing } = require('../../utils/importPricing');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
-const { convertUsdPriceToXof } = require('../../utils/cjCatalogHelpers');
 const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const { findExistingAlibabaProduct, upsertAlibabaProduct } = require('./alibabaImportService');
-const { buildExternalSourceKey } = require('./alibabaMapper');
+const { buildExternalSourceKey, mapAlibabaCategoryToDangoStore, convertUsdPriceToXof } = require('./alibabaMapper');
 
 async function mapImportedStatus(ids = []) {
   const list = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
@@ -89,20 +88,28 @@ async function getAlibabaProductForAdmin(pid) {
   const existing = await findExistingAlibabaProduct(detail.externalProductId);
   const currency = String(detail.currency || 'USD').toUpperCase();
 
-  const variants = (detail.skuInfos || []).map((sku, index) => {
+  const totalStock = detail.stock || alibabaConfig.defaultPublicStock;
+  const skuList = detail.skuInfos || [];
+  const hasPerSkuStock = skuList.some((s) => toNumber(s.stock, 0) > 0 && s.stock !== alibabaConfig.defaultPublicStock);
+  const perVariantStock = Math.max(1, Math.floor(totalStock / (skuList.length || 1)));
+
+  const variants = skuList.map((sku, index) => {
     const variantCurrency = String(sku.currency || currency).toUpperCase();
     const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
+    const rawStock = toNumber(sku.stock ?? sku.amountOnSale ?? sku.canBookCount, 0);
+    const variantStock = hasPerSkuStock ? (rawStock > 0 ? rawStock : perVariantStock) : perVariantStock;
     return {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
       name: sku.name || sku.skuName || sku.sku_name || `Variante ${index + 1}`,
       sku: sku.skuId || sku.sku_id || '',
       supplierPriceCny: variantCurrency === 'CNY' ? price : null,
       supplierPriceUsd: toUsd(price, variantCurrency),
-      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock, 0) || alibabaConfig.defaultPublicStock,
+      stock: variantStock,
       image: sku.skuImageUrl || sku.image || '',
     };
   });
 
+  const category = mapAlibabaCategoryToDangoStore(detail.category, detail.name);
   const supplierPriceUsd = toUsd(detail.supplierPrice, currency);
   const images = (detail.images && detail.images.length)
     ? detail.images
@@ -115,7 +122,7 @@ async function getAlibabaProductForAdmin(pid) {
       supplierPriceUsd,
       weight: detail.weight,
       name: detail.name,
-      category: detail.category,
+      category,
     });
   } catch (error) {
     // L'aperçu prix ne doit jamais bloquer l'affichage du produit.
@@ -126,8 +133,8 @@ async function getAlibabaProductForAdmin(pid) {
     externalProductId: detail.externalProductId,
     source: alibabaConfig.platformKey,
     name: detail.name,
-    description: String(detail.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 4000),
-    category: detail.category,
+    description: String(detail.description || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
+    category,
     image: detail.image || images[0]?.url || '',
     images,
     supplierPrice: detail.supplierPrice,
