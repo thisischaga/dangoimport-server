@@ -81,6 +81,14 @@ function classifyAlibabaError(error) {
       message: message || 'Invalid app Key',
     };
   }
+  if (error?.code === 'PRODUCT_DATA_INCOMPLETE' || error?.status === 422) {
+    return {
+      code: error.code || 'PRODUCT_DATA_INCOMPLETE',
+      alibaba: false,
+      status: error.status || 422,
+      message,
+    };
+  }
   if (error?.code === 'PRODUCT_ID_REQUIRED' || error?.status === 400) {
     return {
       code: error.code || 'BAD_REQUEST',
