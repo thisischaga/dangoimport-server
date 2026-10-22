@@ -112,6 +112,12 @@ function pickPrice(value, depth = 0) {
     const nums = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/g);
     return nums ? sanePrice(Number(nums[0])) : 0;
   }
+  if (Array.isArray(value)) {
+    const prices = value
+      .map((item) => pickPrice(item, depth + 1))
+      .filter((p) => p > 0);
+    return prices.length ? Math.min(...prices) : 0;
+  }
   if (typeof value === 'object') {
     const candidates = [
       value.min_price,
@@ -123,6 +129,11 @@ function pickPrice(value, depth = 0) {
       value.sale_price,
       value.unit_price,
       value.fob_price,
+      value.ladder_price,
+      value.ladderPrice,
+      value.price_list,
+      value.priceList,
+      value.tiers,
       value.range_price?.min_price,
       value.range_price,
       value.product_info?.trade_info?.price,
@@ -474,6 +485,13 @@ async function fetchProductById(id) {
   } catch (error) {
     throw permissionDeniedOnProductGet(error);
   }
+  if (process.env.ALIBABA_DEBUG === '1') {
+    const safePayload = payload ? JSON.parse(JSON.stringify(payload, (key, value) => {
+      if (/token|secret|sign|app_key/i.test(key)) return '***';
+      return value;
+    })) : payload;
+    console.warn('[alibaba] detail raw', id, JSON.stringify(safePayload).slice(0, 3000));
+  }
   const isEnvelope = (node) => Boolean(
     node && typeof node === 'object'
     && !pickOfferId(node)
@@ -489,7 +507,17 @@ async function fetchProductById(id) {
       || null;
   }
   if (!product && nested && typeof nested === 'object' && !Array.isArray(nested)) {
-    product = { ...nested, productId: id };
+    const hasUsableData = Boolean(
+      nested.basic_info
+      || nested.trade_info
+      || nested.product_info
+      || nested.title
+      || nested.subject
+      || nested.description
+    );
+    if (hasUsableData) {
+      product = { ...nested, productId: id };
+    }
   }
   if (isEnvelope(product) || !product || typeof product !== 'object' || Array.isArray(product)) {
     const err = new Error('Produit Alibaba introuvable pour cet ID.');
@@ -594,6 +622,9 @@ async function runBuyerSearch(keyword, page, size) {
     page_size: size,
   });
   assertBuyerResult(payload);
+  if (process.env.ALIBABA_DEBUG === '1') {
+    console.warn('[alibaba] search raw summary', keyword, summarizePayload(payload));
+  }
   const { ids, items } = listFromSearchPayload(payload);
   const list = ids
     ? await hydrateProductIds(ids, size)
@@ -619,9 +650,7 @@ async function searchAlibabaProducts(params = {}) {
     let fromSearch = null;
     try {
       const searched = await runBuyerSearch(productId, 1, size);
-      fromSearch = (searched.products || []).find((item) => item.externalProductId === productId)
-        || (searched.products || [])[0]
-        || null;
+      fromSearch = (searched.products || []).find((item) => item.externalProductId === productId) || null;
     } catch {
       fromSearch = null;
     }
@@ -707,9 +736,7 @@ async function getAlibabaProductDetail(productId) {
   const keyAttrs = keyAttrsResult.status === 'fulfilled' ? keyAttrsResult.value : null;
   const inv = invResult.status === 'fulfilled' ? invResult.value : null;
   const searched = searchResult.status === 'fulfilled' ? searchResult.value : null;
-  const fromSearch = (searched?.products || []).find((item) => item.externalProductId === id)
-    || (searched?.products || [])[0]
-    || null;
+  const fromSearch = (searched?.products || []).find((item) => item.externalProductId === id) || null;
 
   // Unpack inventory data & SKU variants
   const invStock = toNumber(
