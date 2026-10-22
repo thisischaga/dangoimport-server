@@ -44,9 +44,12 @@ function extractCjImages(cjProduct = {}, detail = null) {
 }
 
 function stripHtml(value) {
-  return String(value || '')
+  let text = String(value || '')
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/#detail_decorate_root[^{]*\{[^}]*\}/gi, ' ')
+    .replace(/@media[^{]*\{[^{}]*\{[^}]*\}[^}]*\}/gi, ' ')
+    .replace(/([#\.\w\-\s,>:+*]+)\{[^}]*\}/g, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -56,6 +59,11 @@ function stripHtml(value) {
     .replace(/&quot;/gi, '"')
     .replace(/\s+/g, ' ')
     .trim();
+
+  if (text.startsWith('#detail_decorate_root') || /^([#\.\w\-\s,>:+*]+;)+$/.test(text)) {
+    return '';
+  }
+  return text;
 }
 
 function parseCjLocalizedName(value) {

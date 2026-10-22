@@ -359,9 +359,11 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     currency: pickCurrency({ ...item, ...rd, price: trade.price || rd.price || item.price }),
     minOrderQuantity: moq,
     stock: toNumber(
-      rd.stock ?? rd.inventory ?? rd.amount_on_sale ?? rd.available_quantity
-      ?? trade.stock ?? wholesaleTrade?.stock ?? wholesaleTrade?.inventory
-      ?? item.stock ?? item.amountOnSale ?? item.inventory,
+      rd.amount_on_sale ?? rd.amountOnSale ?? rd.can_book_count ?? rd.canBookCount
+      ?? rd.available_quantity ?? rd.availableQuantity ?? rd.inventory ?? rd.stock
+      ?? trade.amount_on_sale ?? trade.can_book_count ?? trade.stock ?? trade.inventory
+      ?? wholesaleTrade?.amount_on_sale ?? wholesaleTrade?.can_book_count ?? wholesaleTrade?.available_quantity ?? wholesaleTrade?.stock ?? wholesaleTrade?.inventory
+      ?? item.amount_on_sale ?? item.amountOnSale ?? item.can_book_count ?? item.canBookCount ?? item.stock ?? item.inventory,
       0,
     ),
     description: rd.description || basic.description || rd.subject || rd.title
@@ -1006,18 +1008,26 @@ async function getAlibabaProductDetail(productId) {
 
   // Unpack inventory data & SKU variants
   const invStock = toNumber(
-    inv?.amountOnSale ?? inv?.inventory ?? inv?.stock ?? inv?.total_stock ?? inv?.total_inventory,
+    inv?.amount_on_sale ?? inv?.amountOnSale ?? inv?.can_book_count ?? inv?.canBookCount
+    ?? inv?.available_quantity ?? inv?.inventory ?? inv?.stock ?? inv?.total_stock ?? inv?.total_inventory,
     0,
   );
   const invSkus = parseJsonValue(inv?.sku_list ?? inv?.sku_inventory ?? inv?.sku_infos ?? inv?.skus ?? inv?.productSkuInfos);
   const rawSkuList = Array.isArray(invSkus) ? invSkus : (fromGet?.skuInfos || []);
 
+  const extractSkuStock = (s) => toNumber(
+    s?.amount_on_sale ?? s?.amountOnSale ?? s?.can_book_count ?? s?.canBookCount
+    ?? s?.available_quantity ?? s?.availableQuantity ?? s?.inventory_quantity
+    ?? s?.stock ?? s?.inventory ?? s?.quantity,
+    0,
+  );
+
   const productTotalStock = toNumber(
     invStock || fromGet?.stock || fromSearch?.stock,
     0,
   );
+  const hasIndividualStock = rawSkuList.some((s) => extractSkuStock(s) > 0);
   const targetStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 50);
-  const hasIndividualStock = rawSkuList.some((s) => toNumber(s.amountOnSale ?? s.canBookCount ?? s.stock ?? s.inventory ?? s.quantity, 0) > 0);
   const fallbackPerSku = Math.max(1, Math.floor(targetStock / (rawSkuList.length || 1)));
 
   const skuInfos = rawSkuList.map((sku, index) => {
@@ -1026,11 +1036,11 @@ async function getAlibabaProductDetail(productId) {
     if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
       skuName = sku.sku_attr_list
         .map((attr) => {
-          let nameDesc = (attr.attr_name_desc || '').trim();
+          let nameDesc = (attr.attr_name_desc || attr.attr_name || '').trim();
           if (/^color$/i.test(nameDesc)) nameDesc = 'Couleur';
           else if (/^size$/i.test(nameDesc)) nameDesc = 'Taille';
           else if (/^eur size$/i.test(nameDesc)) nameDesc = 'Pointure';
-          let valDesc = (attr.attr_value_desc || '').trim();
+          let valDesc = (attr.attr_value_desc || attr.attr_value || '').trim();
           const lowerVal = valDesc.toLowerCase();
           const colorMap = {
             black: 'Noir', white: 'Blanc', red: 'Rouge', blue: 'Bleu', green: 'Vert',
@@ -1051,7 +1061,7 @@ async function getAlibabaProductDetail(productId) {
       || pickPrice(ladderPrice);
     // Devise : depuis ladder_price[0].currency ou sku.currency
     const skuCurrency = (ladderPrice?.[0]?.currency) || sku.currency || 'USD';
-    const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
+    const rawStock = extractSkuStock(sku);
     const skuStock = hasIndividualStock
       ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
       : fallbackPerSku;
