@@ -516,6 +516,8 @@ function mapPayloadItem(item, fallbackId) {
   const mapped = mapSearchItem({ ...flat, offerId: pickOfferId(flat) || fallbackId });
   return {
     ...mapped,
+    // mapSearchItem écrase category avec ses propres clés ; on restaure celle de flattenBuyerProduct
+    category: flat.category || mapped.category || '',
     description: flat.description || '',
     weight: flat.productShippingInfo?.weight || flat.weight || flat.netWeight || flat.logistics_info?.weight,
     skuInfos: flat.skuInfos || flat.skuList || flat.productSkuInfos || flat.product_sku_list || flat.sku_info || [],
