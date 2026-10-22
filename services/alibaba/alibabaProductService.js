@@ -190,8 +190,9 @@ function extractImages(item = {}) {
     item.mainImage?.images,
     item.imageList,
     item.productImageList,
-    item.images,
+    item.images,            // peut être string[] ou object[]
     item.basic_info?.product_images,
+    item.result_data?.images, // /eco/buyer/product/description
   ].forEach((list) => {
     if (Array.isArray(list)) list.forEach(push);
   });
@@ -240,14 +241,28 @@ function isOkBuyerCode(code) {
 function summarizePayload(payload) {
   const root = payload && typeof payload === 'object' ? payload : {};
   const resultNode = root.result && typeof root.result === 'object' ? root.result : {};
+  // /eco/buyer/product/description utilise result.result_data
+  if (resultNode.result_data && typeof resultNode.result_data === 'object') {
+    const rd = resultNode.result_data;
+    return {
+      keys: Object.keys(root).filter((key) => !/token|secret|sign/i.test(key)).slice(0, 20),
+      resultKeys: Object.keys(resultNode).slice(0, 20),
+      resultCode: resultNode.result_code,
+      resultMessage: resultNode.result_msg || '',
+      dataType: 'result_data',
+      dataKeys: Object.keys(rd).slice(0, 25),
+      productCount: Array.isArray(rd.skus) ? rd.skus.length : null,
+      productKeys: Array.isArray(rd.skus) && rd.skus[0] ? Object.keys(rd.skus[0]).slice(0, 15) : [],
+    };
+  }
   // Les endpoints /eco/buyer/* peuvent encapsuler dans result.result.data
   const inner = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
   const data = parseJsonValue(inner.data ?? root.data);
   return {
     keys: Object.keys(root).filter((key) => !/token|secret|sign/i.test(key)).slice(0, 20),
     resultKeys: Object.keys(inner).slice(0, 20),
-    resultCode: inner.code,
-    resultMessage: inner.message || inner.msg || '',
+    resultCode: inner.code || inner.result_code,
+    resultMessage: inner.message || inner.msg || inner.result_msg || '',
     dataType: Array.isArray(data) ? `array:${data.length}` : typeof data,
     dataKeys: data && typeof data === 'object' && !Array.isArray(data)
       ? Object.keys(data).slice(0, 20)
@@ -280,21 +295,36 @@ function assertBuyerResult(payload) {
 
 function flattenBuyerProduct(item = {}, fallbackId = '') {
   if (!item || typeof item !== 'object') return { productId: fallbackId };
-  const basic = item.basic_info || item.product_info?.basic_info || {};
-  const trade = item.trade_info || item.product_info?.trade_info || {};
-  const images = extractImages(item);
+  // /eco/buyer/product/description place les données dans result_data directement
+  const rd = item.result_data && typeof item.result_data === 'object' ? item.result_data : item;
+  const basic = rd.basic_info || rd.product_info?.basic_info || item.basic_info || item.product_info?.basic_info || {};
+  const trade = rd.trade_info || rd.product_info?.trade_info || item.trade_info || item.product_info?.trade_info || {};
+  // skus depuis result_data (format /eco/buyer/product/description)
+  const rdSkus = Array.isArray(rd.skus) ? rd.skus : [];
+  const images = extractImages({ ...item, ...rd });
+  const titleFields = [
+    basic.title, rd.title, rd.subject, rd.product_name, rd.productName, rd.product_title,
+    item.title, item.subject, item.product_name, item.productName, item.product_title,
+  ];
+  const title = titleFields.find((t) => t && String(t).trim()) || '';
   return {
     ...item,
-    productId: basic.product_id || item.product_id || item.productId || fallbackId,
-    subject: basic.title || item.title || item.subject || item.product_name || item.productName || item.product_title,
-    title: basic.title || item.title || item.subject || item.product_name || item.productName || item.product_title,
-    image: firstImage(item) || images[0]?.url || '',
+    ...rd,
+    productId: basic.product_id || rd.product_id || rd.productId || item.product_id || item.productId || fallbackId,
+    subject: title,
+    title,
+    image: firstImage({ ...item, ...rd }) || images[0]?.url || '',
     images,
-    price: pickPrice(trade.price) || pickPrice(item.price) || pickPrice(item.unit_price),
-    currency: pickCurrency({ ...item, price: trade.price || item.price }),
-    minOrderQuantity: trade.moq || trade.min_order_quantity || item.minOrderQuantity,
-    description: item.description || basic.description || item.subject || item.title,
-    productUrl: item.permalink || item.detail_url || item.detailUrl || item.productUrl,
+    price: pickPrice(trade.price) || pickPrice(rd.price) || pickPrice(rd.unit_price)
+      || pickPrice(item.price) || pickPrice(item.unit_price),
+    currency: pickCurrency({ ...item, ...rd, price: trade.price || rd.price || item.price }),
+    minOrderQuantity: trade.moq || trade.min_order_quantity || rd.minOrderQuantity || item.minOrderQuantity,
+    description: rd.description || basic.description || rd.subject || rd.title
+      || item.description || item.subject || item.title,
+    productUrl: rd.detail_url || rd.permalink || rd.detailUrl || rd.productUrl
+      || item.detail_url || item.permalink || item.detailUrl || item.productUrl,
+    // skuInfos from result_data.skus
+    skuInfos: rdSkus.length ? rdSkus : (item.skuInfos || item.skuList || item.productSkuInfos || item.product_sku_list || item.sku_info || []),
   };
 }
 
@@ -352,11 +382,16 @@ function unwrapList(payload) {
   if (root == null) return [];
   if (Array.isArray(root)) return root;
   if (typeof root !== 'object') return [];
-  // Les endpoints /eco/buyer/* ont souvent result.result.data (double nesting)
   const resultNode = root.result && typeof root.result === 'object' ? root.result : {};
+  // /eco/buyer/product/description : données dans result.result_data (objet produit unique)
+  if (resultNode.result_data && typeof resultNode.result_data === 'object' && !Array.isArray(resultNode.result_data)) {
+    const rd = resultNode.result_data;
+    // Injecter result_data dans un objet porteur pour que flattenBuyerProduct le détecte
+    return [{ result_data: rd, ...rd }];
+  }
+  // Autres /eco/buyer/* : result.result.data (double nesting) ou result.data
   const innerResult = resultNode.result && typeof resultNode.result === 'object' ? resultNode.result : resultNode;
   const data = parseJsonValue(innerResult.data ?? root.result?.data ?? root.data);
-  // Si data est directement un array (ex: result.result.data = "[{...}]" parsé), le retourner directement
   if (Array.isArray(data)) return data;
   const preferred = parseJsonValue(data?.products ?? data?.product_list ?? data?.dataList ?? data?.productList ?? data?.result);
   if (Array.isArray(preferred)) return preferred;
@@ -506,7 +541,8 @@ async function fetchProductById(id) {
       'resultKeys=' + JSON.stringify(Object.keys(resultNode).slice(0, 15)),
       'innerResultKeys=' + JSON.stringify(Object.keys(innerResult).slice(0, 15)),
       'innerDataType=' + (Array.isArray(innerResult.data) ? 'array:' + innerResult.data.length : typeof innerResult.data),
-      'summary=' + JSON.stringify(diagSafe).slice(0, 800),
+      'resultDataKeys=' + JSON.stringify(Object.keys(resultNode.result_data || {}).slice(0, 20)),
+      'summary=' + JSON.stringify(diagSafe).slice(0, 2000),
     );
   } catch (_e) { /* silent */ }
   const isEnvelope = (node) => Boolean(
@@ -515,8 +551,13 @@ async function fetchProductById(id) {
     && (node.request_id || (node.code != null && node.data !== undefined && node.message != null)),
   );
   const resultNode2 = payload?.result && typeof payload.result === 'object' ? payload.result : {};
-  const innerResult2 = resultNode2.result && typeof resultNode2.result === 'object' ? resultNode2.result : resultNode2;
-  const nested = parseJsonValue(innerResult2.data ?? payload?.result?.data ?? payload?.data);
+  // /eco/buyer/product/description : result.result_data
+  const nested = resultNode2.result_data && typeof resultNode2.result_data === 'object'
+    ? { result_data: resultNode2.result_data, ...resultNode2.result_data }
+    : parseJsonValue(
+        (resultNode2.result && typeof resultNode2.result === 'object' ? resultNode2.result : resultNode2).data
+        ?? payload?.result?.data ?? payload?.data,
+      );
   let product = unwrapList(payload)[0];
   if (isEnvelope(product)) product = null;
   if (!product) {
@@ -733,10 +774,18 @@ async function searchAlibabaProducts(params = {}) {
 async function fetchProductInventory(id) {
   try {
     const payload = await alibabaCall('/eco/buyer/product/inventory', {
-      product_id: String(id),
-      country: alibabaConfig.defaultCountry || 'US',
+      inv_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry || 'US',
+      },
     });
-    return parseJsonValue(payload?.result?.data ?? payload?.data);
+    const resultNode = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+    const data = parseJsonValue(
+      resultNode.result_data ?? resultNode.data
+      ?? ((resultNode.result && typeof resultNode.result === 'object') ? resultNode.result.data : undefined)
+      ?? payload?.data,
+    );
+    return data;
   } catch (error) {
     console.warn('[alibaba] fetchProductInventory notice:', error.message);
     return null;
@@ -746,10 +795,18 @@ async function fetchProductInventory(id) {
 async function fetchProductKeyAttributes(id) {
   try {
     const payload = await alibabaCall('/eco/buyer/product/keyattributes', {
-      product_id: String(id),
-      country: alibabaConfig.defaultCountry || 'US',
+      query_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry || 'US',
+      },
     });
-    return parseJsonValue(payload?.result?.data ?? payload?.data);
+    const resultNode = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+    const data = parseJsonValue(
+      resultNode.result_data ?? resultNode.data
+      ?? ((resultNode.result && typeof resultNode.result === 'object') ? resultNode.result.data : undefined)
+      ?? payload?.data,
+    );
+    return data;
   } catch (error) {
     console.warn('[alibaba] fetchProductKeyAttributes notice:', error.message);
     return null;
@@ -759,14 +816,14 @@ async function fetchProductKeyAttributes(id) {
 async function fetchProductFromCheck(id) {
   const path = alibabaConfig.productListPath;
   if (!path || path !== '/eco/buyer/product/check') return null;
-  // TODO: Confirmer avec l'administrateur si /eco/buyer/product/check accepte query_req.product_ids ou un autre paramètre
-  // pour récupérer trade_info (prix, MOQ) par ID directement sans passer par pool_id.
   try {
     const payload = await alibabaCall(path, {
       query_req: {
         product_ids: [String(id)],
         product_id_list: [String(id)],
         country: alibabaConfig.defaultCountry || 'US',
+        index: 1,
+        page_size: 20,
       },
     });
     const items = unwrapList(payload);
@@ -776,9 +833,7 @@ async function fetchProductFromCheck(id) {
     }
     return null;
   } catch (error) {
-    if (process.env.ALIBABA_DEBUG === '1') {
-      console.warn('[alibaba] fetchProductFromCheck notice:', error.message);
-    }
+    console.warn('[alibaba] fetchProductFromCheck notice:', error.message);
     return null;
   }
 }
