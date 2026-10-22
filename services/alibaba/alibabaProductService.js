@@ -307,6 +307,18 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     item.title, item.subject, item.product_name, item.productName, item.product_title,
   ];
   const title = titleFields.find((t) => t && String(t).trim()) || '';
+  // Prix : trade_info > wholesale_trade > premier ladder_price de skus > price direct
+  const wholesaleTrade = rd.wholesale_trade && typeof rd.wholesale_trade === 'object' ? rd.wholesale_trade : null;
+  const firstSkuLadderPrice = rdSkus.length && Array.isArray(rdSkus[0].ladder_price) ? rdSkus[0].ladder_price : null;
+  const priceRaw = trade.price || wholesaleTrade?.price || wholesaleTrade?.unit_price
+    || rd.price || rd.unit_price || firstSkuLadderPrice || item.price || item.unit_price;
+  // MOQ : min_order_quantity de result_data ou wholesale_trade
+  const moq = trade.moq || trade.min_order_quantity
+    || rd.min_order_quantity || wholesaleTrade?.moq || wholesaleTrade?.min_order_quantity
+    || item.minOrderQuantity;
+  // Catégorie : result_data.category peut être string ou object
+  const categoryRaw = rd.category || rd.leaf_category_name || rd.category_name || item.leaf_category_name || item.top_category_name;
+  const category = categoryRaw && typeof categoryRaw === 'string' ? categoryRaw : (categoryRaw?.name || categoryRaw?.category_name || '');
   return {
     ...item,
     ...rd,
@@ -315,14 +327,14 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     title,
     image: firstImage({ ...item, ...rd }) || images[0]?.url || '',
     images,
-    price: pickPrice(trade.price) || pickPrice(rd.price) || pickPrice(rd.unit_price)
-      || pickPrice(item.price) || pickPrice(item.unit_price),
+    price: pickPrice(priceRaw) || pickPrice(item.price) || pickPrice(item.unit_price),
     currency: pickCurrency({ ...item, ...rd, price: trade.price || rd.price || item.price }),
-    minOrderQuantity: trade.moq || trade.min_order_quantity || rd.minOrderQuantity || item.minOrderQuantity,
+    minOrderQuantity: moq,
     description: rd.description || basic.description || rd.subject || rd.title
       || item.description || item.subject || item.title,
     productUrl: rd.detail_url || rd.permalink || rd.detailUrl || rd.productUrl
       || item.detail_url || item.permalink || item.detailUrl || item.productUrl,
+    category,
     // skuInfos from result_data.skus
     skuInfos: rdSkus.length ? rdSkus : (item.skuInfos || item.skuList || item.productSkuInfos || item.product_sku_list || item.sku_info || []),
   };
@@ -823,6 +835,7 @@ async function fetchProductFromCheck(id) {
         product_id_list: [String(id)],
         country: alibabaConfig.defaultCountry || 'US',
         index: 1,
+        size: 20,
         page_size: 20,
       },
     });
@@ -868,14 +881,31 @@ async function getAlibabaProductDetail(productId) {
   const invSkus = parseJsonValue(inv?.sku_list ?? inv?.sku_inventory ?? inv?.sku_infos ?? inv?.skus ?? inv?.productSkuInfos);
   const rawSkuList = Array.isArray(invSkus) ? invSkus : (fromGet?.skuInfos || []);
 
-  const skuInfos = rawSkuList.map((sku, index) => ({
-    skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
-    name: sku.skuName || sku.sku_name || sku.name || sku.specName || `Variante ${index + 1}`,
-    price: pickPrice(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price || sku.retailPrice),
-    stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
-    image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
-    currency: pickCurrency(sku),
-  }));
+  const skuInfos = rawSkuList.map((sku, index) => {
+    // Nom du SKU : construit depuis sku_attr_list (format result_data.skus) ou nom direct
+    let skuName = sku.skuName || sku.sku_name || sku.name || sku.specName || '';
+    if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
+      skuName = sku.sku_attr_list
+        .map((attr) => `${attr.attr_name_desc || ''}: ${attr.attr_value_desc || ''}`.trim())
+        .filter(Boolean)
+        .join(' / ');
+    }
+    if (!skuName) skuName = `Variante ${index + 1}`;
+    // Prix : ladder_price (tiered) > price direct
+    const ladderPrice = Array.isArray(sku.ladder_price) ? sku.ladder_price : null;
+    const skuPrice = pickPrice(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price || sku.retailPrice)
+      || pickPrice(ladderPrice);
+    // Devise : depuis ladder_price[0].currency ou sku.currency
+    const skuCurrency = (ladderPrice?.[0]?.currency) || sku.currency || 'USD';
+    return {
+      skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
+      name: skuName,
+      price: skuPrice,
+      stock: toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0),
+      image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
+      currency: skuCurrency,
+    };
+  });
 
   const skuStockTotal = skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0);
   const finalStock = skuStockTotal || invStock || fromGet?.stock || fromSearch?.stock || alibabaConfig.defaultPublicStock;
