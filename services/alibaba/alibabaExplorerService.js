@@ -75,8 +75,8 @@ async function searchAlibabaForAdmin(params = {}) {
     products: (result.products || []).map(({ raw, skuInfos, ...p }) => ({
       ...p,
       supplierPriceUsd: toUsd(p.supplierPrice, p.currency),
-      // L'API search ne renvoie pas de stock → appliquer le stock public par défaut
-      stock: p.stock || alibabaConfig.defaultPublicStock,
+      // Si l'API search ne renvoie pas de stock unitaire explicite, laisser null (affiché 'Sur commande')
+      stock: (p.stock && p.stock > 0) ? p.stock : null,
       imported: imported[p.externalProductId] || null,
     })),
     pagination: result.pagination,

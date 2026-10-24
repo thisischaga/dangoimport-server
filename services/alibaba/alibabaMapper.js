@@ -71,17 +71,18 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
     return buildFallbackDescription(title, specifications);
   }
   let text = raw;
-  // 1. Supprimer le contenu CSS complet dans les balises <style>
+  // 1. Supprimer le contenu CSS complet dans les balises <style> et <script>
   text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
-  // 2. Supprimer les balises <script>
   text = text.replace(/<script[\s\S]*?<\/script>/gi, ' ');
-  // 3. Supprimer tout reste de règle CSS (ex: #detail_decorate_root ... { ... })
-  text = text.replace(/#detail_decorate_root[^{]*\{[^}]*\}/gi, ' ');
-  text = text.replace(/@media[^{]*\{[^{}]*\{[^}]*\}[^}]*\}/gi, ' ');
-  text = text.replace(/([#\.\w\-\s,>:+*]+)\{[^}]*\}/g, ' ');
-  // 4. Supprimer les balises HTML restantes
+  // 2. Supprimer les blocs de style CSS Alibaba (#detail_decorate_root, @media, classes magic)
+  text = text.replace(/#detail_decorate_root[\s\S]*?\{[\s\S]*?\}/gi, ' ');
+  text = text.replace(/@media[\s\S]*?\{[\s\S]*?\}/gi, ' ');
+  text = text.replace(/\{[^{}]*\}/g, ' ');
+  text = text.replace(/#detail_decorate_root[^\s;{}]*/gi, ' ');
+  text = text.replace(/\.magic-\d+[^\s;{}]*/gi, ' ');
+  // 3. Supprimer les balises HTML restantes
   text = text.replace(/<[^>]+>/g, ' ');
-  // 5. Décoder les entités HTML
+  // 4. Décoder les entités HTML
   text = text
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -89,10 +90,17 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
     .replace(/&gt;/gi, '>')
     .replace(/&#39;/gi, "'")
     .replace(/&quot;/gi, '"');
-  // 6. Nettoyer les espaces multiples
+  // 5. Nettoyer les espaces multiples
   text = text.replace(/\s+/g, ' ').trim();
-  // 7. Si le texte résultant est vide ou est un fragment CSS résiduel
-  if (text.length < 25 || /^([#\.\w\-\s,>:+*]+;)+$/.test(text) || text.startsWith('#detail_decorate_root')) {
+  // 6. Si le texte résultant est vide ou est un fragment CSS résiduel
+  if (
+    text.length < 25
+    || /^([#\.\w\-\s,>:+*]+;)+$/.test(text)
+    || text.includes('#detail_decorate_root')
+    || text.includes('.magic-')
+    || /\{[a-z\-]+:[^}]+\}/i.test(text)
+    || /border-(?:bottom|top|left|right)|padding-(?:top|bottom)|margin-(?:top|bottom)/i.test(text)
+  ) {
     return buildFallbackDescription(title, specifications);
   }
   return text.slice(0, 4000);
@@ -231,21 +239,29 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
       : rawPriceValue;
     const priceXof = applyProductMarkup(convertUsdPriceToXof(supplierUsd), DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
 
+    const variantAttrs = {
+      externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
+    };
     let skuName = sku.name || sku.skuName || sku.attributes?.[0]?.attributeValue || '';
     if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
-      skuName = sku.sku_attr_list
-        .map((a) => {
-          const keyRaw = (a.attr_name_desc || '').toLowerCase();
-          const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attr_name_desc || '';
-          let val = a.attr_value_desc || '';
-          const lowerVal = val.toLowerCase();
-          if (COLOR_TRANSLATIONS[lowerVal]) val = COLOR_TRANSLATIONS[lowerVal];
-          return `${keyFr}: ${val}`.trim();
-        })
-        .filter(Boolean).join(' / ');
+      const parts = [];
+      sku.sku_attr_list.forEach((a) => {
+        const keyRaw = (a.attr_name_desc || '').toLowerCase();
+        const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attr_name_desc || '';
+        let val = a.attr_value_desc || '';
+        const lowerVal = val.toLowerCase();
+        if (COLOR_TRANSLATIONS[lowerVal]) val = COLOR_TRANSLATIONS[lowerVal];
+        if (keyFr && val) variantAttrs[keyFr] = val;
+        if (val) parts.push(val);
+      });
+      if (parts.length) {
+        skuName = parts.join(' · ');
+      }
     }
     if (!skuName) skuName = `Variante ${index + 1}`;
-    skuName = translateVariantText(skuName);
+    skuName = translateVariantText(skuName)
+      .replace(/^couleur\s*:\s*/i, '')
+      .replace(/\s*\/\s*capacité\s*:\s*/i, ' · ');
 
     if (!skipTranslation && skuName) {
       try {
@@ -267,9 +283,7 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
       price: priceXof,
       stock,
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
-      attributes: {
-        externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
-      },
+      attributes: variantAttrs,
       supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
       supplierPriceUsd: supplierUsd,
       isDefault: index === 0,
@@ -377,7 +391,8 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     image: primaryImage,
     variants,
     specifications,
-    brand: source.raw?.sellerLoginId || alibabaConfig.supplierName,
+    brand: specifications.find((s) => s.key?.toLowerCase() === 'marque')?.value
+      || ((source.raw?.sellerLoginId && !/^(alibaba)/i.test(source.raw.sellerLoginId)) ? source.raw.sellerLoginId : ''),
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
     productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,

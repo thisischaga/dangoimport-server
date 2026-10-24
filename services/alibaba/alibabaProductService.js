@@ -1036,15 +1036,37 @@ function extractAlibabaSpecifications(source = {}) {
     }
   }
 
-  // 4. Caractéristiques physiques et commerciales clés
+  // 4. Extraire depuis les tables et définitions HTML contenues dans la description
+  const rawHtml = String(source.description || rawObj.description || rdObj.description || '');
+  if (rawHtml.includes('<tr') || rawHtml.includes('<dl') || rawHtml.includes('class="do-entry')) {
+    const trMatches = rawHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
+    for (const tr of trMatches) {
+      const cells = [...tr[1].matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)]
+        .map((m) => m[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (cells.length >= 2 && cells[0].length < 60 && cells[1].length < 300) {
+        if (!/^(image|photo|picture|action|select|#|n°)$/i.test(cells[0])) {
+          add(cells[0], cells[1]);
+        }
+      }
+    }
+    const dlMatches = rawHtml.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi);
+    for (const dl of dlMatches) {
+      const k = dl[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const v = dl[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (k && v && k.length < 60 && v.length < 300) add(k, v);
+    }
+  }
+
+  // 5. Caractéristiques physiques et commerciales clés
   if (source.weight) {
     add('Poids', `${source.weight} kg`);
   }
   if (source.minOrderQuantity && Number(source.minOrderQuantity) > 1) {
     add('Quantité minimale (MOQ)', `${source.minOrderQuantity} pièce(s)`);
   }
-  if (source.brand && !source.brand.startsWith('Produit')) {
-    add('Marque / Fournisseur', source.brand);
+  if (source.brand && !/^(produit(\s+alibaba)?|alibaba(\.com)?)$/i.test(String(source.brand).trim())) {
+    add('Marque', source.brand);
   }
 
   return specs;
