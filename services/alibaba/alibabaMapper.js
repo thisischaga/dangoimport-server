@@ -229,11 +229,11 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
   const list = Array.isArray(skuInfos) ? skuInfos : [];
   if (!list.length) return [];
 
-  // Détection de stock individuel réel
+  // Alibaba = fabrication sur commande. On ne doit pas inventer un stock fictif.
+  // Si l'API fournit un stock réel on l'utilise, sinon on laisse 0 (= sur commande).
   const hasIndividualStock = list.some((sku) => extractSkuInventory(sku) > 0);
-
-  const baseTotalStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 100);
-  const fallbackPerSku = Math.max(1, Math.floor(baseTotalStock / list.length));
+  const baseTotalStock = productTotalStock > 0 ? productTotalStock : 0;
+  const fallbackPerSku = baseTotalStock > 0 ? Math.max(1, Math.floor(baseTotalStock / list.length)) : 0;
 
   const results = [];
   for (let index = 0; index < list.length; index++) {
@@ -284,9 +284,10 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
     }
 
     const rawStock = extractSkuInventory(sku);
+    // Si stock individuel réel : utiliser ; sinon 0 (fabriqué sur commande, pas d'inventaire fixe)
     const stock = hasIndividualStock
       ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
-      : fallbackPerSku;
+      : 0;
 
     results.push({
       name: skuName,
@@ -335,7 +336,8 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     productTotalStock,
   });
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  const stock = stockFromVariants || productTotalStock || alibabaConfig.defaultPublicStock;
+  // Stock total : utilise les vrais chiffres API ou 0 (sur commande, pas de stock fixe)
+  const stock = stockFromVariants || productTotalStock || 0;
 
   const images = extractImages(source.raw || source).length
     ? extractImages(source.raw || source)

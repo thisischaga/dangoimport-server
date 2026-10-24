@@ -88,16 +88,22 @@ async function getAlibabaProductForAdmin(pid) {
   const existing = await findExistingAlibabaProduct(detail.externalProductId);
   const currency = String(detail.currency || 'USD').toUpperCase();
 
-  const totalStock = detail.stock || alibabaConfig.defaultPublicStock;
+  // Alibaba = fabrication sur commande : les stocks SKU ne sont pas des inventaires unitaires réels
+  // On les garde s'ils existent réellement (> 0 et pas le fallback fictif), sinon null = sur commande
+  const totalStock = (detail.stock && detail.stock !== alibabaConfig.defaultPublicStock) ? detail.stock : null;
   const skuList = detail.skuInfos || [];
   const hasPerSkuStock = skuList.some((s) => toNumber(s.stock, 0) > 0 && s.stock !== alibabaConfig.defaultPublicStock);
-  const perVariantStock = Math.max(1, Math.floor(totalStock / (skuList.length || 1)));
+  // Pour l'aperçu admin on garde un stock estimé uniquement si l'API en renvoie un vrai
+  const perVariantStock = hasPerSkuStock && totalStock
+    ? Math.max(1, Math.floor(totalStock / (skuList.length || 1)))
+    : null;
 
   const variants = skuList.map((sku, index) => {
     const variantCurrency = String(sku.currency || currency).toUpperCase();
     const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
     const rawStock = toNumber(sku.stock ?? sku.amountOnSale ?? sku.canBookCount, 0);
-    const variantStock = hasPerSkuStock ? (rawStock > 0 ? rawStock : perVariantStock) : perVariantStock;
+    // null = sur commande (pas de stock fixe) ; chiffre réel seulement si fourni par l'API
+    const variantStock = hasPerSkuStock ? (rawStock > 0 ? rawStock : perVariantStock) : null;
     return {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
       name: sku.name || sku.skuName || sku.sku_name || `Variante ${index + 1}`,
@@ -141,7 +147,8 @@ async function getAlibabaProductForAdmin(pid) {
     supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
     supplierPriceUsd,
     currency,
-    stock: detail.stock || alibabaConfig.defaultPublicStock,
+    // null = sur commande (Alibaba fabrique à la demande, pas de stock fixe)
+    stock: totalStock,
     minOrderQuantity: detail.minOrderQuantity,
     weight: detail.weight != null ? String(detail.weight) : '',
     sku: detail.skuInfos?.[0]?.skuId || detail.skuInfos?.[0]?.sku_id || '',

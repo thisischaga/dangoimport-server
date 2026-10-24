@@ -712,7 +712,8 @@ function mergeCatalogProduct(primary, secondary) {
     images,
     supplierPrice,
     currency: primaryPrice ? primary.currency : (secondary.currency || primary.currency),
-    stock: toNumber(primary.stock, 0) || toNumber(secondary.stock, 0) || alibabaConfig.defaultPublicStock,
+    // Alibaba = sur commande, pas de stock fixe : 0 si aucune API ne retourne de stock réel
+    stock: toNumber(primary.stock, 0) || toNumber(secondary.stock, 0) || 0,
     minOrderQuantity: toNumber(primary.minOrderQuantity, 0) || toNumber(secondary.minOrderQuantity, 1) || 1,
     description: (!primary.description || primary.description === primary.name)
       ? (secondary.description || primary.description || '')
@@ -1115,8 +1116,9 @@ async function getAlibabaProductDetail(productId) {
     0,
   );
   const hasIndividualStock = rawSkuList.some((s) => extractSkuStock(s) > 0);
-  const targetStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 50);
-  const fallbackPerSku = Math.max(1, Math.floor(targetStock / (rawSkuList.length || 1)));
+  // Alibaba = sur commande : 0 si aucun stock réel fourni par l'API (ne pas inventer 50)
+  const targetStock = productTotalStock > 0 ? productTotalStock : 0;
+  const fallbackPerSku = targetStock > 0 ? Math.max(1, Math.floor(targetStock / (rawSkuList.length || 1))) : 0;
 
   const skuInfos = rawSkuList.map((sku, index) => {
     // Nom du SKU : construit depuis sku_attr_list (format result_data.skus) ou nom direct
@@ -1152,7 +1154,7 @@ async function getAlibabaProductDetail(productId) {
     const rawStock = extractSkuStock(sku);
     const skuStock = hasIndividualStock
       ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
-      : fallbackPerSku;
+      : 0;
     return {
       skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
       name: skuName,
@@ -1165,7 +1167,7 @@ async function getAlibabaProductDetail(productId) {
 
   const finalStock = hasIndividualStock
     ? skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0)
-    : targetStock;
+    : productTotalStock;
 
   // Key attributes
   const keyTitle = keyAttrs?.title || keyAttrs?.subject || keyAttrs?.product_name || keyAttrs?.product_title;
