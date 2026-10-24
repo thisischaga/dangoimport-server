@@ -211,17 +211,28 @@ function parseCnyPrice(value) {
   return match ? Number(match[1]) : 0;
 }
 
+function extractSkuInventory(sku) {
+  if (!sku || typeof sku !== 'object') return 0;
+  return toNumber(
+    sku.amountOnSale ?? sku.amount_on_sale
+    ?? sku.canBookCount ?? sku.can_book_count
+    ?? sku.availableQuantity ?? sku.available_quantity
+    ?? sku.inventoryQuantity ?? sku.inventory_quantity
+    ?? sku.sku_inventory ?? sku.sku_stock
+    ?? sku.inventory ?? sku.stock
+    ?? sku.quantity ?? sku.free_inventory ?? sku.total_inventory,
+    0,
+  );
+}
+
 async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, productTotalStock = 0 } = {}) {
   const list = Array.isArray(skuInfos) ? skuInfos : [];
   if (!list.length) return [];
 
   // Détection de stock individuel réel
-  const hasIndividualStock = list.some((sku) => {
-    const raw = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
-    return raw > 0;
-  });
+  const hasIndividualStock = list.some((sku) => extractSkuInventory(sku) > 0);
 
-  const baseTotalStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 50);
+  const baseTotalStock = productTotalStock > 0 ? productTotalStock : (alibabaConfig.defaultPublicStock || 100);
   const fallbackPerSku = Math.max(1, Math.floor(baseTotalStock / list.length));
 
   const results = [];
@@ -272,7 +283,7 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
       } catch (_e) { /* fallback original */ }
     }
 
-    const rawStock = toNumber(sku.amountOnSale ?? sku.canBookCount ?? sku.stock ?? sku.inventory ?? sku.quantity, 0);
+    const rawStock = extractSkuInventory(sku);
     const stock = hasIndividualStock
       ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
       : fallbackPerSku;
