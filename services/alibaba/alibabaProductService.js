@@ -372,6 +372,13 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
       || item.detail_url || item.permalink || item.detailUrl || item.productUrl,
     category,
     skuInfos: rdSkus.length ? rdSkus : (item.skuInfos || item.skuList || item.productSkuInfos || item.product_sku_list || item.sku_info || []),
+    videoUrl: rd.video_url || item.video_url || basic.video_url || '',
+    wholesaleTrade: wholesaleTrade || item.wholesale_trade || null,
+    supplierName: rd.supplier || item.supplier || basic.supplier || '',
+    eCompanyId: rd.eCompanyId || item.eCompanyId || '',
+    categoryId: rd.category_id || item.category_id || '',
+    isCountryRisk: rd.is_country_risk || item.is_country_risk || 'false',
+    skus: rdSkus,
   };
 }
 
@@ -562,6 +569,13 @@ function mapPayloadItem(item, fallbackId) {
     description: flat.description || '',
     weight: flat.productShippingInfo?.weight || flat.weight || flat.netWeight || flat.logistics_info?.weight,
     skuInfos: flat.skuInfos || flat.skuList || flat.productSkuInfos || flat.product_sku_list || flat.sku_info || [],
+    videoUrl: flat.videoUrl || '',
+    wholesaleTrade: flat.wholesaleTrade || null,
+    supplierName: flat.supplierName || '',
+    eCompanyId: flat.eCompanyId || '',
+    categoryId: flat.categoryId || '',
+    isCountryRisk: flat.isCountryRisk || 'false',
+    skus: flat.skus || [],
     raw: item,
   };
 }
