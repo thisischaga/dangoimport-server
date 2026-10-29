@@ -70,6 +70,38 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
   if (!raw || typeof raw !== 'string') {
     return buildFallbackDescription(title, specifications);
   }
+
+  const cutAtCompanySection = (value) => {
+    const markers = [
+      /présentation\s+de\s+la\s+société/i,
+      /profil\s+de\s+l['’]entreprise/i,
+      /company\s+profile/i,
+      /about\s+us/i,
+      /our\s+company/i,
+      /who\s+we\s+are/i,
+      /why\s+choose\s+us/i,
+      /why\s+choose\s+our\s+company/i,
+      /products?\s+connects?/i,
+      /related\s+products?/i,
+    ];
+
+    for (const marker of markers) {
+      const match = value.match(marker);
+      if (match && match.index != null) {
+        const cutValue = value.slice(0, match.index).trim();
+        if (cutValue.length >= 25) return cutValue;
+      }
+    }
+
+    const splitIndex = value.search(/\s[*•·]\s*(?:présentation|profil|company|about|why\s+choose|who\s+we)/i);
+    if (splitIndex >= 0) {
+      const cutValue = value.slice(0, splitIndex).trim();
+      if (cutValue.length >= 25) return cutValue;
+    }
+
+    return value;
+  };
+
   let text = raw;
   // 1. Supprimer le contenu CSS complet dans les balises <style> et <script>
   text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
@@ -92,6 +124,11 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
     .replace(/&quot;/gi, '"');
   // 5. Nettoyer les espaces multiples
   text = text.replace(/\s+/g, ' ').trim();
+  text = cutAtCompanySection(text)
+    .replace(/^\s*description\s+du\s+produit\s*[:*\-–]*/i, '')
+    .replace(/^\s*products?\s+connects?\s*/i, '')
+    .replace(/^\s*[\*•·\-–]+\s*/, '')
+    .trim();
   // 6. Si le texte résultant est vide ou est un fragment CSS résiduel
   if (
     text.length < 25
