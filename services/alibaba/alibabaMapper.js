@@ -446,8 +446,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     image: primaryImage,
     variants,
     specifications,
-    brand: specifications.find((s) => s.key?.toLowerCase() === 'marque')?.value
-      || ((source.raw?.sellerLoginId && !/^(alibaba)/i.test(source.raw.sellerLoginId)) ? source.raw.sellerLoginId : ''),
+    brand: specifications.find((s) => s.key?.toLowerCase() === 'marque')?.value || '',
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
     productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
