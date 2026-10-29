@@ -73,6 +73,8 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
 
   const cutAtCompanySection = (value) => {
     const markers = [
+      /produits?\s+connexes?/i,
+      /related\s+products?/i,
       /présentation\s+de\s+la\s+société/i,
       /profil\s+de\s+l['’]entreprise/i,
       /company\s+profile/i,
@@ -81,8 +83,10 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
       /who\s+we\s+are/i,
       /why\s+choose\s+us/i,
       /why\s+choose\s+our\s+company/i,
-      /products?\s+connects?/i,
-      /related\s+products?/i,
+      /entreprise\s+individuelle/i,
+      /fondée\s+en\s+\d{4}/i,
+      /notre\s+entreprise/i,
+      /notre\s+société/i,
     ];
 
     for (const marker of markers) {
@@ -126,7 +130,8 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
   text = text.replace(/\s+/g, ' ').trim();
   text = cutAtCompanySection(text)
     .replace(/^\s*description\s+du\s+produit\s*[:*\-–]*/i, '')
-    .replace(/^\s*products?\s+connects?\s*/i, '')
+    .replace(/^\s*produits?\s+connexes?\s*[:*\-–]*/i, '')
+    .replace(/^\s*related\s+products?\s*[:*\-–]*/i, '')
     .replace(/^\s*[\*•·\-–]+\s*/, '')
     .trim();
   // 6. Si le texte résultant est vide ou est un fragment CSS résiduel
