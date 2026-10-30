@@ -265,6 +265,8 @@ function extractSkuInventory(sku) {
     ?? sku.quantity ?? sku.free_inventory ?? sku.total_inventory,
     0,
   );
+}
+
 function extractPriceTiers(source = {}) {
   const rawTiers = Array.isArray(source.ladderPrices) && source.ladderPrices.length
     ? source.ladderPrices
