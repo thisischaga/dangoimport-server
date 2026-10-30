@@ -42,7 +42,10 @@ function mapAlibabaProductForAdmin(doc) {
   if (!doc) return null;
   const product = doc.toObject ? doc.toObject() : { ...doc };
 
-  const rawPayload = product.rawPayload || product.normalized || product.rawSections || {};
+  const rawPayloadCandidate = Array.isArray(product.rawPayload) && product.rawPayload.length === 1
+    ? product.rawPayload[0]
+    : product.rawPayload;
+  const rawPayload = rawPayloadCandidate || product.normalized || product.rawSections || {};
   const rawDescription = (
     product.description
     || product.normalized?.description
@@ -55,8 +58,11 @@ function mapAlibabaProductForAdmin(doc) {
 
   const rawSpecsSource = Array.isArray(product.attributes) ? product.attributes : [];
   const rawKeyAttributes = rawPayload?.keyAttributes || rawPayload?.raw?.keyAttributes || {};
-  const keyAttributeRows = Array.isArray(rawKeyAttributes.attributes || rawKeyAttributes.attribute_list || rawKeyAttributes.attr_list || rawKeyAttributes.product_attributes)
-    ? (rawKeyAttributes.attributes || rawKeyAttributes.attribute_list || rawKeyAttributes.attr_list || rawKeyAttributes.product_attributes)
+  const rawKeyAttributesList = Array.isArray(rawKeyAttributes) && rawKeyAttributes.length === 1
+    ? rawKeyAttributes[0]
+    : rawKeyAttributes;
+  const keyAttributeRows = Array.isArray(rawKeyAttributesList.attributes || rawKeyAttributesList.attribute_list || rawKeyAttributesList.attr_list || rawKeyAttributesList.product_attributes)
+    ? (rawKeyAttributesList.attributes || rawKeyAttributesList.attribute_list || rawKeyAttributesList.attr_list || rawKeyAttributesList.product_attributes)
     : [];
 
   const specifications = [
