@@ -41,6 +41,39 @@ function adminId(req) {
 function mapAlibabaProductForAdmin(doc) {
   if (!doc) return null;
   const product = doc.toObject ? doc.toObject() : { ...doc };
+
+  const rawPayload = product.rawPayload || product.normalized || product.rawSections || {};
+  const rawDescription = (
+    product.description
+    || product.normalized?.description
+    || rawPayload?.description
+    || rawPayload?.result_data?.description
+    || rawPayload?.product?.description
+    || rawPayload?.raw?.result?.result_data?.description
+    || ''
+  );
+
+  const rawSpecsSource = Array.isArray(product.attributes) ? product.attributes : [];
+  const rawKeyAttributes = rawPayload?.keyAttributes || rawPayload?.raw?.keyAttributes || {};
+  const keyAttributeRows = Array.isArray(rawKeyAttributes.attributes || rawKeyAttributes.attribute_list || rawKeyAttributes.attr_list || rawKeyAttributes.product_attributes)
+    ? (rawKeyAttributes.attributes || rawKeyAttributes.attribute_list || rawKeyAttributes.attr_list || rawKeyAttributes.product_attributes)
+    : [];
+
+  const specifications = [
+    ...(Array.isArray(product.specifications) ? product.specifications : []),
+    ...rawSpecsSource.map((entry) => ({
+      key: entry?.name || entry?.attr_name_desc || entry?.attr_name || entry?.attributeName || entry?.key || '',
+      value: entry?.value || entry?.attr_value_desc || entry?.attr_value || entry?.attributeValue || entry?.prop_value || '',
+    })),
+    ...keyAttributeRows.map((entry) => ({
+      key: entry?.attr_name_desc || entry?.attr_name || entry?.attributeName || entry?.prop_name || entry?.name || entry?.key || '',
+      value: entry?.attr_value_desc || entry?.attr_value || entry?.attributeValue || entry?.prop_value || entry?.value || '',
+    })),
+  ].filter((row) => row && row.key && row.value).map((row) => ({
+    key: String(row.key).trim(),
+    value: String(row.value).trim(),
+  }));
+
   const sourcePriceTiers = Array.isArray(product.pricing?.tiers)
     ? product.pricing.tiers.map((tier) => ({
         minQty: tier.minQuantity ?? tier.minQty ?? 1,
@@ -61,16 +94,31 @@ function mapAlibabaProductForAdmin(doc) {
     ?? 0,
   );
 
+  const galleryImages = (Array.isArray(product.images) && product.images.length > 0)
+    ? product.images
+    : (Array.isArray(rawPayload?.images) && rawPayload.images.length > 0)
+      ? rawPayload.images
+      : (Array.isArray(rawPayload?.gallery) && rawPayload.gallery.length > 0)
+        ? rawPayload.gallery
+        : [];
+
+  const primaryImage = product.mainImage
+    || (Array.isArray(galleryImages) ? (typeof galleryImages[0] === 'string' ? galleryImages[0] : galleryImages[0]?.url || '') : '')
+    || (typeof rawPayload?.mainImage === 'string' ? rawPayload.mainImage : '')
+    || ''; 
+
   return {
     ...product,
     _id: product._id,
     name: product.name || product.title || '',
-    description: product.description || '',
+    description: rawDescription || '',
+    shortDescription: product.shortDescription || String(rawDescription || '').slice(0, 220),
     category: product.category || product.normalized?.category || '',
     brand: product.brand || product.normalized?.brand || '',
     price: sellingPrice > 0 ? sellingPrice : Number(product.pricing?.sourcePrice || 0),
-    image: product.mainImage || (Array.isArray(product.images) ? product.images[0]?.url : '') || '',
-    images: Array.isArray(product.images) ? product.images : [],
+    image: primaryImage,
+    images: galleryImages,
+    specifications,
     sourceProductId: product.sourceProductId || product.externalProductId || '',
     supplier: {
       ...(product.supplier || {}),
@@ -83,7 +131,7 @@ function mapAlibabaProductForAdmin(doc) {
     importWarnings: Array.isArray(product.importWarnings) ? product.importWarnings : [],
     importErrors: Array.isArray(product.importErrors) ? product.importErrors : [],
     sourcePriceTiers,
-    rawAlibabaData: product.rawPayload || product.normalized || {},
+    rawAlibabaData: rawPayload,
     externalSourceKey: `alibaba:${product.sourceProductId || product.externalProductId || product._id}`,
     lastSyncedAt: product.lastSyncedAt || product.updatedAt || new Date(),
   };

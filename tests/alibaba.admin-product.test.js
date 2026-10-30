@@ -42,3 +42,63 @@ test('mapAlibabaProductForAdmin keeps canonical supplier fields compatible with 
   assert.equal(product.importStatus, 'IMPORTED');
   assert.equal(product.rawAlibabaData.ok, true);
 });
+
+test('mapAlibabaProductForAdmin uses rawAlibaba payload as fallback for description, gallery and specs', () => {
+  const raw = {
+    _id: '67f000000000000000000002',
+    source: 'ALIBABA',
+    sourceProductId: 'abc-456',
+    description: '',
+    images: [],
+    rawPayload: {
+      description: 'Description détaillée du produit Alibaba.',
+      images: [{ url: 'https://example.com/a.jpg' }, { url: 'https://example.com/b.jpg' }],
+      keyAttributes: {
+        attributes: [
+          { attr_name_desc: 'Couleur', attr_value_desc: 'Noir' },
+          { attr_name_desc: 'Matériau', attr_value_desc: 'Coton' },
+        ],
+      },
+    },
+    status: 'IMPORTED',
+    isPublished: false,
+    supplier: { name: 'Alibaba' },
+    pricing: { sourcePrice: 150 },
+    normalized: { pricing: { sellingPrice: 220 } },
+  };
+
+  const product = mapAlibabaProductForAdmin(raw);
+
+  assert.equal(product.description, 'Description détaillée du produit Alibaba.');
+  assert.equal(product.images.length, 2);
+  assert.deepEqual(product.specifications[0], { key: 'Couleur', value: 'Noir' });
+  assert.equal(product.supplier.productId, 'abc-456');
+});
+
+test('mapAlibabaProductForAdmin unwraps single-item arrays from Alibaba raw payloads', () => {
+  const raw = {
+    _id: '67f000000000000000000003',
+    source: 'ALIBABA',
+    sourceProductId: 'abc-789',
+    description: '',
+    images: [],
+    rawPayload: [{
+      description: 'Produit compact et premium.',
+      images: [{ url: 'https://example.com/c.jpg' }],
+      keyAttributes: {
+        attributes: [{ attr_name_desc: 'Couleur', attr_value_desc: 'Blanc' }],
+      },
+    }],
+    status: 'IMPORTED',
+    isPublished: false,
+    supplier: { name: 'Alibaba' },
+    pricing: { sourcePrice: 200 },
+    normalized: { pricing: { sellingPrice: 260 } },
+  };
+
+  const product = mapAlibabaProductForAdmin(raw);
+  assert.equal(product.description, 'Produit compact et premium.');
+  assert.equal(product.images.length, 1);
+  assert.equal(product.specifications[0].key, 'Couleur');
+  assert.equal(product.specifications[0].value, 'Blanc');
+});
