@@ -1,4 +1,5 @@
 const Product = require('../../Models/Product');
+const AlibabaProduct = require('../../Models/AlibabaProduct');
 const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
 const { searchAlibabaProducts, getAlibabaProductDetail, getAlibabaRawProduct } = require('./alibabaProductService');
 const { calculateImportPricing } = require('../../utils/importPricing');
@@ -21,15 +22,23 @@ const {
 async function mapImportedStatus(ids = []) {
   const list = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
   if (!list.length) return {};
-  const rows = await Product.find({
-    sourceType: 'DROPSHIPPING',
-    'supplier.platform': alibabaConfig.platformKey,
-    'supplier.productId': { $in: list },
-  }).select('_id name isPublished supplier.productId').lean();
+
+  const rows = await AlibabaProduct.find({
+    source: 'ALIBABA',
+    sourceProductId: { $in: list },
+  }).select('_id sourceProductId name isPublished publishedProductId').lean();
+
   const map = {};
   rows.forEach((row) => {
-    const pid = String(row.supplier?.productId || '');
-    if (pid) map[pid] = { productId: String(row._id), name: row.name, isPublished: Boolean(row.isPublished) };
+    const pid = String(row.sourceProductId || '');
+    if (!pid) return;
+    map[pid] = {
+      productId: row.publishedProductId ? String(row.publishedProductId) : String(row._id),
+      name: row.name,
+      isPublished: Boolean(row.isPublished),
+      alibabaProductId: String(row._id),
+      publishedProductId: row.publishedProductId ? String(row.publishedProductId) : null,
+    };
   });
   return map;
 }
@@ -213,13 +222,33 @@ async function getAlibabaProductForAdmin(pid) {
 }
 
 async function getImportStatus(pid) {
-  const existing = await findExistingAlibabaProduct(pid);
-  if (!existing) return { imported: false };
+  const existing = await AlibabaProduct.findOne({
+    source: 'ALIBABA',
+    $or: [
+      { sourceProductId: pid },
+      { externalProductId: pid },
+      { 'supplier.productId': pid },
+    ],
+  }).select('_id sourceProductId externalProductId name isPublished publishedProductId').lean();
+
+  if (!existing) {
+    const fallback = await findExistingAlibabaProduct(pid);
+    if (!fallback) return { imported: false };
+    return {
+      imported: true,
+      productId: String(fallback._id),
+      isPublished: Boolean(fallback.isPublished),
+      name: fallback.name,
+    };
+  }
+
   return {
     imported: true,
-    productId: String(existing._id),
+    productId: existing.publishedProductId ? String(existing.publishedProductId) : String(existing._id),
     isPublished: Boolean(existing.isPublished),
     name: existing.name,
+    alibabaProductId: String(existing._id),
+    publishedProductId: existing.publishedProductId ? String(existing.publishedProductId) : null,
   };
 }
 
