@@ -36,6 +36,7 @@ const alibabaConfig = {
   productGetPath: trimEnv(process.env.ALIBABA_PRODUCT_GET_PATH) || '/eco/buyer/product/description',
   productSearchPath: trimEnv(process.env.ALIBABA_PRODUCT_SEARCH_PATH) || '/eco/buyer/product/search',
   productListPath: trimEnv(process.env.ALIBABA_PRODUCT_LIST_PATH) || '/eco/buyer/product/check',
+  defaultProductType: trimEnv(process.env.ALIBABA_DEFAULT_PRODUCT_TYPE) || 'wholesale',
   platformKey: 'alibaba',
   supplierName: 'Alibaba.com',
 };

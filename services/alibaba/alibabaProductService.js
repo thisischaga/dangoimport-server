@@ -825,6 +825,7 @@ async function searchAlibabaProducts(params = {}) {
         page_index: page,
         page_size: size,
         country: alibabaConfig.defaultCountry,
+        product_type: alibabaConfig.defaultProductType || 'wholesale',
       },
     });
     assertBuyerResult(payload);
@@ -893,6 +894,7 @@ async function fetchProductFromCheck(id) {
         product_ids: [String(id)],
         product_id_list: [String(id)],
         country: alibabaConfig.defaultCountry || 'US',
+        product_type: alibabaConfig.defaultProductType || 'wholesale',
         index: 1,
         size: 20,
         page_size: 20,
