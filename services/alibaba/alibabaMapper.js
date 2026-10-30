@@ -388,7 +388,8 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
 
   let name = String(source.name || source.subject || `Produit Alibaba ${externalProductId}`).trim();
 
-  let specifications = extractAlibabaSpecifications(source);
+  let specifications = extractAlibabaSpecifications(source)
+    .filter((row) => row && row.key && row.value && !/^marque$/i.test(String(row.key).trim()));
   if (!skipTranslation && specifications.length) {
     specifications = await Promise.all(specifications.map(async (row) => {
       let key = row.key;
@@ -446,7 +447,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     image: primaryImage,
     variants,
     specifications,
-    brand: specifications.find((s) => s.key?.toLowerCase() === 'marque')?.value || '',
+    brand: '',
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
     productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,

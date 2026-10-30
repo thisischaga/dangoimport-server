@@ -1080,6 +1080,9 @@ function extractAlibabaSpecifications(source = {}) {
   if (source.minOrderQuantity && Number(source.minOrderQuantity) > 1) {
     add('Quantité minimale (MOQ)', `${source.minOrderQuantity} pièce(s)`);
   }
+  if (source.brand && !/^(produit(\s+alibaba)?|alibaba(\.com)?)$/i.test(String(source.brand).trim())) {
+    add('Marque', source.brand);
+  }
 
   return specs;
 }
