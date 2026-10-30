@@ -548,3 +548,5 @@ exports.validateQuality = async (req, res) => {
     return handleError(res, error);
   }
 };
+
+module.exports.mapAlibabaProductForAdmin = mapAlibabaProductForAdmin;
