@@ -1176,6 +1176,11 @@ async function getAlibabaProductDetail(productId) {
       stock: skuStock,
       image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
       currency: skuCurrency,
+      // Préserver les données originales pour le mapper de variantes en aval
+      sku_attr_list: Array.isArray(sku.sku_attr_list) ? sku.sku_attr_list : [],
+      ladder_price: ladderPrice || [],
+      status: sku.status || 'NORMAL',
+      seller_sku_id: sku.seller_sku_id || sku.sellerSkuId || '',
     };
   });
 
