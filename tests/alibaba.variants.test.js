@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../services/alibaba/alibabaMapper');
+const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
 const { toPublicProduct } = require('../utils/publicProduct');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 
@@ -113,6 +114,38 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   const publicDoc = toPublicProduct(rawProduct);
   assert.equal(publicDoc.isAlibaba, true);
   assert.equal(publicDoc.fulfillmentPlatform, 'Alibaba');
+});
+
+test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {
+  const rawPayload = {
+    offerId: '600123456789',
+    subject: 'Sac de voyage',
+    price: '15.5',
+    currency: 'USD',
+    skuInfos: [{ skuId: 'sku-1', price: '15.5' }],
+    sellerLoginId: 'supplier-1',
+    category: 'Bags',
+  };
+
+  const mapped = {
+    sourceProductId: '600123456789',
+    name: 'Sac de voyage',
+    category: 'Accessoires',
+    pricing: { supplierPrice: 15.5, sellingPrice: 20000, currency: 'XOF' },
+    sourceInventory: { rawStock: 150, verifiedStock: 150 },
+    supplier: { platform: 'alibaba', productId: '600123456789', name: 'supplier-1' },
+    externalSourceKey: 'alibaba:600123456789',
+    rawAlibabaData: rawPayload,
+  };
+
+  const record = buildAlibabaProductRecord(rawPayload, mapped);
+
+  assert.equal(record.source, 'ALIBABA');
+  assert.equal(record.sourceProductId, '600123456789');
+  assert.deepEqual(record.rawPayload, rawPayload);
+  assert.deepEqual(record.normalized, mapped);
+  assert.equal(record.supplier.name, 'supplier-1');
+  assert.equal(record.inventory.rawStock, 150);
 });
 
 test('getAlibabaRawProduct rejects empty id', async () => {

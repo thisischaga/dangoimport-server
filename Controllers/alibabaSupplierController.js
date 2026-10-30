@@ -1,4 +1,5 @@
 const Product = require('../Models/Product');
+const AlibabaProduct = require('../Models/AlibabaProduct');
 const { alibabaConfig } = require('../config/alibaba');
 const { testConnection, alibabaCall } = require('../services/alibaba/alibabaClient');
 const {
@@ -35,6 +36,57 @@ function handleError(res, error) {
 
 function adminId(req) {
   return req.admin?.email || req.user?.email || req.user?.adminName || 'admin';
+}
+
+function mapAlibabaProductForAdmin(doc) {
+  if (!doc) return null;
+  const product = doc.toObject ? doc.toObject() : { ...doc };
+  const sourcePriceTiers = Array.isArray(product.pricing?.tiers)
+    ? product.pricing.tiers.map((tier) => ({
+        minQty: tier.minQuantity ?? tier.minQty ?? 1,
+        maxQty: tier.maxQuantity ?? tier.maxQty ?? null,
+        price: tier.price ?? 0,
+        currency: tier.currency || product.pricing?.currency || 'USD',
+      }))
+    : Array.isArray(product.normalized?.sourcePriceTiers)
+      ? product.normalized.sourcePriceTiers
+      : [];
+
+  const sellingPrice = Number(
+    product.normalized?.pricing?.sellingPrice
+    ?? product.normalized?.pricing?.price
+    ?? product.normalized?.price
+    ?? product.price
+    ?? product.pricing?.sourcePrice
+    ?? 0,
+  );
+
+  return {
+    ...product,
+    _id: product._id,
+    name: product.name || product.title || '',
+    description: product.description || '',
+    category: product.category || product.normalized?.category || '',
+    brand: product.brand || product.normalized?.brand || '',
+    price: sellingPrice > 0 ? sellingPrice : Number(product.pricing?.sourcePrice || 0),
+    image: product.mainImage || (Array.isArray(product.images) ? product.images[0]?.url : '') || '',
+    images: Array.isArray(product.images) ? product.images : [],
+    sourceProductId: product.sourceProductId || product.externalProductId || '',
+    supplier: {
+      ...(product.supplier || {}),
+      platform: 'alibaba',
+      productId: product.sourceProductId || product.externalProductId || '',
+      productUrl: product.sourceUrl || product.supplier?.productUrl || '',
+    },
+    importStatus: product.status === 'ERROR' ? 'SYNC_ERROR' : product.status || 'IMPORTED',
+    isPublished: Boolean(product.isPublished),
+    importWarnings: Array.isArray(product.importWarnings) ? product.importWarnings : [],
+    importErrors: Array.isArray(product.importErrors) ? product.importErrors : [],
+    sourcePriceTiers,
+    rawAlibabaData: product.rawPayload || product.normalized || {},
+    externalSourceKey: `alibaba:${product.sourceProductId || product.externalProductId || product._id}`,
+    lastSyncedAt: product.lastSyncedAt || product.updatedAt || new Date(),
+  };
 }
 
 exports.status = async (_req, res) => {
@@ -257,25 +309,15 @@ exports.getImportedProducts = async (req, res) => {
     const sort = String(req.query.sort || 'recent');
 
     const baseFilter = {
-      sourceType: 'DROPSHIPPING',
-      $or: [
-        { source: 'ALIBABA' },
-        { 'supplier.platform': 'alibaba' },
-        { isAlibaba: true },
-        { importSourceType: 'ALIBABA_API' },
-      ],
+      source: 'ALIBABA',
     };
 
     if (search) {
-      baseFilter.$and = [
-        {
-          $or: [
-            { name: { $regex: search, $options: 'i' } },
-            { 'supplier.productId': { $regex: search, $options: 'i' } },
-            { sourceProductId: { $regex: search, $options: 'i' } },
-            { sku: { $regex: search, $options: 'i' } },
-          ],
-        },
+      baseFilter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { sourceProductId: { $regex: search, $options: 'i' } },
+        { category: { $regex: search, $options: 'i' } },
+        { brand: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -284,37 +326,29 @@ exports.getImportedProducts = async (req, res) => {
     } else if (status === 'draft') {
       baseFilter.isPublished = false;
     } else if (status === 'to_verify') {
-      baseFilter.importStatus = 'TO_VERIFY';
+      baseFilter.status = 'IMPORTED';
     } else if (status === 'ready_to_publish') {
-      baseFilter.importStatus = 'READY_TO_PUBLISH';
+      baseFilter.status = 'IMPORTED';
     } else if (status === 'sync_error') {
-      baseFilter.importStatus = 'SYNC_ERROR';
+      baseFilter.status = 'ERROR';
     }
 
     let sortOptions = { updatedAt: -1 };
     if (sort === 'oldest') sortOptions = { createdAt: 1 };
-    else if (sort === 'price_asc') sortOptions = { price: 1 };
-    else if (sort === 'price_desc') sortOptions = { price: -1 };
+    else if (sort === 'price_asc') sortOptions = { 'pricing.sourcePrice': 1 };
+    else if (sort === 'price_desc') sortOptions = { 'pricing.sourcePrice': -1 };
     else if (sort === 'name') sortOptions = { name: 1 };
 
     const [total, products, statsCounts] = await Promise.all([
-      Product.countDocuments(baseFilter),
-      Product.find(baseFilter)
+      AlibabaProduct.countDocuments(baseFilter),
+      AlibabaProduct.find(baseFilter)
         .sort(sortOptions)
         .skip(skip)
         .limit(limit)
         .lean(),
-      Product.aggregate([
+      AlibabaProduct.aggregate([
         {
-          $match: {
-            sourceType: 'DROPSHIPPING',
-            $or: [
-              { source: 'ALIBABA' },
-              { 'supplier.platform': 'alibaba' },
-              { isAlibaba: true },
-              { importSourceType: 'ALIBABA_API' },
-            ],
-          },
+          $match: { source: 'ALIBABA' },
         },
         {
           $group: {
@@ -322,17 +356,18 @@ exports.getImportedProducts = async (req, res) => {
             total: { $sum: 1 },
             published: { $sum: { $cond: [{ $eq: ['$isPublished', true] }, 1, 0] } },
             drafts: { $sum: { $cond: [{ $eq: ['$isPublished', false] }, 1, 0] } },
-            toVerify: { $sum: { $cond: [{ $eq: ['$importStatus', 'TO_VERIFY'] }, 1, 0] } },
+            toVerify: { $sum: { $cond: [{ $eq: ['$status', 'IMPORTED'] }, 1, 0] } },
           },
         },
       ]),
     ]);
 
     const stats = statsCounts[0] || { total: 0, published: 0, drafts: 0, toVerify: 0 };
+    const normalizedProducts = (products || []).map(mapAlibabaProductForAdmin);
 
     return res.json({
       success: true,
-      products,
+      products: normalizedProducts,
       pagination: {
         total,
         page,
@@ -352,15 +387,14 @@ exports.getImportedProductById = async (req, res) => {
     const id = String(req.params.id || '').trim();
     let product = null;
     if (id.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(id).lean();
+      product = await AlibabaProduct.findById(id).lean();
     }
     if (!product) {
-      product = await Product.findOne({
-        sourceType: 'DROPSHIPPING',
+      product = await AlibabaProduct.findOne({
+        source: 'ALIBABA',
         $or: [
-          { 'supplier.productId': id },
           { sourceProductId: id },
-          { externalSourceKey: `alibaba:${id}` },
+          { externalProductId: id },
         ],
       }).lean();
     }
@@ -368,10 +402,11 @@ exports.getImportedProductById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit Alibaba importé introuvable.' });
     }
 
-    const quality = validateProductQualityForPublication(product);
+    const compatible = mapAlibabaProductForAdmin(product);
+    const quality = validateProductQualityForPublication(compatible);
     return res.json({
       success: true,
-      product,
+      product: compatible,
       quality,
     });
   } catch (error) {
@@ -382,7 +417,14 @@ exports.getImportedProductById = async (req, res) => {
 exports.updateCommercialData = async (req, res) => {
   try {
     const id = req.params.id;
-    const product = await Product.findById(id);
+    let product = await Product.findById(id);
+    let sourceType = 'Product';
+
+    if (!product) {
+      product = await AlibabaProduct.findById(id);
+      sourceType = 'AlibabaProduct';
+    }
+
     if (!product) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
@@ -394,9 +436,29 @@ exports.updateCommercialData = async (req, res) => {
       }
     });
 
+    if (sourceType === 'AlibabaProduct') {
+      if (req.body.name !== undefined) product.name = req.body.name;
+      if (req.body.description !== undefined) product.description = req.body.description;
+      if (req.body.category !== undefined) product.category = req.body.category;
+      if (req.body.brand !== undefined) product.brand = req.body.brand;
+      if (req.body.price !== undefined) {
+        product.normalized = {
+          ...(product.normalized || {}),
+          pricing: {
+            ...(product.normalized?.pricing || {}),
+            sellingPrice: Number(req.body.price),
+          },
+        };
+      }
+      if (req.body.isPublished !== undefined) {
+        product.isPublished = Boolean(req.body.isPublished);
+        product.status = req.body.isPublished ? 'IMPORTED' : 'RAW';
+      }
+    }
+
     if (req.body.isPublished !== undefined) {
       if (req.body.isPublished === true) {
-        const quality = validateProductQualityForPublication(product);
+        const quality = validateProductQualityForPublication(mapAlibabaProductForAdmin(product));
         if (!quality.canPublish) {
           return res.status(400).json({
             success: false,
@@ -405,21 +467,36 @@ exports.updateCommercialData = async (req, res) => {
             warnings: quality.warnings,
           });
         }
-        product.isPublished = true;
-        product.publicationStatus = 'published';
-        product.importStatus = 'PUBLISHED';
+        if (sourceType === 'Product') {
+          product.isPublished = true;
+          product.publicationStatus = 'published';
+          product.importStatus = 'PUBLISHED';
+        } else {
+          product.isPublished = true;
+          product.status = 'IMPORTED';
+        }
       } else {
-        product.isPublished = false;
-        product.publicationStatus = 'unpublished';
-        if (product.importStatus === 'PUBLISHED') {
-          product.importStatus = 'READY_TO_PUBLISH';
+        if (sourceType === 'Product') {
+          product.isPublished = false;
+          product.publicationStatus = 'unpublished';
+          if (product.importStatus === 'PUBLISHED') {
+            product.importStatus = 'READY_TO_PUBLISH';
+          }
+        } else {
+          product.isPublished = false;
+          product.status = 'RAW';
         }
       }
     }
 
     product.updatedAt = new Date();
     await product.save();
-    return res.json({ success: true, message: 'Données commerciales mises à jour.', product });
+    const responseProduct = product && typeof product.toObject === 'function' ? product.toObject() : product;
+    return res.json({
+      success: true,
+      message: 'Données commerciales mises à jour.',
+      product: mapAlibabaProductForAdmin(responseProduct) || responseProduct,
+    });
   } catch (error) {
     return handleError(res, error);
   }
@@ -428,11 +505,11 @@ exports.updateCommercialData = async (req, res) => {
 exports.syncImportedProduct = async (req, res) => {
   try {
     const id = req.params.id;
-    const product = await Product.findById(id);
+    const product = await AlibabaProduct.findById(id);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
-    const pid = product.sourceProductId || product.supplier?.productId;
+    const pid = product.sourceProductId || product.externalProductId || product.supplier?.productId;
     if (!pid) {
       return res.status(400).json({ success: false, message: 'Identifiant fournisseur Alibaba manquant sur ce produit.' });
     }
@@ -453,7 +530,14 @@ exports.syncImportedProduct = async (req, res) => {
 
 exports.validateQuality = async (req, res) => {
   try {
-    const id = req.params.id;
+    const id = String(req.params.id || '').trim();
+
+    const alibabaDoc = await AlibabaProduct.findById(id).lean();
+    if (alibabaDoc) {
+      const product = mapAlibabaProductForAdmin(alibabaDoc);
+      return res.json({ success: true, data: validateProductQualityForPublication(product) });
+    }
+
     const product = await Product.findById(id).lean();
     if (!product) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });

@@ -368,6 +368,11 @@ const productSchema = new mongoose.Schema({
         type: String,
         trim: true,
     },
+    alibabaProductId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'AlibabaProduct',
+        index: true,
+    },
     currency: {
         type: String,
         default: 'USD',

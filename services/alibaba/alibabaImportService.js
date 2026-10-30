@@ -1,6 +1,8 @@
 const Product = require('../../Models/Product');
+const AlibabaProduct = require('../../Models/AlibabaProduct');
 const { alibabaConfig } = require('../../config/alibaba');
 const { getAlibabaProductDetail } = require('./alibabaProductService');
+const { normalizeAlibabaProductSnapshot } = require('./alibabaProductNormalizer');
 const { mapAlibabaProductToDango, mapToDropshippingPayload, buildExternalSourceKey } = require('./alibabaMapper');
 const {
   normalizeDropshippingInput,
@@ -88,6 +90,11 @@ function validateProductQualityForPublication(product) {
   };
 }
 
+function buildAlibabaProductRecord(rawPayload = {}, mapped = {}) {
+  const raw = rawPayload && Object.keys(rawPayload).length ? rawPayload : mapped?.rawAlibabaData || mapped || {};
+  return normalizeAlibabaProductSnapshot(raw, mapped);
+}
+
 async function upsertAlibabaProduct(externalProductId, {
   publish = false,
   update = false,
@@ -117,6 +124,14 @@ async function upsertAlibabaProduct(externalProductId, {
 
   const detail = await getAlibabaProductDetail(id);
   const mapped = await mapAlibabaProductToDango(detail, detail);
+  const rawSource = detail?.raw || detail?.rawAlibabaData || detail || {};
+  const alibabaSnapshot = buildAlibabaProductRecord(rawSource, mapped);
+  const alibabaProduct = await AlibabaProduct.findOneAndUpdate(
+    { source: 'ALIBABA', sourceProductId: alibabaSnapshot.sourceProductId },
+    { $set: alibabaSnapshot },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+
   if (!(mapped?.pricing?.supplierPrice > 0)) {
     const err = new Error('Prix fournisseur introuvable : import refusé.');
     err.status = 422;
@@ -169,8 +184,18 @@ async function upsertAlibabaProduct(externalProductId, {
     };
     payload.history = [...(existing.history || []), historyEntry];
 
-    const updated = await updateDropshippingProduct(existing._id, payload, adminUser);
+    const updated = await updateDropshippingProduct(existing._id, {
+      ...payload,
+      alibabaProductId: existing.alibabaProductId || alibabaProduct._id,
+    }, adminUser);
     const updatedObj = updated.toObject ? updated.toObject() : updated;
+    await AlibabaProduct.findByIdAndUpdate(alibabaProduct._id, {
+      $set: {
+        publishedProductId: updatedObj._id || existing._id,
+        isPublished: Boolean(updatedObj.isPublished),
+        status: updatedObj.importStatus || 'SYNCED',
+      },
+    });
     return {
       success: true,
       alreadyImported: false,
@@ -206,7 +231,15 @@ async function upsertAlibabaProduct(externalProductId, {
     role: 'admin',
     date: new Date(),
   }];
+  stamped.alibabaProductId = alibabaProduct._id;
   const created = await Product.create(stamped);
+  await AlibabaProduct.findByIdAndUpdate(alibabaProduct._id, {
+    $set: {
+      publishedProductId: created._id,
+      isPublished: Boolean(created.isPublished),
+      status: created.importStatus || 'IMPORTED',
+    },
+  });
   const createdObj = created.toObject ? created.toObject() : created;
   return {
     success: true,
@@ -219,6 +252,7 @@ async function upsertAlibabaProduct(externalProductId, {
 }
 
 module.exports = {
+  buildAlibabaProductRecord,
   findExistingAlibabaProduct,
   upsertAlibabaProduct,
   validateProductQualityForPublication,
