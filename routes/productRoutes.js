@@ -16,6 +16,8 @@ const PUBLIC_CATALOG_SOURCE_FILTER = {
     { sourceType: { $exists: false } },
     { sourceType: 'LOCAL_SELLER' },
     { sourceType: 'DROPSHIPPING', isDropshippingActive: true },
+    { sourceType: 'DROPSHIPPING', isAlibaba: true, isPublished: true, publicationStatus: 'published' },
+    { sourceType: 'DROPSHIPPING', importSourceType: 'ALIBABA_API', isPublished: true, publicationStatus: 'published' },
   ],
 };
 
@@ -371,7 +373,14 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
-    if (product.sourceType === 'DROPSHIPPING' && !product.isDropshippingActive) {
+    const isPublicDropshippingProduct =
+      product.sourceType === 'DROPSHIPPING' && (
+        product.isDropshippingActive === true ||
+        (product.isAlibaba === true && product.isPublished === true && product.publicationStatus === 'published') ||
+        (product.importSourceType === 'ALIBABA_API' && product.isPublished === true && product.publicationStatus === 'published')
+      );
+
+    if (product.sourceType === 'DROPSHIPPING' && !isPublicDropshippingProduct) {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
