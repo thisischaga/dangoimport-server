@@ -5,7 +5,18 @@ const { calculateImportPricing } = require('../../utils/importPricing');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
 const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
 const { findExistingAlibabaProduct, upsertAlibabaProduct } = require('./alibabaImportService');
-const { buildExternalSourceKey, mapAlibabaCategoryToDangoStore, convertUsdPriceToXof } = require('./alibabaMapper');
+const {
+  buildExternalSourceKey,
+  mapAlibabaCategoryToDangoStore,
+  convertUsdPriceToXof,
+  extractPriceTiers,
+  extractPackageDimensions,
+  detectSuspiciousStock,
+  detectMoqConflict,
+  extractOriginAndPort,
+  extractSupplyCapacity,
+  extractBrand,
+} = require('./alibabaMapper');
 
 async function mapImportedStatus(ids = []) {
   const list = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
@@ -121,6 +132,23 @@ async function getAlibabaProductForAdmin(pid) {
     ? detail.images
     : (detail.image ? [{ url: detail.image }] : []);
 
+  const priceTiers = extractPriceTiers(detail);
+  const dimensions = extractPackageDimensions(detail);
+  const originInfo = extractOriginAndPort(detail);
+  const supplyCapacity = extractSupplyCapacity(detail);
+  const brand = extractBrand(detail);
+  const declaredMoq = Math.max(1, toNumber(detail.minOrderQuantity || detail.wholesaleTrade?.min_order_quantity, 1));
+  const moqConflict = detectMoqConflict(declaredMoq, priceTiers);
+  const stockAnalysis = detectSuspiciousStock(detail.stock);
+
+  const warnings = [];
+  if (stockAnalysis.isSuspicious) {
+    warnings.push({ code: 'SUSPICIOUS_STOCK_MAX_INT', message: stockAnalysis.reason, field: 'stock' });
+  }
+  if (moqConflict.hasConflict) {
+    warnings.push({ code: 'MOQ_PRICE_TIER_CONFLICT', message: moqConflict.message, field: 'minimumOrderQuantity' });
+  }
+
   let pricingPreview = null;
   try {
     pricingPreview = buildPricingPreview({
@@ -137,26 +165,48 @@ async function getAlibabaProductForAdmin(pid) {
 
   return {
     externalProductId: detail.externalProductId,
-    source: alibabaConfig.platformKey,
+    source: 'ALIBABA',
     name: detail.name,
     description: String(detail.description || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
     category,
     image: detail.image || images[0]?.url || '',
     images,
+    brand,
     supplierPrice: detail.supplierPrice,
     supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
     supplierPriceUsd,
     currency,
     // null = sur commande (Alibaba fabrique à la demande, pas de stock fixe)
-    stock: totalStock,
-    minOrderQuantity: detail.minOrderQuantity,
+    stock: stockAnalysis.isSuspicious ? null : totalStock,
+    sourceInventory: {
+      rawStock: detail.stock,
+      verifiedStock: stockAnalysis.verifiedStock,
+      isSuspicious: stockAnalysis.isSuspicious,
+      unit: detail.unit || detail.wholesaleTrade?.unit_type || 'paire',
+      supplyCapacity,
+    },
+    minOrderQuantity: declaredMoq,
+    sourcePriceTiers: priceTiers,
+    dimensions,
+    packageSize: dimensions.formatted || detail.packageSize || '',
+    shippingOrigin: originInfo,
+    supplyCapacity,
     weight: detail.weight != null ? String(detail.weight) : '',
     sku: detail.skuInfos?.[0]?.skuId || detail.skuInfos?.[0]?.sku_id || '',
     productUrl: detail.productUrl,
     variants,
     specifications: detail.specifications || [],
+    warnings,
+    rawAlibabaData: detail.raw || detail.rawAlibabaData || detail,
     imported: existing
-      ? { productId: String(existing._id), isPublished: Boolean(existing.isPublished), name: existing.name }
+      ? {
+          productId: String(existing._id),
+          isPublished: Boolean(existing.isPublished),
+          name: existing.name,
+          price: existing.price,
+          importStatus: existing.importStatus || 'IMPORTED',
+          lastSyncedAt: existing.lastSyncedAt,
+        }
       : null,
     pricingPreview,
   };

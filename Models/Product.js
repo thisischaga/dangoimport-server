@@ -257,6 +257,11 @@ const productSchema = new mongoose.Schema({
                 }
             ],
             isDefault: { type: Boolean, default: false },
+            sourceSkuId: String,
+            sourcePrice: Number,
+            sourceStock: Number,
+            sourceStockVerified: { type: Boolean, default: false },
+            status: { type: String, default: 'NORMAL' },
         }
     ],
 
@@ -348,6 +353,93 @@ const productSchema = new mongoose.Schema({
         default: '',
     },
 
+    // Intégration avancée Alibaba & Provenance Fournisseur
+    source: {
+        type: String,
+        default: 'DANGO_IMPORT',
+        index: true,
+    },
+    sourceProductId: {
+        type: String,
+        trim: true,
+        index: true,
+    },
+    sourceUrl: {
+        type: String,
+        trim: true,
+    },
+    currency: {
+        type: String,
+        default: 'USD',
+        trim: true,
+    },
+    rawAlibabaData: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined,
+    },
+    sourcePriceTiers: [
+        {
+            _id: false,
+            minQty: Number,
+            maxQty: Number,
+            price: Number,
+            currency: { type: String, default: 'USD' },
+        }
+    ],
+    sourceInventory: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined,
+    },
+    shippingOrigin: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined,
+    },
+    dimensions: {
+        length: Number,
+        width: Number,
+        height: Number,
+        unit: { type: String, default: 'cm' },
+    },
+    packageSize: {
+        type: String,
+        default: '',
+    },
+    supplyCapacity: {
+        type: String,
+        default: '',
+    },
+    importStatus: {
+        type: String,
+        enum: ['DRAFT', 'IMPORTED', 'TO_VERIFY', 'READY_TO_PUBLISH', 'PUBLISHED', 'UNAVAILABLE', 'SYNC_ERROR'],
+        default: 'DRAFT',
+        index: true,
+    },
+    publicationStatus: {
+        type: String,
+        enum: ['draft', 'pending', 'published', 'unpublished', 'archived'],
+        default: 'draft',
+        index: true,
+    },
+    importWarnings: [
+        {
+            _id: false,
+            code: String,
+            message: String,
+            field: String,
+            createdAt: { type: Date, default: Date.now },
+        }
+    ],
+    importErrors: [
+        {
+            _id: false,
+            code: String,
+            message: String,
+            field: String,
+            createdAt: { type: Date, default: Date.now },
+        }
+    ],
+    lastSyncedAt: Date,
+
     // Informations de vendeur
     vendorName: {
         type: String,
@@ -398,6 +490,16 @@ productSchema.index(
     partialFilterExpression: {
       sourceType: 'DROPSHIPPING',
       'supplier.productId': { $type: 'string', $ne: '' },
+    },
+  },
+);
+productSchema.index(
+  { source: 1, sourceProductId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      source: 'ALIBABA',
+      sourceProductId: { $type: 'string', $ne: '' },
     },
   },
 );

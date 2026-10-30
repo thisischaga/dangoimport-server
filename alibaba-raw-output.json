@@ -1,0 +1,23 @@
+{
+  "productId": "1601635137534cls",
+  "endpoint": "/eco/buyer/product/description",
+  "country": "US",
+  "raw": null,
+  "inventoryRaw": null,
+  "keyAttributesRaw": null,
+  "errors": {
+    "description": {
+      "message": "The request signature does not conform to platform standards",
+      "code": "IncompleteSignature",
+      "status": 502
+    },
+    "inventory": {
+      "message": "The request signature does not conform to platform standards",
+      "code": "IncompleteSignature"
+    },
+    "keyAttributes": {
+      "message": "The request signature does not conform to platform standards",
+      "code": "IncompleteSignature"
+    }
+  }
+}

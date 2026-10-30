@@ -586,11 +586,9 @@ async function fetchProductById(id) {
   let payload;
   try {
     payload = await alibabaCall(path, {
-      product_id: String(id),
-      country: alibabaConfig.defaultCountry,
       query_req: {
         product_id: String(id),
-        country: alibabaConfig.defaultCountry,
+        country: alibabaConfig.defaultCountry || 'US',
       },
     });
   } catch (error) {
@@ -1321,8 +1319,6 @@ async function getAlibabaRawProduct(input) {
   let descriptionError = null;
   try {
     descriptionRaw = await alibabaCall(path, {
-      product_id: String(id),
-      country: alibabaConfig.defaultCountry || 'US',
       query_req: {
         product_id: String(id),
         country: alibabaConfig.defaultCountry || 'US',

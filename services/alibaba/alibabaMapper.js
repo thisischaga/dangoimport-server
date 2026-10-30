@@ -265,16 +265,167 @@ function extractSkuInventory(sku) {
     ?? sku.quantity ?? sku.free_inventory ?? sku.total_inventory,
     0,
   );
+function extractPriceTiers(source = {}) {
+  const rawTiers = Array.isArray(source.ladderPrices) && source.ladderPrices.length
+    ? source.ladderPrices
+    : Array.isArray(source.ladder_price) && source.ladder_price.length
+      ? source.ladder_price
+      : Array.isArray(source.wholesaleTrade?.ladder_price) && source.wholesaleTrade.ladder_price.length
+        ? source.wholesaleTrade.ladder_price
+        : Array.isArray(source.raw?.wholesale_trade?.ladder_price) && source.raw.wholesale_trade.ladder_price.length
+          ? source.raw.wholesale_trade.ladder_price
+          : Array.isArray(source.raw?.productPrice?.ladder_price) && source.raw.productPrice.ladder_price.length
+            ? source.raw.productPrice.ladder_price
+            : Array.isArray(source.raw?.ladder_price) && source.raw.ladder_price.length
+              ? source.raw.ladder_price
+              : [];
+
+  let candidateTiers = rawTiers;
+  if (!candidateTiers.length && Array.isArray(source.skuInfos)) {
+    for (const sku of source.skuInfos) {
+      if (Array.isArray(sku.ladder_price) && sku.ladder_price.length) {
+        candidateTiers = sku.ladder_price;
+        break;
+      }
+    }
+  }
+
+  if (!candidateTiers.length) return [];
+
+  return candidateTiers
+    .map((tier) => {
+      const minQty = Number(tier.min_quantity ?? tier.minQuantity ?? tier.min_order_quantity ?? tier.start_quantity ?? 1);
+      const maxRaw = tier.max_quantity ?? tier.maxQuantity ?? tier.end_quantity;
+      const maxQty = (maxRaw !== undefined && maxRaw !== null && Number(maxRaw) > 0) ? Number(maxRaw) : null;
+      const price = Number(tier.price ?? tier.consign_price ?? tier.unit_price ?? 0);
+      const currency = String(tier.currency || source.currency || 'USD').toUpperCase();
+      return {
+        minQty: Math.max(1, minQty),
+        maxQty,
+        price,
+        currency,
+      };
+    })
+    .filter((t) => t.price > 0)
+    .sort((a, b) => a.minQty - b.minQty);
+}
+
+function extractPackageDimensions(source = {}) {
+  const rawSize = source.packageSize || source.package_size
+    || source.wholesaleTrade?.package_size
+    || source.raw?.wholesale_trade?.package_size
+    || source.raw?.package_size
+    || '';
+  if (!rawSize) return { length: null, width: null, height: null, unit: 'cm', formatted: '' };
+
+  const cleaned = String(rawSize).replace(/cm|mm|m/gi, '').trim();
+  const match = cleaned.match(/(\d+(?:\.\d+)?)\s*[*x×X]\s*(\d+(?:\.\d+)?)\s*[*x×X]\s*(\d+(?:\.\d+)?)/);
+  if (match) {
+    return {
+      length: Number(match[1]),
+      width: Number(match[2]),
+      height: Number(match[3]),
+      unit: 'cm',
+      formatted: `${match[1]} × ${match[2]} × ${match[3]} cm`,
+    };
+  }
+  return { length: null, width: null, height: null, unit: 'cm', formatted: String(rawSize) };
+}
+
+function detectSuspiciousStock(stock) {
+  const n = Number(stock ?? 0);
+  if (n >= 2147483647) {
+    return {
+      isSuspicious: true,
+      verifiedStock: 0,
+      rawStock: n,
+      reason: 'Plafond technique 2147483647 (Integer.MAX_VALUE) détecté : quantité marquée non vérifiée.',
+    };
+  }
+  if (!Number.isFinite(n) || n < 0) {
+    return {
+      isSuspicious: true,
+      verifiedStock: 0,
+      rawStock: n,
+      reason: 'Valeur de stock négative ou invalide.',
+    };
+  }
+  return {
+    isSuspicious: false,
+    verifiedStock: n,
+    rawStock: n,
+  };
+}
+
+function detectMoqConflict(declaredMoq, priceTiers = []) {
+  const moq = Number(declaredMoq) || 1;
+  if (moq > 1 && priceTiers.length > 0) {
+    const firstTierMin = Number(priceTiers[0].minQty) || 1;
+    if (firstTierMin < moq) {
+      return {
+        hasConflict: true,
+        declaredMoq: moq,
+        tierMinQty: firstTierMin,
+        message: `Conflit MOQ : Minimum de commande déclaré (${moq} paires) supérieur au 1er palier de prix (${firstTierMin} paire). Validation requise avant mise en vente.`,
+      };
+    }
+  }
+  return { hasConflict: false };
+}
+
+function extractOriginAndPort(source = {}) {
+  const specs = source.specifications || source.raw?.specifications || [];
+  let origin = source.shipFromCountryName || source.raw?.ship_from_country_name || '';
+  let port = '';
+
+  const getSpec = (pattern) => {
+    const found = specs.find((s) => s && s.key && pattern.test(String(s.key)));
+    return found ? String(found.value || '').trim() : '';
+  };
+
+  const originSpec = getSpec(/lieu d['’]origine|place of origin|origin|pays d['’]origine/i);
+  if (originSpec) origin = originSpec;
+  const portSpec = getSpec(/port|port de d[ée]part|shipping port/i);
+  if (portSpec) port = portSpec;
+
+  const wt = source.wholesaleTrade || source.raw?.wholesale_trade || {};
+  if (wt.port) port = wt.port;
+
+  const label = [origin, port ? `Port de ${port}` : ''].filter(Boolean).join(' · ') || 'Chine';
+  return {
+    country: 'CN',
+    countryName: 'Chine',
+    origin: origin || 'Chine',
+    port: port || '',
+    label,
+  };
+}
+
+function extractSupplyCapacity(source = {}) {
+  const specs = source.specifications || source.raw?.specifications || [];
+  const found = specs.find((s) => s && s.key && /capacit[ée] d['’]approvisionnement|supply ability|supply capacity/i.test(String(s.key)));
+  if (found && found.value) return String(found.value).trim();
+  const wt = source.wholesaleTrade || source.raw?.wholesale_trade || {};
+  return wt.supply_ability || wt.supplyAbility || '';
+}
+
+function extractBrand(source = {}) {
+  if (source.brand) return String(source.brand).trim();
+  const specs = source.specifications || source.raw?.specifications || [];
+  const found = specs.find((s) => s && s.key && /^marque$|^brand$|^brand_name$/i.test(String(s.key).trim()));
+  if (found && found.value) return String(found.value).trim();
+  return source.supplierName || source.manufacturerName || '';
 }
 
 async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, productTotalStock = 0 } = {}) {
   const list = Array.isArray(skuInfos) ? skuInfos : [];
   if (!list.length) return [];
 
-  // Alibaba = fabrication sur commande. On ne doit pas inventer un stock fictif.
-  // Si l'API fournit un stock réel on l'utilise, sinon on laisse 0 (= sur commande).
-  const hasIndividualStock = list.some((sku) => extractSkuInventory(sku) > 0);
-  const baseTotalStock = productTotalStock > 0 ? productTotalStock : 0;
+  const hasIndividualStock = list.some((sku) => {
+    const stock = extractSkuInventory(sku);
+    return stock > 0 && stock < 2147483647;
+  });
+  const baseTotalStock = productTotalStock > 0 && productTotalStock < 2147483647 ? productTotalStock : 0;
   const fallbackPerSku = baseTotalStock > 0 ? Math.max(1, Math.floor(baseTotalStock / list.length)) : 0;
 
   const results = [];
@@ -352,16 +503,22 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
     }
 
     const rawStock = extractSkuInventory(sku);
-    // Si stock individuel réel : utiliser ; sinon 0 (fabriqué sur commande, pas d'inventaire fixe)
+    const isStockSuspicious = rawStock >= 2147483647;
+    const safeStock = isStockSuspicious ? 0 : rawStock;
     const stock = hasIndividualStock
-      ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
+      ? (safeStock > 0 ? safeStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
       : 0;
 
     results.push({
       name: skuName,
       sku: String(sku.skuId || sku.sku_id || sku.specId || ''),
+      sourceSkuId: String(sku.skuId || sku.sku_id || sku.specId || sku.seller_sku_id || ''),
       price: priceXof,
       stock,
+      sourcePrice: supplierUsd,
+      sourceStock: rawStock,
+      sourceStockVerified: !isStockSuspicious && rawStock > 0,
+      status: sku.status || 'NORMAL',
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: variantAttrs,
       supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
@@ -399,18 +556,48 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   });
 
   const productTotalStock = toNumber(source.stock, 0);
+  const stockAnalysis = detectSuspiciousStock(productTotalStock);
+  const warnings = [];
+  const errors = [];
+
+  if (stockAnalysis.isSuspicious) {
+    warnings.push({
+      code: 'SUSPICIOUS_STOCK_MAX_INT',
+      message: stockAnalysis.reason,
+      field: 'stock',
+    });
+  }
+
+  const priceTiers = extractPriceTiers(source);
+  const declaredMoq = Math.max(1, toNumber(source.minOrderQuantity || source.wholesaleTrade?.min_order_quantity, 1));
+  const moqConflict = detectMoqConflict(declaredMoq, priceTiers);
+  if (moqConflict.hasConflict) {
+    warnings.push({
+      code: 'MOQ_PRICE_TIER_CONFLICT',
+      message: moqConflict.message,
+      field: 'minimumOrderQuantity',
+    });
+  }
+
+  const dimensions = extractPackageDimensions(source);
+  const originInfo = extractOriginAndPort(source);
+  const supplyCapacity = extractSupplyCapacity(source);
+  const brand = extractBrand(source);
+
   const variants = await mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos, {
     skipTranslation,
-    productTotalStock,
+    productTotalStock: stockAnalysis.verifiedStock,
   });
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  // Stock total : utilise les vrais chiffres API ou 0 (sur commande, pas de stock fixe)
-  const stock = stockFromVariants || productTotalStock || 0;
+  const stock = stockFromVariants || stockAnalysis.verifiedStock || 0;
 
   const images = extractImages(source.raw || source).length
     ? extractImages(source.raw || source)
     : (source.images || []).map((img) => (typeof img === 'string' ? { url: img } : img));
   const primaryImage = images[0]?.url || source.image || '';
+  if (!images.length && !primaryImage) {
+    errors.push({ code: 'MISSING_IMAGES', message: 'Aucune image exploitable trouvée.', field: 'images' });
+  }
 
   let name = String(source.name || source.subject || `Produit Alibaba ${externalProductId}`).trim();
 
@@ -454,15 +641,21 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     } catch (_e) { /* fallback */ }
   }
 
-  const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight);
+  const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight || source.wholesaleTrade?.weight);
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
   const category = mapAlibabaCategoryToDangoStore(source.category || 'Général', name);
 
   const productColors = [...new Set(variants.map((v) => v.attributes?.color || v.attributes?.Couleur).filter(Boolean))];
   const productSizes = [...new Set(variants.map((v) => v.attributes?.size || v.attributes?.Taille).filter(Boolean))];
 
+  const rawPayload = source.raw || source.rawAlibabaData || source;
+  const productUrl = source.productUrl || `https://www.alibaba.com/product-detail/${externalProductId}.html`;
+  const importStatus = errors.length > 0 ? 'SYNC_ERROR' : warnings.length > 0 ? 'TO_VERIFY' : 'IMPORTED';
+
   return {
-    source: alibabaConfig.platformKey,
+    source: 'ALIBABA',
+    sourceProductId: externalProductId,
+    sourceUrl: productUrl,
     externalProductId,
     externalSourceKey: buildExternalSourceKey(externalProductId),
     name,
@@ -480,20 +673,38 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     isAlibaba: true,
     fulfillmentPlatform: 'Alibaba',
     specifications,
-    brand: '',
+    brand,
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
     productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
-    minimumOrderQuantity: Math.max(1, toNumber(source.minOrderQuantity, 1)),
+    minimumOrderQuantity: declaredMoq,
     quantityIncrement: 1,
     shippingCategory: inferShippingCategory({ name, category, weight: weightRaw }),
     estimatedImportDays: { min: 20, max: 30 },
     videos: source.videoUrl ? [source.videoUrl] : [],
+    rawAlibabaData: rawPayload,
+    sourcePriceTiers: priceTiers,
+    currency: 'USD',
+    sourceInventory: {
+      rawStock: productTotalStock,
+      verifiedStock: stockAnalysis.verifiedStock,
+      isSuspicious: stockAnalysis.isSuspicious,
+      unit: source.unit || source.wholesaleTrade?.unit_type || 'paire',
+      supplyCapacity,
+    },
+    shippingOrigin: originInfo,
+    dimensions,
+    packageSize: dimensions.formatted || source.packageSize || '',
+    supplyCapacity,
+    importStatus,
+    publicationStatus: 'draft',
+    importWarnings: warnings,
+    importErrors: errors,
     supplier: {
-      name: source.supplierName || source.raw?.sellerLoginId || alibabaConfig.supplierName,
+      name: source.supplierName || source.raw?.sellerLoginId || brand || alibabaConfig.supplierName,
       platform: alibabaConfig.platformKey,
       productId: externalProductId,
-      productUrl: source.productUrl || `https://www.alibaba.com/product-detail/${externalProductId}.html`,
+      productUrl,
       supplierPrice: supplierUsd,
       supplierCurrency: 'USD',
       shippingCost: 0,
@@ -506,6 +717,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
       wholesaleTrade: source.wholesaleTrade || null,
       skus: source.skus || [],
       videoUrl: source.videoUrl || '',
+      shipFromCountryName: originInfo.origin || 'Chine',
     },
     pricing: {
       supplierPrice: supplierUsd,
@@ -521,7 +733,15 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
 }
 
 function mapToDropshippingPayload(mapped, { publish = false } = {}) {
+  const canPublish = Boolean(publish)
+    && mapped.importStatus !== 'TO_VERIFY'
+    && (!mapped.importErrors || mapped.importErrors.length === 0)
+    && Number(mapped?.pricing?.sellingPrice || 0) > 0;
+
   return {
+    source: 'ALIBABA',
+    sourceProductId: mapped.sourceProductId || mapped.externalProductId,
+    sourceUrl: mapped.sourceUrl,
     name: mapped.name,
     slug: mapped.slug,
     description: mapped.description,
@@ -544,7 +764,9 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     brand: mapped.brand,
     shippingInfo: mapped.shippingInfo,
     importSourceType: 'ALIBABA_API',
-    isPublished: Boolean(publish) && Number(mapped?.pricing?.sellingPrice || 0) > 0,
+    isPublished: canPublish,
+    publicationStatus: canPublish ? 'published' : 'draft',
+    importStatus: canPublish ? 'PUBLISHED' : (mapped.importStatus || 'IMPORTED'),
     isDropshippingActive: true,
     otherCosts: 0,
     estimatedProfit: mapped.pricing.estimatedProfit,
@@ -555,9 +777,20 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     estimatedImportDays: mapped.estimatedImportDays,
     minimumOrderQuantity: mapped.minimumOrderQuantity,
     quantityIncrement: mapped.quantityIncrement,
+    rawAlibabaData: mapped.rawAlibabaData,
+    sourcePriceTiers: mapped.sourcePriceTiers || [],
+    currency: mapped.currency || 'USD',
+    sourceInventory: mapped.sourceInventory,
+    shippingOrigin: mapped.shippingOrigin,
+    dimensions: mapped.dimensions,
+    packageSize: mapped.packageSize || '',
+    supplyCapacity: mapped.supplyCapacity || '',
+    importWarnings: mapped.importWarnings || [],
+    importErrors: mapped.importErrors || [],
     supplier: mapped.supplier,
     externalSourceKey: mapped.externalSourceKey,
     syncStatus: 'success',
+    lastSyncedAt: new Date(),
   };
 }
 
@@ -568,5 +801,12 @@ module.exports = {
   mapAlibabaCategoryToDangoStore,
   mapAlibabaProductToDango,
   mapToDropshippingPayload,
+  extractPriceTiers,
+  extractPackageDimensions,
+  detectSuspiciousStock,
+  detectMoqConflict,
+  extractOriginAndPort,
+  extractSupplyCapacity,
+  extractBrand,
   ATTR_TRANSLATIONS,
 };
