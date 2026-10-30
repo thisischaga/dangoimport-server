@@ -114,3 +114,10 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   assert.equal(publicDoc.isAlibaba, true);
   assert.equal(publicDoc.fulfillmentPlatform, 'Alibaba');
 });
+
+test('getAlibabaRawProduct rejects empty id', async () => {
+  const { getAlibabaRawProduct } = require('../services/alibaba/alibabaProductService');
+  await assert.rejects(async () => {
+    await getAlibabaRawProduct('');
+  }, /invalide/i);
+});

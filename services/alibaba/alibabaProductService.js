@@ -1298,9 +1298,87 @@ async function getAlibabaProductDetail(productId) {
   return merged;
 }
 
+/**
+ * Récupère les données 100% brutes renvoyées par Alibaba pour un produit donné
+ * sans aucune transformation, normalisation ni mapping par le backend.
+ *
+ * @param {string|number} input - ID du produit ou URL Alibaba
+ * @returns {Promise<object>} - Données brutes telles que reçues de l'API Alibaba
+ */
+async function getAlibabaRawProduct(input) {
+  const id = extractProductId(input) || String(input || '').trim();
+  if (!id) {
+    const err = new Error('ID ou URL de produit Alibaba invalide.');
+    err.status = 400;
+    throw err;
+  }
+
+  const path = alibabaConfig.productGetPath;
+  assertAllowedPath(path);
+
+  // 1. Appel principal vers la fiche produit Alibaba (/eco/buyer/product/description)
+  let descriptionRaw = null;
+  let descriptionError = null;
+  try {
+    descriptionRaw = await alibabaCall(path, {
+      product_id: String(id),
+      country: alibabaConfig.defaultCountry || 'US',
+      query_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry || 'US',
+      },
+    });
+  } catch (err) {
+    descriptionError = { message: err.message, code: err.code, status: err.status };
+  }
+
+  // 2. Appel inventaire brut (/eco/buyer/product/inventory)
+  let inventoryRaw = null;
+  let inventoryError = null;
+  try {
+    inventoryRaw = await alibabaCall('/eco/buyer/product/inventory', {
+      inv_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry || 'US',
+      },
+    });
+  } catch (err) {
+    inventoryError = { message: err.message, code: err.code };
+  }
+
+  // 3. Appel attributs clés bruts (/eco/buyer/product/keyattributes)
+  let keyAttributesRaw = null;
+  let keyAttributesError = null;
+  try {
+    keyAttributesRaw = await alibabaCall('/eco/buyer/product/keyattributes', {
+      query_req: {
+        product_id: String(id),
+        country: alibabaConfig.defaultCountry || 'US',
+      },
+    });
+  } catch (err) {
+    keyAttributesError = { message: err.message, code: err.code };
+  }
+
+  return {
+    productId: id,
+    endpoint: path,
+    country: alibabaConfig.defaultCountry || 'US',
+    raw: descriptionRaw,
+    inventoryRaw,
+    keyAttributesRaw,
+    errors: {
+      description: descriptionError,
+      inventory: inventoryError,
+      keyAttributes: keyAttributesError,
+    },
+  };
+}
+
 module.exports = {
   searchAlibabaProducts,
   getAlibabaProductDetail,
+  getAlibabaRawProduct,
   mapSearchItem,
   extractImages,
   extractAlibabaSpecifications,

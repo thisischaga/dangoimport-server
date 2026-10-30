@@ -15,6 +15,7 @@ const {
   importAlibabaProductForAdmin,
   buildPricingPreview,
 } = require('../services/alibaba/alibabaExplorerService');
+const { getAlibabaRawProduct } = require('../services/alibaba/alibabaProductService');
 
 function handleError(res, error) {
   let status = error.status || 500;
@@ -142,6 +143,20 @@ exports.getProductDetail = async (req, res) => {
     return res.json({ success: true, data });
   } catch (error) {
     console.error('[alibaba] getProductDetail:', error.code, error.message);
+    return handleError(res, error);
+  }
+};
+
+exports.getProductRaw = async (req, res) => {
+  try {
+    const id = req.params.pid || req.query.id || req.query.productId || req.query.keyword;
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID ou URL Alibaba manquant (passer :pid ou ?id=).' });
+    }
+    const data = await getAlibabaRawProduct(id);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[alibaba] getProductRaw:', error.code, error.message);
     return handleError(res, error);
   }
 };

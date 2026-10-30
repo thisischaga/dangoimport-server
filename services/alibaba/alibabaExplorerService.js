@@ -1,6 +1,6 @@
 const Product = require('../../Models/Product');
 const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
-const { searchAlibabaProducts, getAlibabaProductDetail } = require('./alibabaProductService');
+const { searchAlibabaProducts, getAlibabaProductDetail, getAlibabaRawProduct } = require('./alibabaProductService');
 const { calculateImportPricing } = require('../../utils/importPricing');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
 const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
@@ -180,6 +180,7 @@ async function importAlibabaProductForAdmin(pid, options = {}, adminUser) {
 module.exports = {
   searchAlibabaForAdmin,
   getAlibabaProductForAdmin,
+  getAlibabaRawProduct,
   getImportStatus,
   importAlibabaProductForAdmin,
   buildPricingPreview,

@@ -14,6 +14,8 @@ router.post('/oauth/exchange', alibabaSupplierController.oauthExchange);
 router.get('/status', alibabaSupplierController.status);
 router.post('/test', alibabaSupplierController.test);
 router.post('/products/preview-pricing', alibabaSupplierController.previewProductPricing);
+router.get('/products/:pid/raw', alibabaSupplierController.getProductRaw);
+router.get('/raw', alibabaSupplierController.getProductRaw);
 router.get('/products/:pid/import-status', alibabaSupplierController.getProductImportStatus);
 router.get('/products/:pid', alibabaSupplierController.getProductDetail);
 router.post('/products/:pid/import', alibabaSupplierController.importProduct);
