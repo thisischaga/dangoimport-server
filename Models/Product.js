@@ -338,6 +338,15 @@ const productSchema = new mongoose.Schema({
         default: '',
     },
     lastSyncErrorAt: Date,
+    isAlibaba: {
+        type: Boolean,
+        default: false,
+        index: true,
+    },
+    fulfillmentPlatform: {
+        type: String,
+        default: '',
+    },
 
     // Informations de vendeur
     vendorName: {

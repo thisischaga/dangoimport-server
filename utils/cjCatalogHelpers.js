@@ -514,6 +514,17 @@ function repairPublicCategory(doc = {}) {
 
 function resolveDropshipSellableStock(product = {}) {
   const supplier = product.supplier || {};
+  const isAlibaba = Boolean(
+    product.isAlibaba === true ||
+    product.importSourceType === 'ALIBABA_API' ||
+    supplier.platform === 'alibaba' ||
+    /^alibaba:/i.test(String(product.externalSourceKey || ''))
+  );
+  if (isAlibaba) {
+    const rawStock = toNumber(product.stock, 0);
+    return rawStock > 0 ? rawStock : 999;
+  }
+
   let stock = toNumber(product.stock, 0);
 
   if (Array.isArray(product.variants) && product.variants.length) {
@@ -556,6 +567,12 @@ function applyRealStock(doc = {}, source = {}) {
 function attachPublicFulfillmentFields(doc = {}, source = {}) {
   const next = { ...doc };
   const supplier = source.supplier || {};
+  const isAlibaba = Boolean(
+    source.isAlibaba === true ||
+    source.importSourceType === 'ALIBABA_API' ||
+    supplier.platform === 'alibaba' ||
+    /^alibaba:/i.test(String(source.externalSourceKey || ''))
+  );
   next.stock = resolveDropshipSellableStock({
     ...source,
     stock: next.stock,
@@ -564,18 +581,20 @@ function attachPublicFulfillmentFields(doc = {}, source = {}) {
   });
   next.shippingOrigin = {
     countryCode: String(supplier.shipFromCountryCode || '').toUpperCase(),
-    countryName: supplier.shipFromCountryName || '',
+    countryName: supplier.shipFromCountryName || (isAlibaba ? 'Chine' : ''),
     warehouseName: supplier.shipFromWarehouseName || '',
   };
   const realSupplier = String(
-    supplier.manufacturerName || supplier.name || '',
+    supplier.manufacturerName || supplier.name || (isAlibaba ? 'Alibaba' : ''),
   ).trim();
   if (realSupplier) {
     next.fulfillmentSupplierName = realSupplier;
   }
-  next.fulfillmentPlatform = 'CJdropshipping';
+  next.fulfillmentPlatform = isAlibaba ? 'Alibaba' : 'CJdropshipping';
   if (supplier.estimatedDeliveryDays != null) {
     next.estimatedDeliveryDays = toNumber(supplier.estimatedDeliveryDays, 0);
+  } else if (isAlibaba) {
+    next.estimatedDeliveryDays = 25;
   }
   return next;
 }

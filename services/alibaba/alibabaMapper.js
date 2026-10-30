@@ -296,20 +296,46 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
     };
     let skuName = sku.name || sku.skuName || sku.attributes?.[0]?.attributeValue || '';
-    if (!skuName && Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
-      const parts = [];
+    const parts = [];
+    if (Array.isArray(sku.sku_attr_list) && sku.sku_attr_list.length) {
       sku.sku_attr_list.forEach((a) => {
-        const keyRaw = (a.attr_name_desc || '').toLowerCase();
-        const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attr_name_desc || '';
-        let val = a.attr_value_desc || '';
+        const keyRaw = (a.attr_name_desc || a.attrNameDesc || a.attr_name || a.attrName || '').toLowerCase();
+        const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attr_name_desc || a.attrNameDesc || '';
+        let val = a.attr_value_desc || a.attrValueDesc || a.attr_value || a.attrValue || '';
         const lowerVal = val.toLowerCase();
         if (COLOR_TRANSLATIONS[lowerVal]) val = COLOR_TRANSLATIONS[lowerVal];
-        if (keyFr && val) variantAttrs[keyFr] = val;
+        if (keyFr && val) {
+          variantAttrs[keyFr] = val;
+          if (keyFr === 'Couleur' || keyRaw === 'color' || keyRaw === 'colour') {
+            variantAttrs.color = val;
+          }
+          if (keyFr === 'Taille' || keyRaw === 'size') {
+            variantAttrs.size = val;
+          }
+        }
         if (val) parts.push(val);
       });
-      if (parts.length) {
-        skuName = parts.join(' · ');
-      }
+    } else if (Array.isArray(sku.attributes) && sku.attributes.length) {
+      sku.attributes.forEach((a) => {
+        const keyRaw = (a.attributeName || a.attrName || a.name || '').toLowerCase();
+        const keyFr = ATTR_TRANSLATIONS[keyRaw] || a.attributeName || a.attrName || a.name || '';
+        let val = a.attributeValue || a.attrValue || a.value || '';
+        const lowerVal = val.toLowerCase();
+        if (COLOR_TRANSLATIONS[lowerVal]) val = COLOR_TRANSLATIONS[lowerVal];
+        if (keyFr && val) {
+          variantAttrs[keyFr] = val;
+          if (keyFr === 'Couleur' || keyRaw === 'color' || keyRaw === 'colour') {
+            variantAttrs.color = val;
+          }
+          if (keyFr === 'Taille' || keyRaw === 'size') {
+            variantAttrs.size = val;
+          }
+        }
+        if (val) parts.push(val);
+      });
+    }
+    if (!skuName && parts.length) {
+      skuName = parts.join(' · ');
     }
     if (!skuName) skuName = `Variante ${index + 1}`;
     skuName = translateVariantText(skuName)
@@ -432,6 +458,9 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
   const category = mapAlibabaCategoryToDangoStore(source.category || 'Général', name);
 
+  const productColors = [...new Set(variants.map((v) => v.attributes?.color || v.attributes?.Couleur).filter(Boolean))];
+  const productSizes = [...new Set(variants.map((v) => v.attributes?.size || v.attributes?.Taille).filter(Boolean))];
+
   return {
     source: alibabaConfig.platformKey,
     externalProductId,
@@ -446,6 +475,10 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     images,
     image: primaryImage,
     variants,
+    color: productColors,
+    size: productSizes,
+    isAlibaba: true,
+    fulfillmentPlatform: 'Alibaba',
     specifications,
     brand: '',
     shippingInfo: 'Frais d\'importation calculés au checkout',
@@ -503,6 +536,10 @@ function mapToDropshippingPayload(mapped, { publish = false } = {}) {
     images: mapped.images,
     videos: mapped.videos || [],
     variants: mapped.variants,
+    color: mapped.color || [],
+    size: mapped.size || [],
+    isAlibaba: true,
+    fulfillmentPlatform: 'Alibaba',
     specifications: mapped.specifications,
     brand: mapped.brand,
     shippingInfo: mapped.shippingInfo,

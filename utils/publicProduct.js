@@ -97,6 +97,17 @@ function toPublicProduct(product) {
     publicDoc.originLabel = resolveLocalOriginLabel(doc);
   }
 
+  const isAlibaba = Boolean(
+    doc.isAlibaba === true ||
+    doc.importSourceType === 'ALIBABA_API' ||
+    doc.supplier?.platform === 'alibaba' ||
+    /^alibaba:/i.test(String(doc.externalSourceKey || ''))
+  );
+  if (isAlibaba) {
+    publicDoc.isAlibaba = true;
+    publicDoc.fulfillmentPlatform = 'Alibaba';
+  }
+
   return publicDoc;
 }
 
