@@ -1,300 +1,279 @@
+const { isDropshippingProduct, PLATFORM_VENDOR_NAME } = require('./dropshippingCalculations');
+const { calculateImportPricing } = require('./importPricing');
+const { getImportPricingConfigSync } = require('../services/importPricingService');
+const {
+  prepareDropshippingProductForPublic,
+  isCjDropshippingProduct,
+  isInvalidTranslationText,
+  pickBestStoredProductName,
+  sanitizePublicVariants,
+} = require('./cjCatalogHelpers');
 
-'use strict';
+const INTERNAL_FIELDS = [
+  'costPrice',
+  'otherCosts',
+  'estimatedProfit',
+  'marginPercent',
+  'syncError',
+  'lastSyncErrorAt',
+  'importSourceType',
+  'pickupAddress',
+  'sellerAddress',
+  'history',
+  'rejectionReason',
+  'changeRequestComment',
+  'reviews',
+  'dropshipStockEstimated',
+  'convertedSupplierPriceFCFA',
+  'productMarkupMultiplier',
+  'shippingCategory',
+  'rawAlibabaData',
+  'sourceInventory',
+  'sourcePriceTiers',
+  'importErrors',
+  'importWarnings',
+];
 
-const PLATFORM_VENDOR_NAME = 'DANGO IMPORT';
+function computePublicPriceTiers(doc = {}) {
+  const tiers = Array.isArray(doc.sourcePriceTiers) && doc.sourcePriceTiers.length > 0
+    ? doc.sourcePriceTiers
+    : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices : []);
 
-function toPlainObject(value) {
-  if (!value) return {};
-  if (typeof value.toObject === 'function') {
-    return value.toObject({ virtuals: false });
-  }
-  if (typeof value !== 'object') return {};
-  return value;
-}
+  if (!tiers.length) return [];
 
-function firstNonEmpty(...values) {
-  for (const value of values) {
-    if (value !== undefined && value !== null && value !== '') {
-      return value;
+  const multiplier = Math.max(1, Number(doc.productMarkupMultiplier) || 1.3);
+  const minUnitPrice = Math.max(0, Math.round(Number(doc.minimumProductPrice) || 0));
+
+  return tiers.map((tier) => {
+    const rawTierPrice = Number(tier.price) || 0;
+    const currency = String(tier.currency || doc.currency || 'USD').toUpperCase();
+    let priceXof = 0;
+    if (currency === 'USD') {
+      priceXof = Math.round(rawTierPrice * 610);
+    } else if (currency === 'CNY') {
+      priceXof = Math.round(rawTierPrice * 85);
+    } else {
+      priceXof = Math.round(rawTierPrice);
     }
-  }
-  return null;
-}
-
-function toArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function toFiniteNumber(value, fallback = null) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function normalizeImageUrl(value) {
-  if (typeof value !== 'string') return null;
-
-  const url = value.trim();
-  if (!url) return null;
-
-  if (url.startsWith('//')) return `https:${url}`;
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      return null;
-    }
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
-
-function normalizeImages(product) {
-  const candidates = [
-    ...toArray(product.images),
-    product.image,
-    product.mainImage,
-    product.thumbnail,
-    ...toArray(product.gallery),
-  ];
-
-  return [...new Set(candidates.map(normalizeImageUrl).filter(Boolean))];
-}
-
-function isAlibabaProduct(product = {}) {
-  const source = String(
-    product.sourceType ||
-    product.source ||
-    product.vendorType ||
-    ''
-  ).toUpperCase();
-
-  return (
-    source.includes('ALIBABA') ||
-    Boolean(product.sourceProductId) ||
-    Boolean(product.externalProductId) ||
-    Boolean(product.alibabaProductId)
-  );
-}
-
-function isDropshippingProduct(product = {}) {
-  const source = String(
-    product.sourceType ||
-    product.vendorType ||
-    ''
-  ).toUpperCase();
-
-  return (
-    source === 'DROPSHIPPING' ||
-    source === 'ALIBABA' ||
-    isAlibabaProduct(product)
-  );
-}
-
-function getDisplayVendorName(product = {}) {
-  if (isAlibabaProduct(product) || isDropshippingProduct(product)) {
-    return PLATFORM_VENDOR_NAME;
-  }
-
-  return (
-    product.vendorName ||
-    product.sellerName ||
-    product.storeName ||
-    PLATFORM_VENDOR_NAME
-  );
-}
-
-function extractAlibabaData(alibaba = {}) {
-  const normalized = toPlainObject(alibaba.normalized);
-  const pricing = toPlainObject(alibaba.pricing);
-  const inventory = toPlainObject(alibaba.inventory);
-  const logistics = toPlainObject(alibaba.logistics);
-  const supplier = toPlainObject(alibaba.supplier);
-
-  const variants = toArray(alibaba.variants).map((variant) => {
-    const item = toPlainObject(variant);
-    const attrs = toArray(item.attributes).map((attr) => ({
-      name: String(attr.name || ''),
-      value: String(attr.value || ''),
-      image: normalizeImageUrl(attr.image),
-    })).filter((attr) => attr.name && attr.value);
-
+    const publicUnitPrice = Math.max(minUnitPrice, Math.round(priceXof * multiplier));
     return {
-      // Identifiant externe informatif uniquement.
-      // Le backend de commande doit le valider avant de l'accepter.
-      externalVariantId: item.skuId
-        ? String(item.skuId)
-        : item.externalVariantId
-          ? String(item.externalVariantId)
-          : null,
-      attributes: attrs,
-      image: normalizeImageUrl(item.image),
-      unit: item.unit || null,
-      pricing: toArray(item.pricing)
-        .map((tier) => ({
-          minQuantity: toFiniteNumber(tier.minQuantity, 1),
-          maxQuantity: toFiniteNumber(tier.maxQuantity),
-          price: toFiniteNumber(tier.price),
-          currency: tier.currency || null,
-        }))
-        .filter((tier) => tier.price !== null && tier.price > 0),
-      // Ne jamais déclarer le stock disponible par défaut.
-      quantityVerified: item.inventory?.quantityVerified === true,
-      availability: item.inventory?.availability || 'UNKNOWN',
-    };
-  });
-
-  const availability = inventory.availability || 'UNKNOWN';
-  const quantityVerified = inventory.quantityVerified === true;
-
-  let availabilityLabel = 'Disponibilité à confirmer auprès du fournisseur';
-
-  if (availability === 'UNAVAILABLE') {
-    availabilityLabel = 'Actuellement indisponible';
-  } else if (availability === 'AVAILABLE' && quantityVerified) {
-    availabilityLabel = 'Disponibilité confirmée';
-  } else if (availability === 'CHECK_REQUIRED') {
-    availabilityLabel = 'Vérification nécessaire avant commande';
-  }
-
-  return {
-    sourceProductId: firstNonEmpty(
-      alibaba.sourceProductId,
-      alibaba.externalProductId,
-      normalized.sourceProductId
-    ),
-    sourceUrl: firstNonEmpty(alibaba.sourceUrl, normalized.sourceUrl),
-    category: firstNonEmpty(normalized.category, alibaba.category),
-    videoUrl: normalizeImageUrl(firstNonEmpty(
-      normalized.videoUrl,
-      alibaba.videoUrl
-    )),
-    variants,
-    availability,
-    quantityVerified,
-    availabilityLabel,
-    minimumOrderQuantity: toFiniteNumber(firstNonEmpty(
-      normalized.minimumOrderQuantity,
-      pricing.minimumOrderQuantity
-    ), 1),
-    currency: firstNonEmpty(pricing.currency, normalized.currency),
-    unit: firstNonEmpty(pricing.unit, normalized.unit),
-    shipFrom: firstNonEmpty(
-      logistics.shipFrom,
-      logistics.shippingFrom,
-      normalized.shipFrom
-    ),
-    specifications: toArray(normalized.specifications)
-      .map((spec) => ({
-        name: String(spec.name || spec.key || '').trim(),
-        value: String(spec.value ?? '').trim(),
-      }))
-      .filter((spec) => spec.name && spec.value),
-    certifications: toArray(normalized.certifications)
-      .map((cert) => typeof cert === 'string'
-        ? cert
-        : cert?.name || cert?.certificateName || '')
-      .filter(Boolean),
-    supplierDisplayName: supplier.name
-      ? String(supplier.name)
-      : PLATFORM_VENDOR_NAME,
-  };
-}
-
-function sanitizeProductForDisplay(input = {}, alibabaRecord = null) {
-  const product = toPlainObject(input);
-  const alibaba = alibabaRecord
-    ? extractAlibabaData(toPlainObject(alibabaRecord))
-    : null;
-
-  const images = normalizeImages(product);
-  const isAlibaba = isAlibabaProduct(product) || Boolean(alibabaRecord);
-
-  // Le prix public doit déjà avoir été calculé et enregistré
-  // par le backend. Ne jamais utiliser le coût fournisseur ici.
-  const publicPrice = toFiniteNumber(firstNonEmpty(
-    product.salePrice,
-    product.price
-  ), 0);
-
-  const minOrder = Math.max(
-    1,
-    toFiniteNumber(firstNonEmpty(
-      product.minimumOrderQuantity,
-      alibaba?.minimumOrderQuantity
-    ), 1)
-  );
-
-  const rawVariants = toArray(product.variants);
-  const publicVariants = rawVariants.map((variant) => {
-    const item = toPlainObject(variant);
-
-    return {
-      _id: item._id ? String(item._id) : null,
-      name: item.name || item.title || '',
-      attributes: toArray(item.attributes),
-      image: normalizeImageUrl(item.image),
-      price: toFiniteNumber(item.salePrice ?? item.price, null),
-      // Seul un stock réel explicitement vérifié est exposé.
-      stock: item.quantityVerified === true
-        ? toFiniteNumber(item.stock, 0)
+      minQuantity: Math.max(1, Math.round(Number(tier.minQty ?? tier.minQuantity ?? tier.min_quantity) || 1)),
+      maxQuantity: (tier.maxQty || tier.maxQuantity || tier.max_quantity)
+        ? Math.round(Number(tier.maxQty || tier.maxQuantity || tier.max_quantity))
         : null,
-      quantityVerified: item.quantityVerified === true,
-      availability: item.availability || 'UNKNOWN',
+      unitPrice: publicUnitPrice,
+      currency: 'XOF',
     };
-  });
-
-  const result = {
-    _id: product._id ? String(product._id) : null,
-    slug: product.slug || null,
-    name: String(product.name || product.title || ''),
-    title: String(product.title || product.name || ''),
-    description: String(product.description || ''),
-    category: firstNonEmpty(product.category, alibaba?.category),
-    price: Math.max(1000, publicPrice),
-    salePrice: Math.max(1000, publicPrice),
-    currency: 'XOF',
-    images,
-    image: images[0] || null,
-    variants: publicVariants,
-    minimumOrderQuantity: minOrder,
-    sourceType: isAlibaba
-      ? 'DROPSHIPPING'
-      : product.sourceType || 'LOCAL_SELLER',
-    vendorName: getDisplayVendorName(product),
-    isAlibaba,
-    isDropshipping: isDropshippingProduct(product) || isAlibaba,
-    availability: alibaba?.availability || product.availability || 'UNKNOWN',
-    quantityVerified: alibaba?.quantityVerified === true,
-    availabilityLabel: alibaba?.availabilityLabel ||
-      'Disponibilité à confirmer',
-    specifications: alibaba?.specifications ||
-      toArray(product.specifications),
-    certifications: alibaba?.certifications || [],
-    shipFrom: alibaba?.shipFrom || null,
-    videoUrl: alibaba?.videoUrl || null,
-    sourceProductId: alibaba?.sourceProductId || null,
-    sourceUrl: alibaba?.sourceUrl || null,
-    createdAt: product.createdAt || null,
-    updatedAt: product.updatedAt || null,
-  };
-
-  // Ne pas transmettre les champs bruts du fournisseur.
-  return result;
+  }).filter((t) => t.unitPrice > 0).sort((a, b) => a.minQuantity - b.minQuantity);
 }
 
-async function toPublicProductDetail(product, alibabaRecord = null) {
+function sanitizePublicVariantList(variants = []) {
+  if (!Array.isArray(variants)) return [];
+  return variants.map((v) => {
+    const copy = { ...v };
+    delete copy.sourcePrice;
+    delete copy.sourceStock;
+    delete copy.supplierPriceUsd;
+    delete copy.supplierPriceCny;
+    delete copy.sourceSkuId;
+    return copy;
+  });
+}
+
+function resolveLocalOriginLabel(doc = {}) {
+  const zones = Array.isArray(doc.deliveryZones) ? doc.deliveryZones : [];
+  const parts = [
+    doc.country,
+    doc.origin,
+    doc.vendorCountry,
+    doc.sellerCountry,
+    doc.shippingOrigin?.countryName,
+    doc.shippingOrigin?.countryCode,
+    ...zones.map((zone) => zone?.country),
+    doc.pickupAddress,
+    doc.sellerAddress,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (/\btogo\b|\btg\b/.test(parts)) return 'Togo';
+  if (/\bbenin\b|\bbj\b/.test(parts)) return 'Bénin';
+  return '';
+}
+
+function toPublicProduct(product) {
   if (!product) return null;
 
-  return sanitizeProductForDisplay(product, alibabaRecord);
+  const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+  let publicDoc = { ...doc };
+
+  INTERNAL_FIELDS.forEach((field) => {
+    delete publicDoc[field];
+  });
+
+  delete publicDoc.supplier;
+
+  if (isDropshippingProduct(doc)) {
+    publicDoc = prepareDropshippingProductForPublic(doc);
+    publicDoc.vendorName = PLATFORM_VENDOR_NAME;
+    publicDoc.isVendorCertified = true;
+    publicDoc.originLabel = 'Chine';
+    publicDoc.vendorId = undefined;
+    publicDoc.fulfillmentType = doc.fulfillmentType || 'DANGO_IMPORT';
+    const pricing = calculateImportPricing(doc, { config: getImportPricingConfigSync() });
+    publicDoc.price = pricing.unitPrice;
+    publicDoc.salePrice = 0;
+    publicDoc.unitPrice = pricing.unitPrice;
+    publicDoc.packPrice = pricing.packPrice;
+    publicDoc.packSize = pricing.packSize;
+    publicDoc.minimumOrderQuantity = pricing.minimumOrderQuantity;
+    publicDoc.quantityIncrement = pricing.quantityIncrement;
+    publicDoc.soldAsLot = pricing.soldAsLot;
+    publicDoc.importFeesAtCheckout = true;
+    publicDoc.estimatedImportDays = pricing.estimatedDays;
+    INTERNAL_FIELDS.forEach((field) => {
+      delete publicDoc[field];
+    });
+    delete publicDoc.supplier;
+  } else {
+    publicDoc.originLabel = resolveLocalOriginLabel(doc);
+  }
+
+  const isAlibaba = Boolean(
+    doc.isAlibaba === true ||
+    doc.importSourceType === 'ALIBABA_API' ||
+    doc.supplier?.platform === 'alibaba' ||
+    /^alibaba:/i.test(String(doc.externalSourceKey || ''))
+  );
+  if (isAlibaba) {
+    publicDoc.isAlibaba = true;
+    publicDoc.fulfillmentPlatform = 'Alibaba';
+  }
+
+  if (Array.isArray(publicDoc.variants)) {
+    publicDoc.variants = sanitizePublicVariantList(publicDoc.variants);
+  }
+
+  return publicDoc;
+}
+
+function sanitizeStoredCjPublicDoc(publicDoc, sourceDoc) {
+  if (!publicDoc || !isCjDropshippingProduct(sourceDoc)) return publicDoc;
+
+  if (isInvalidTranslationText(publicDoc.name) || !String(publicDoc.name || '').trim()) {
+    publicDoc.name = pickBestStoredProductName(sourceDoc) || 'Article Dango Import';
+  }
+  if (isInvalidTranslationText(publicDoc.description)) {
+    publicDoc.description = publicDoc.name || '';
+  }
+  if (isInvalidTranslationText(publicDoc.shortDescription)) {
+    publicDoc.shortDescription = String(publicDoc.description || publicDoc.name || '').slice(0, 220);
+  }
+  if (Array.isArray(publicDoc.variants)) {
+    publicDoc.variants = sanitizePublicVariants(publicDoc.variants);
+  }
+  return publicDoc;
+}
+
+async function toPublicProductDetail(product) {
+  let doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+  const publicDoc = toPublicProduct(doc);
+  if (!publicDoc) return null;
+
+  const isAlibaba = Boolean(
+    doc.isAlibaba === true ||
+    doc.importSourceType === 'ALIBABA_API' ||
+    doc.supplier?.platform === 'alibaba' ||
+    /^alibaba:/i.test(String(doc.externalSourceKey || ''))
+  );
+
+  // 1. Paliers de prix publics en FCFA
+  const priceTiers = computePublicPriceTiers(doc);
+  if (priceTiers.length > 0) {
+    publicDoc.publicPriceTiers = priceTiers;
+  }
+
+  // 2. Conditionnement & Vente en gros
+  const wt = doc.wholesaleTrade || doc.rawAlibabaData?.wholesaleTrade || doc.rawAlibabaData?.wholesale_trade || {};
+  publicDoc.packaging = {
+    weight: doc.weight || wt.weight || '',
+    dimensions: doc.dimensions || null,
+    packageSize: doc.packageSize || wt.package_size || wt.packageSize || '',
+    unit: doc.unit || wt.unit_type || wt.unitType || 'Pièce',
+    supplyCapacity: doc.supplyCapacity || '',
+  };
+
+  publicDoc.wholesale = {
+    minOrderQuantity: Number(doc.minimumOrderQuantity || wt.min_order_quantity || wt.minOrderQuantity || 1),
+    unitType: doc.unit || wt.unit_type || wt.unitType || 'Pièce',
+    handlingTimeDays: Number(wt.handling_time || wt.handlingTime || 0) || null,
+    deliverPeriods: Array.isArray(wt.deliver_periods || wt.deliverPeriods)
+      ? (wt.deliver_periods || wt.deliverPeriods).map((p) => ({
+          quantity: p.quantity,
+          processPeriodDays: p.process_period || p.processPeriod,
+        }))
+      : [],
+  };
+
+  // 3. Spécifications fusionnées
+  const specMap = new Map();
+  (Array.isArray(doc.specifications) ? doc.specifications : []).forEach((s) => {
+    if (s && s.key && s.value) specMap.set(String(s.key).trim(), String(s.value).trim());
+  });
+  if (doc.brand && !specMap.has('Marque') && !/generic|cj\s*drop/i.test(doc.brand)) {
+    specMap.set('Marque', doc.brand);
+  }
+  if (doc.modelNumber && !specMap.has('Modèle')) {
+    specMap.set('Modèle', doc.modelNumber);
+  }
+  if (doc.material && !specMap.has('Matériau')) {
+    specMap.set('Matériau', doc.material);
+  }
+  if (doc.condition && !specMap.has('État')) {
+    specMap.set('État', doc.condition);
+  }
+  if (doc.warranty && !specMap.has('Garantie')) {
+    specMap.set('Garantie', doc.warranty);
+  }
+  if (doc.weight && !specMap.has('Poids')) {
+    specMap.set('Poids', `${doc.weight} kg`);
+  }
+  if (doc.packageSize && !specMap.has('Dimensions colis')) {
+    specMap.set('Dimensions colis', doc.packageSize);
+  }
+  publicDoc.specifications = Array.from(specMap.entries()).map(([key, value]) => ({ key, value }));
+
+  if (isDropshippingProduct(doc)) {
+    return sanitizeStoredCjPublicDoc(publicDoc, doc);
+  }
+  return publicDoc;
+}
+
+function toPublicProducts(products = []) {
+  return (products || [])
+    .map((product) => {
+      const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+      const publicDoc = toPublicProduct(doc);
+      if (!publicDoc) return null;
+      return sanitizeStoredCjPublicDoc(publicDoc, doc);
+    })
+    .filter(Boolean);
+}
+
+function toAdminDropshippingProduct(product) {
+  if (!product) return null;
+  const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+  return doc;
 }
 
 module.exports = {
-  PLATFORM_VENDOR_NAME,
-  isAlibabaProduct,
-  isDropshippingProduct,
-  getDisplayVendorName,
-  extractAlibabaData,
-  sanitizeProductForDisplay,
+  toPublicProduct,
   toPublicProductDetail,
+  toPublicProducts,
+  toAdminDropshippingProduct,
+  PLATFORM_VENDOR_NAME,
 };
