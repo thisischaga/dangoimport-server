@@ -172,12 +172,13 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
       stock: 2,
       attributes: { Couleur: 'Blanc', Capacité: '330ml' },
     }],
-    supplier: { platform: 'alibaba', name: 'Alibaba Supplier', productId: '600123' },
+    supplier: { platform: 'alibaba', name: 'Alibaba Supplier', productId: '600123', country: 'CN', companyName: 'Zhongshan Export Co.' },
     normalized: {
       source: 'ALIBABA',
       sourceProductId: '600123',
       sourceUrl: 'https://www.alibaba.com/product-detail/600123.html',
       images: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+      logistics: { weight: '2.4', weightUnit: 'kg' },
       keyAttributes: {
         attributes: [{
           attributes: [{ name: 'Material', values: [{ value: 'PP' }] }],
@@ -200,6 +201,7 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
 
   assert.equal(detail.sourceProductId, '600123');
   assert.equal(detail.sourceUrl, 'https://www.alibaba.com/product-detail/600123.html');
+  assert.equal(detail.weight, '2.4');
   assert.ok(Array.isArray(detail.galleryImages));
   assert.ok(detail.galleryImages.length >= 2);
   assert.ok(detail.alibaba);
@@ -210,7 +212,8 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
   assert.equal('sourceType' in detail, false);
   assert.equal('externalSourceKey' in detail, false);
   assert.equal('supplier' in detail, false);
-  assert.equal(detail.supplierSummary.name, 'Alibaba Supplier');
+  assert.equal(detail.supplierSummary.name, 'Zhongshan Export Co.');
+  assert.equal(detail.supplierSummary.country, 'CN');
 });
 
 test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {
