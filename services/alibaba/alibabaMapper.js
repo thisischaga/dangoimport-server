@@ -699,7 +699,26 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     } catch (_e) { /* fallback */ }
   }
 
-  const weightKg = parseWeightToKg(source.weight || source.raw?.productShippingInfo?.weight || source.wholesaleTrade?.weight);
+  const weightCandidates = [
+    source.weight,
+    source.raw?.productShippingInfo?.weight,
+    source.raw?.result_data?.productShippingInfo?.weight,
+    source.raw?.logistics_info?.weight,
+    source.raw?.logisticsInfo?.weight,
+    source.raw?.result_data?.logistics_info?.weight,
+    source.raw?.result_data?.weight,
+    source.raw?.weight,
+    source.productShippingInfo?.weight,
+    source.wholesaleTrade?.weight,
+    source.logistics?.weight,
+    source.logisticsInfo?.weight,
+  ];
+  const firstWeight = weightCandidates.find((entry) => {
+    if (entry == null || entry === '') return false;
+    const text = String(entry).trim();
+    return !!text && !/^0+(?:[.,]0+)?\s*(kg|g)?$/i.test(text);
+  });
+  const weightKg = parseWeightToKg(firstWeight || source.weight || source.raw?.productShippingInfo?.weight || source.wholesaleTrade?.weight);
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
   const category = mapAlibabaCategoryToDangoStore(source.category || 'Général', name);
 

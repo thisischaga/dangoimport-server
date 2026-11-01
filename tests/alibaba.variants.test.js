@@ -291,6 +291,27 @@ test('toPublicProductDetail preserves Alibaba galleryImages coming from gallery 
   assert.equal(emptyWeight.weight, '');
 });
 
+test('Alibaba weight is recovered from real nested shipment metadata for logistics', async () => {
+  const mockDetail = {
+    offerId: '600111222333',
+    subject: 'Sac de sport',
+    description: '<p>Produit de qualité</p>',
+    price: '18',
+    currency: 'USD',
+    raw: {
+      result_data: {
+        productShippingInfo: { weight: '2.75 kg' },
+      },
+    },
+    productShippingInfo: { weight: '2.75 kg' },
+    skuInfos: [],
+  };
+
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+
+  assert.equal(mapped.weight, '2.75');
+});
+
 test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {
   const rawPayload = {
     offerId: '600123456789',
