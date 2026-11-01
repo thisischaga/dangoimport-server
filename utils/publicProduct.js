@@ -323,21 +323,24 @@ function resolveAlibabaWeightValue(doc = {}) {
     doc.weight,
   ];
 
-  for (const value of candidates) {
-    if (value == null || value === '') continue;
+  const normalizePositiveWeight = (value) => {
+    if (value == null || value === '') return null;
     if (typeof value === 'object') {
-      const nested = value.value ?? value.amount ?? value.weight ?? value.kg ?? value.valueText;
-      if (nested != null && nested !== '') {
-        const decimal = String(nested).trim();
-        if (decimal && decimal !== '0') return decimal.replace(',', '.');
-      }
-      continue;
+      const nested = value.value ?? value.amount ?? value.weight ?? value.kg ?? value.valueText ?? value.raw;
+      return normalizePositiveWeight(nested);
     }
-
     const raw = String(value).trim();
-    if (!raw || raw === '0' || raw.toLowerCase() === '0kg') continue;
+    if (!raw) return null;
     const match = raw.match(/([0-9]+(?:[.,][0-9]+)?)/);
-    if (match) return match[1].replace(',', '.');
+    if (!match) return null;
+    const numeric = Number(match[1].replace(',', '.'));
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    return match[1].replace(',', '.');
+  };
+
+  for (const value of candidates) {
+    const normalized = normalizePositiveWeight(value);
+    if (normalized != null) return normalized;
   }
 
   return '';
@@ -423,7 +426,22 @@ async function toPublicProductDetail(product) {
 
   // 2. Conditionnement & Vente en gros
   const wt = doc.wholesaleTrade || doc.rawAlibabaData?.wholesaleTrade || doc.rawAlibabaData?.wholesale_trade || {};
-  const resolvedWeight = isAlibaba ? (buildAlibabaPublicDetail(doc).weight || doc.weight || wt.weight || '') : (doc.weight || wt.weight || '');
+  const resolvePublicWeight = (...candidates) => {
+    for (const candidate of candidates) {
+      if (candidate == null || candidate === '') continue;
+      const raw = String(candidate).trim();
+      if (!raw) continue;
+      const match = raw.match(/([0-9]+(?:[.,][0-9]+)?)/);
+      if (!match) continue;
+      const numeric = Number(match[1].replace(',', '.'));
+      if (!Number.isFinite(numeric) || numeric <= 0) continue;
+      return match[1].replace(',', '.');
+    }
+    return '';
+  };
+  const resolvedWeight = isAlibaba
+    ? resolvePublicWeight(buildAlibabaPublicDetail(doc).weight, doc.weight, wt.weight)
+    : resolvePublicWeight(doc.weight, wt.weight);
   publicDoc.packaging = {
     weight: resolvedWeight,
     dimensions: doc.dimensions || null,
@@ -464,8 +482,9 @@ async function toPublicProductDetail(product) {
   if (doc.warranty && !specMap.has('Garantie')) {
     specMap.set('Garantie', doc.warranty);
   }
-  if (doc.weight && !specMap.has('Poids')) {
-    specMap.set('Poids', `${doc.weight} kg`);
+  const docWeightValue = resolvePublicWeight(doc.weight, doc.packaging?.weight, wt.weight, doc.rawAlibabaData?.productShippingInfo?.weight);
+  if (docWeightValue && !specMap.has('Poids')) {
+    specMap.set('Poids', `${docWeightValue} kg`);
   }
   if (doc.packageSize && !specMap.has('Dimensions colis')) {
     specMap.set('Dimensions colis', doc.packageSize);
@@ -474,10 +493,11 @@ async function toPublicProductDetail(product) {
 
   if (isAlibaba) {
     const alibabaDetails = buildAlibabaPublicDetail(doc);
+    const resolvedWeight = resolvePublicWeight(alibabaDetails.weight, publicDoc.weight, doc.weight, wt.weight);
     publicDoc.sourceProductId = alibabaDetails.sourceProductId;
     publicDoc.sourceUrl = alibabaDetails.sourceUrl;
     publicDoc.source = alibabaDetails.source;
-    publicDoc.weight = alibabaDetails.weight || publicDoc.weight;
+    publicDoc.weight = resolvedWeight;
     publicDoc.weightUnit = alibabaDetails.weightUnit || publicDoc.weightUnit || 'kg';
     publicDoc.galleryImages = alibabaDetails.galleryImages;
     publicDoc.mainImage = alibabaDetails.mainImage || publicDoc.mainImage;

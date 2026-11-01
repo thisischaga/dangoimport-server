@@ -281,6 +281,14 @@ test('toPublicProductDetail preserves Alibaba galleryImages coming from gallery 
   assert.equal('supplier' in detail, false);
   assert.equal(detail.supplierSummary.name, 'Zhongshan Export Co.');
   assert.equal(detail.supplierSummary.country, 'CN');
+
+  const emptyWeight = await toPublicProductDetail({
+    isAlibaba: true,
+    name: 'Sans poids',
+    weight: '0',
+    rawAlibabaData: { productShippingInfo: { weight: '0 kg' } },
+  });
+  assert.equal(emptyWeight.weight, '');
 });
 
 test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {
