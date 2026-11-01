@@ -93,14 +93,14 @@ test('mapToDropshippingPayload preserves color, size, and isAlibaba', async () =
   assert.deepEqual(payload.size, ['S', 'M', 'L']);
 });
 
-test('resolveDropshipSellableStock returns available stock for Alibaba products', () => {
+test('resolveDropshipSellableStock returns no default stock for Alibaba products', () => {
   const alibabaProductZeroStock = {
     isAlibaba: true,
     stock: 0,
     variants: [{ stock: 0 }, { stock: 0 }],
   };
   const stock = resolveDropshipSellableStock(alibabaProductZeroStock);
-  assert.equal(stock, 999);
+  assert.equal(stock, 0);
 });
 
 test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {

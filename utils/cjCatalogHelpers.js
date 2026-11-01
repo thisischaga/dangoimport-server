@@ -522,7 +522,7 @@ function resolveDropshipSellableStock(product = {}) {
   );
   if (isAlibaba) {
     const rawStock = toNumber(product.stock, 0);
-    return rawStock > 0 ? rawStock : 999;
+    return rawStock > 0 ? rawStock : 0;
   }
 
   let stock = toNumber(product.stock, 0);
