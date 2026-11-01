@@ -4,6 +4,7 @@ const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../servi
 const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
 const { toPublicProduct } = require('../utils/publicProduct');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
+const { isPubliclyVisibleProduct } = require('../routes/productRoutes');
 
 test('mapAlibabaProductToDango extracts attributes when skuName is present or absent', async () => {
   const mockDetail = {
@@ -106,6 +107,8 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
     name: 'Produit Alibaba',
     sourceType: 'DROPSHIPPING',
     isAlibaba: true,
+    isPublished: true,
+    publicationStatus: 'published',
     externalSourceKey: 'alibaba:600123',
     supplier: { platform: 'alibaba', name: 'Alibaba Supplier' },
     price: 12000,
@@ -114,6 +117,31 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   const publicDoc = toPublicProduct(rawProduct);
   assert.equal(publicDoc.isAlibaba, true);
   assert.equal(publicDoc.fulfillmentPlatform, 'Alibaba');
+  assert.equal('sourceType' in publicDoc, false);
+  assert.equal('externalSourceKey' in publicDoc, false);
+  assert.equal('supplier' in publicDoc, false);
+});
+
+test('public catalog visibility blocks unpublished dropshipping products', () => {
+  const hidden = {
+    sourceType: 'DROPSHIPPING',
+    isDropshippingActive: true,
+    isPublished: false,
+    price: 12000,
+    validationStatus: 'approved',
+  };
+
+  const visible = {
+    sourceType: 'DROPSHIPPING',
+    isDropshippingActive: true,
+    isPublished: true,
+    publicationStatus: 'published',
+    price: 12000,
+    validationStatus: 'approved',
+  };
+
+  assert.equal(isPubliclyVisibleProduct(hidden), false);
+  assert.equal(isPubliclyVisibleProduct(visible), true);
 });
 
 test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {

@@ -10,14 +10,34 @@ const { mixProductsForDisplay, shouldMixCatalogSort } = require('../utils/mixCat
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+function isPubliclyVisibleProduct(product = {}) {
+  if (!product || Number(product.price || 0) <= 0) return false;
+
+  const validationStatus = String(product.validationStatus || '').toLowerCase();
+  const blockedStatuses = new Set(['rejected', 'disabled', 'draft', 'archived']);
+  if (blockedStatuses.has(validationStatus)) return false;
+
+  if (product.sourceType === 'DROPSHIPPING') {
+    const published = product.isPublished === true && product.publicationStatus === 'published';
+    if (!published) return false;
+    return (
+      product.isDropshippingActive === true
+      || product.isAlibaba === true
+      || product.importSourceType === 'ALIBABA_API'
+    );
+  }
+
+  return product.isPublished === true || product.sourceType == null || product.sourceType === 'LOCAL_SELLER';
+}
+
 const PUBLIC_CATALOG_SOURCE_FILTER = {
   price: { $gt: 0 },
   $or: [
-    { sourceType: { $exists: false } },
-    { sourceType: 'LOCAL_SELLER' },
-    { sourceType: 'DROPSHIPPING', isDropshippingActive: true },
-    { sourceType: 'DROPSHIPPING', isAlibaba: true, isPublished: true, publicationStatus: 'published' },
-    { sourceType: 'DROPSHIPPING', importSourceType: 'ALIBABA_API', isPublished: true, publicationStatus: 'published' },
+    { sourceType: { $exists: false }, isPublished: true },
+    { sourceType: 'LOCAL_SELLER', isPublished: true },
+    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', isDropshippingActive: true },
+    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', isAlibaba: true },
+    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', importSourceType: 'ALIBABA_API' },
   ],
 };
 
@@ -373,14 +393,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
-    const isPublicDropshippingProduct =
-      product.sourceType === 'DROPSHIPPING' && (
-        product.isDropshippingActive === true ||
-        (product.isAlibaba === true && product.isPublished === true && product.publicationStatus === 'published') ||
-        (product.importSourceType === 'ALIBABA_API' && product.isPublished === true && product.publicationStatus === 'published')
-      );
-
-    if (product.sourceType === 'DROPSHIPPING' && !isPublicDropshippingProduct) {
+    if (!isPubliclyVisibleProduct(product)) {
       return res.status(404).json({ success: false, message: 'Produit introuvable' });
     }
 
@@ -393,3 +406,4 @@ router.get('/:id', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.isPubliclyVisibleProduct = isPubliclyVisibleProduct;
