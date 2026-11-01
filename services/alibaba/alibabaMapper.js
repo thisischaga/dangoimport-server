@@ -123,6 +123,13 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
       /company\s+profile/i,
       /about\s+us/i,
       /our\s+company/i,
+      /our\s+products?\s+we\s+are\s+selling/i,
+      /our\s+products?\s+were\s+selling/i,
+      /our\s+products?\s+we\s+sell/i,
+      /our\s+products?\s+.*\b\d+\+\s*countries\b/i,
+      /packaging\s+details/i,
+      /delivery\s+date/i,
+      /about\s+private\s+label/i,
       /who\s+we\s+are/i,
       /why\s+choose\s+us/i,
       /why\s+choose\s+our\s+company/i,
@@ -130,6 +137,7 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
       /fondée\s+en\s+\d{4}/i,
       /notre\s+entreprise/i,
       /notre\s+société/i,
+      /click\s+here\s+to\s+know\s+more/i,
     ];
 
     for (const marker of markers) {
@@ -140,7 +148,7 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
       }
     }
 
-    const splitIndex = value.search(/\s[*•·]\s*(?:présentation|profil|company|about|why\s+choose|who\s+we)/i);
+    const splitIndex = value.search(/\s[*•·]\s*(?:présentation|profil|company|about|why\s+choose|who\s+we|our\s+products?)/i);
     if (splitIndex >= 0) {
       const cutValue = value.slice(0, splitIndex).trim();
       if (cutValue.length >= 25) return cutValue;
@@ -171,6 +179,11 @@ function cleanAlibabaDescription(raw, title = '', specifications = []) {
     .replace(/&quot;/gi, '"');
   // 5. Nettoyer les espaces multiples
   text = text.replace(/\s+/g, ' ').trim();
+  text = text
+    .replace(/^\s*(?:product\s+details?|details?|product\s+information)\s*[:\-–]*\s*/i, '')
+    .replace(/\bproduct\s+name\s*[:\-–]*\s*/i, '')
+    .replace(/\bbrand\s+name\s*[:\-–]*\s*/i, '')
+    .replace(/\bfragrance\s*[:\-–]*\s*/i, '');
   text = cutAtCompanySection(text)
     .replace(/^\s*description\s+du\s+produit\s*[:*\-–]*/i, '')
     .replace(/^\s*produits?\s+connexes?\s*[:*\-–]*/i, '')

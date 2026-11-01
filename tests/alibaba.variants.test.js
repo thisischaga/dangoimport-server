@@ -194,6 +194,24 @@ test('Alibaba product descriptions keep a static HTML structure', async () => {
   assert.doesNotMatch(mapped.description, /#detail_decorate_root|\.magic-|style=|onclick=/i);
 });
 
+test('Alibaba descriptions strip product-detail boilerplate and company sales copy', async () => {
+  const mockDetail = {
+    offerId: '600999888777',
+    subject: 'Explore Noir',
+    description: 'Product Details Product Name: (#88362 - Explore Noir) Fragrance: wooden Fougere scent top notes: tonka bean lemon bitter Middle notes: mango sage, tangerine Base Notes: Sandalwood Patchouli 1. Men perfume 2. Black parfum 3. Leather note Packaging Details Item Perfume Item No. 88362 MOQ Pack (pcs) 3000pcs CBM per Pack (cm 3) 0.117 Weight (kg) 23 Delivery Date 15 About Private Label (Kindly note that the MOQ and the PRICE may be different from the listing.) About Zuofun GUANGZHOU ZUOFUN COSMETICS CO LTD. As one of the biggest cosmetics factory in China, we dedicate to bring good quality products and good service in reasonable price. Our products were selling to 80+ countries on the world in past 20 years. For product design, packaging, formula creation or replication to production, we are always here for you. >> Click Here to Know More << You may also be interested in ...',
+    price: '19',
+    currency: 'USD',
+    skuInfos: [],
+  };
+
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+
+  assert.doesNotMatch(mapped.description, /Product Details/i);
+  assert.doesNotMatch(mapped.description, /Our products were selling to 80\+ countries/i);
+  assert.doesNotMatch(mapped.description, /Click Here to Know More/i);
+  assert.match(mapped.description, /Explore Noir|Fougere|Sandalwood|Patchouli/i);
+});
+
 test('toPublicProductDetail exposes rich Alibaba metadata without leaking internals', async () => {
   const rawProduct = {
     name: 'Produit Alibaba',
