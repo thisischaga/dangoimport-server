@@ -187,12 +187,30 @@ function normalizeAlibabaImageList(images) {
   const seen = new Set();
   const collected = [];
 
+  const pushCandidate = (candidate) => {
+    if (candidate == null) return;
+    if (typeof candidate === 'string') {
+      const cleaned = candidate.trim();
+      if (!cleaned || seen.has(cleaned)) return;
+      seen.add(cleaned);
+      collected.push(cleaned);
+      return;
+    }
+    if (typeof candidate === 'object') {
+      const url = candidate.url || candidate.imageUrl || candidate.pic_url || candidate.src || candidate.path || candidate.image || candidate.thumbnail || candidate.original;
+      const cleaned = String(url || '').trim();
+      if (!cleaned || seen.has(cleaned)) return;
+      seen.add(cleaned);
+      collected.push(cleaned);
+    }
+  };
+
   for (const item of images) {
-    const url = typeof item === 'string' ? item : item?.url;
-    const cleaned = String(url || '').trim();
-    if (!cleaned || seen.has(cleaned)) continue;
-    seen.add(cleaned);
-    collected.push(cleaned);
+    if (Array.isArray(item)) {
+      item.forEach(pushCandidate);
+      continue;
+    }
+    pushCandidate(item);
   }
 
   return collected;
@@ -330,7 +348,16 @@ function buildAlibabaPublicDetail(doc = {}) {
   const sourceProductId = doc.sourceProductId || normalized.sourceProductId || doc.externalProductId || normalized.externalProductId || String(doc.externalSourceKey || '').replace(/^alibaba:/i, '') || null;
   const sourceUrl = doc.sourceUrl || normalized.sourceUrl || doc.rawAlibabaData?.detail_url || doc.rawPayload?.detail_url || doc.rawSections?.product?.detail_url || doc.detail_url || null;
   const galleryImages = normalizeAlibabaImageList(
-    doc.images || normalized.images || doc.rawAlibabaData?.images || doc.rawPayload?.images || doc.rawSections?.product?.images,
+    doc.galleryImages
+    || normalized.galleryImages
+    || doc.rawAlibabaData?.galleryImages
+    || doc.rawPayload?.galleryImages
+    || doc.rawSections?.product?.galleryImages
+    || doc.images
+    || normalized.images
+    || doc.rawAlibabaData?.images
+    || doc.rawPayload?.images
+    || doc.rawSections?.product?.images,
   );
   const supplierInfo = {
     ...(normalized.supplier || {}),

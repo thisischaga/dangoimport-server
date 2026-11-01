@@ -212,7 +212,7 @@ test('Alibaba descriptions strip product-detail boilerplate and company sales co
   assert.match(mapped.description, /Explore Noir|Fougere|Sandalwood|Patchouli/i);
 });
 
-test('toPublicProductDetail exposes rich Alibaba metadata without leaking internals', async () => {
+test('toPublicProductDetail preserves Alibaba galleryImages coming from gallery metadata', async () => {
   const rawProduct = {
     name: 'Produit Alibaba',
     sourceType: 'DROPSHIPPING',
@@ -221,8 +221,12 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
     publicationStatus: 'published',
     externalSourceKey: 'alibaba:600123',
     sourceUrl: 'https://www.alibaba.com/product-detail/600123.html',
-    images: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
     mainImage: 'https://example.com/1.jpg',
+    galleryImages: [
+      { url: 'https://example.com/1.jpg' },
+      { url: 'https://example.com/2.jpg' },
+      { url: 'https://example.com/3.jpg' },
+    ],
     variants: [{
       name: 'Blanc / 330ml',
       sku: 'sku-1',
@@ -235,7 +239,11 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
       source: 'ALIBABA',
       sourceProductId: '600123',
       sourceUrl: 'https://www.alibaba.com/product-detail/600123.html',
-      images: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+      galleryImages: [
+        { url: 'https://example.com/1.jpg' },
+        { url: 'https://example.com/2.jpg' },
+        { url: 'https://example.com/3.jpg' },
+      ],
       logistics: { weight: '2.4', weightUnit: 'kg' },
       keyAttributes: {
         attributes: [{
@@ -261,7 +269,8 @@ test('toPublicProductDetail exposes rich Alibaba metadata without leaking intern
   assert.equal(detail.sourceUrl, 'https://www.alibaba.com/product-detail/600123.html');
   assert.equal(detail.weight, '2.4');
   assert.ok(Array.isArray(detail.galleryImages));
-  assert.ok(detail.galleryImages.length >= 2);
+  assert.ok(detail.galleryImages.length >= 3);
+  assert.ok(detail.galleryImages.includes('https://example.com/2.jpg'));
   assert.ok(detail.alibaba);
   assert.equal(detail.alibaba.platform, 'Alibaba');
   assert.ok(Array.isArray(detail.alibaba.keyAttributes));
