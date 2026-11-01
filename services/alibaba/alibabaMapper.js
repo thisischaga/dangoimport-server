@@ -66,9 +66,52 @@ function mapAlibabaCategoryToDangoStore(rawCategory, title = '') {
   return 'Accessoires';
 }
 
+function sanitizeAlibabaStaticHtml(raw = '') {
+  if (!raw || typeof raw !== 'string') return '';
+
+  let html = raw
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/#detail_decorate_root[\s\S]*?\{[\s\S]*?\}/gi, ' ')
+    .replace(/@media[\s\S]*?\{[\s\S]*?\}/gi, ' ')
+    .replace(/on\w+="[^"]*"/gi, ' ')
+    .replace(/on\w+='[^']*'/gi, ' ')
+    .replace(/javascript:[^"']*/gi, ' ')
+    .replace(/<div\b[^>]*>/gi, '<p>')
+    .replace(/<\/div>/gi, '</p>')
+    .replace(/<span\b[^>]*>/gi, '')
+    .replace(/<\/span>/gi, '')
+    .replace(/<img\b([^>]*)\s*src=(['"])(.*?)\2([^>]*)>/gi, '<img src="$3" alt="Image du produit" />')
+    .replace(/<img\b(?![^>]*\ssrc=)[^>]*>/gi, '')
+    .replace(/\s(class|id|style|onclick|onload|data-[a-z0-9-]+)="[^"]*"/gi, ' ')
+    .replace(/\s(class|id|style|onclick|onload|data-[a-z0-9-]+)='[^']*'/gi, ' ')
+    .replace(/<(?!\/?(?:p|br|strong|b|em|i|u|ul|ol|li|a|img|h[1-6]|table|thead|tbody|tr|td|th)\b)[^>]+>/gi, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"');
+
+  html = html
+    .replace(/\s+/g, ' ')
+    .replace(/<\s*\/\s*p>\s*<\s*p>/gi, '</p><p>')
+    .replace(/<\s*\/\s*p>\s*<\s*ul>/gi, '</p><ul>')
+    .replace(/<\s*\/\s*ul>\s*<\s*p>/gi, '</ul><p>')
+    .trim();
+
+  if (!html || !/<[a-z][\s\S]*>/i.test(html)) return '';
+  return html;
+}
+
 function cleanAlibabaDescription(raw, title = '', specifications = []) {
   if (!raw || typeof raw !== 'string') {
     return buildFallbackDescription(title, specifications);
+  }
+
+  const staticHtml = sanitizeAlibabaStaticHtml(raw);
+  if (staticHtml) {
+    return staticHtml;
   }
 
   const cutAtCompanySection = (value) => {

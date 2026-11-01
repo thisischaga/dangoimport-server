@@ -101,6 +101,13 @@ function buildProductPayload(body, { existingProduct } = {}) {
   const pickupAddress = body.pickupAddress?.trim() || body.sellerAddress?.trim() || existingProduct?.pickupAddress || existingProduct?.sellerAddress || '';
   const image = (!isBlobUrl(body.image) && body.image) || existingProduct?.image;
   const images = normalizeImages({ ...body, name: name || existingProduct?.name });
+  const isAlibabaManagedProduct = Boolean(
+    existingProduct?.isAlibaba === true ||
+    existingProduct?.importSourceType === 'ALIBABA_API' ||
+    body?.isAlibaba === true ||
+    body?.importSourceType === 'ALIBABA_API' ||
+    (existingProduct?.sourceType === 'DROPSHIPPING' && (existingProduct?.isAlibaba || existingProduct?.importSourceType === 'ALIBABA_API'))
+  );
 
   const payload = {
     name,
@@ -113,7 +120,7 @@ function buildProductPayload(body, { existingProduct } = {}) {
     price: toNumber(body.price, existingProduct?.price ?? 0),
     salePrice: toNumber(body.salePrice ?? body.promoPrice),
     costPrice: toNumber(body.costPrice),
-    stock: toNumber(body.stock, 0),
+    stock: isAlibabaManagedProduct ? (existingProduct?.stock ?? toNumber(body.stock, 0)) : toNumber(body.stock, 0),
     minStock: toNumber(body.minStock, 10),
     weight: body.weight?.trim() || undefined,
     length: body.length?.trim() || undefined,

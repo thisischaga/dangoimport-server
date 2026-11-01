@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../services/alibaba/alibabaMapper');
 const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
 const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
+const { buildProductPayload } = require('../utils/productPayload');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 const { isPubliclyVisibleProduct } = require('../routes/productRoutes');
 
@@ -152,6 +153,45 @@ test('public catalog visibility blocks unpublished dropshipping products', () =>
   assert.equal(isPubliclyVisibleProduct(hidden), false);
   assert.equal(isPubliclyVisibleProduct(visible), true);
   assert.equal(isPubliclyVisibleProduct(legacyPublished), true);
+});
+
+test('buildProductPayload ignores stock edits for Alibaba products', () => {
+  const payload = buildProductPayload({
+    name: 'Produit Alibaba',
+    category: 'Accessoires',
+    price: '12000',
+    stock: '999',
+    description: 'Description',
+  }, {
+    existingProduct: {
+      isAlibaba: true,
+      importSourceType: 'ALIBABA_API',
+      stock: 42,
+      price: 12000,
+      name: 'Produit Alibaba',
+      category: 'Accessoires',
+      description: 'Description',
+    },
+  });
+
+  assert.equal(payload.stock, 42);
+});
+
+test('Alibaba product descriptions keep a static HTML structure', async () => {
+  const mockDetail = {
+    offerId: '600987654321',
+    subject: 'Trousse de voyage premium',
+    description: '<div id="detail_decorate_root"><h2>Présentation</h2><p>Produit léger et résistant.</p><ul><li>Étanche</li><li>Robuste</li></ul><p>La valeur est idéale pour les séjours.</p></div>',
+    price: '19',
+    currency: 'USD',
+    skuInfos: [],
+  };
+
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+
+  assert.ok(/<p>/i.test(mapped.description));
+  assert.ok(/<ul>|<li>/i.test(mapped.description));
+  assert.doesNotMatch(mapped.description, /#detail_decorate_root|\.magic-|style=|onclick=/i);
 });
 
 test('toPublicProductDetail exposes rich Alibaba metadata without leaking internals', async () => {
