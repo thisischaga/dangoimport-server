@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../services/alibaba/alibabaMapper');
 const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
-const { toPublicProduct } = require('../utils/publicProduct');
+const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 const { isPubliclyVisibleProduct } = require('../routes/productRoutes');
 
@@ -140,8 +140,77 @@ test('public catalog visibility blocks unpublished dropshipping products', () =>
     validationStatus: 'approved',
   };
 
+  const legacyPublished = {
+    sourceType: 'DROPSHIPPING',
+    isDropshippingActive: true,
+    isPublished: false,
+    publicationStatus: 'published',
+    price: 12000,
+    validationStatus: 'approved',
+  };
+
   assert.equal(isPubliclyVisibleProduct(hidden), false);
   assert.equal(isPubliclyVisibleProduct(visible), true);
+  assert.equal(isPubliclyVisibleProduct(legacyPublished), true);
+});
+
+test('toPublicProductDetail exposes rich Alibaba metadata without leaking internals', async () => {
+  const rawProduct = {
+    name: 'Produit Alibaba',
+    sourceType: 'DROPSHIPPING',
+    isAlibaba: true,
+    isPublished: true,
+    publicationStatus: 'published',
+    externalSourceKey: 'alibaba:600123',
+    sourceUrl: 'https://www.alibaba.com/product-detail/600123.html',
+    images: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+    mainImage: 'https://example.com/1.jpg',
+    variants: [{
+      name: 'Blanc / 330ml',
+      sku: 'sku-1',
+      price: 2811,
+      stock: 2,
+      attributes: { Couleur: 'Blanc', Capacité: '330ml' },
+    }],
+    supplier: { platform: 'alibaba', name: 'Alibaba Supplier', productId: '600123' },
+    normalized: {
+      source: 'ALIBABA',
+      sourceProductId: '600123',
+      sourceUrl: 'https://www.alibaba.com/product-detail/600123.html',
+      images: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+      keyAttributes: {
+        attributes: [{
+          attributes: [{ name: 'Material', values: [{ value: 'PP' }] }],
+          type: 'Other attributes',
+        }],
+      },
+      sourcePriceTiers: [{ minQty: 49, maxQty: 499, price: 4, currency: 'USD' }],
+      supplier: { platform: 'alibaba', name: 'Alibaba Supplier', productId: '600123' },
+      inventory: [{ shipping_from: 'CN' }],
+      shippingOrigin: { country: 'CN', countryName: 'Chine' },
+    },
+    rawAlibabaData: {
+      rawSections: { product: { title: 'Produit Alibaba' } },
+    },
+    inventory: { raw: [{ shipping_from: 'CN' }] },
+    pricing: { sourcePrice: 3.3 },
+  };
+
+  const detail = await toPublicProductDetail(rawProduct);
+
+  assert.equal(detail.sourceProductId, '600123');
+  assert.equal(detail.sourceUrl, 'https://www.alibaba.com/product-detail/600123.html');
+  assert.ok(Array.isArray(detail.galleryImages));
+  assert.ok(detail.galleryImages.length >= 2);
+  assert.ok(detail.alibaba);
+  assert.equal(detail.alibaba.platform, 'Alibaba');
+  assert.ok(Array.isArray(detail.alibaba.keyAttributes));
+  assert.ok(detail.alibaba.keyAttributes.length >= 1);
+  assert.ok(Array.isArray(detail.alibaba.inventory));
+  assert.equal('sourceType' in detail, false);
+  assert.equal('externalSourceKey' in detail, false);
+  assert.equal('supplier' in detail, false);
+  assert.equal(detail.supplierSummary.name, 'Alibaba Supplier');
 });
 
 test('buildAlibabaProductRecord keeps raw Alibaba payload and normalized mapping together', () => {

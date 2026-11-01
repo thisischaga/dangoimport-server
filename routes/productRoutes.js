@@ -10,34 +10,45 @@ const { mixProductsForDisplay, shouldMixCatalogSort } = require('../utils/mixCat
 
 const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+function hasPublicPublicationState(product = {}) {
+  return product.isPublished === true || String(product.publicationStatus || '').toLowerCase() === 'published';
+}
+
 function isPubliclyVisibleProduct(product = {}) {
   if (!product || Number(product.price || 0) <= 0) return false;
 
   const validationStatus = String(product.validationStatus || '').toLowerCase();
   const blockedStatuses = new Set(['rejected', 'disabled', 'draft', 'archived']);
-  if (blockedStatuses.has(validationStatus)) return false;
+  const publicPublished = hasPublicPublicationState(product);
+
+  if (blockedStatuses.has(validationStatus) && !publicPublished) return false;
 
   if (product.sourceType === 'DROPSHIPPING') {
-    const published = product.isPublished === true && product.publicationStatus === 'published';
-    if (!published) return false;
+    if (!publicPublished) return false;
     return (
       product.isDropshippingActive === true
       || product.isAlibaba === true
       || product.importSourceType === 'ALIBABA_API'
+      || product.publicationStatus === 'published'
     );
   }
 
-  return product.isPublished === true || product.sourceType == null || product.sourceType === 'LOCAL_SELLER';
+  return publicPublished || product.sourceType == null || product.sourceType === 'LOCAL_SELLER';
 }
 
 const PUBLIC_CATALOG_SOURCE_FILTER = {
   price: { $gt: 0 },
+  validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
   $or: [
     { sourceType: { $exists: false }, isPublished: true },
+    { sourceType: { $exists: false }, publicationStatus: 'published' },
     { sourceType: 'LOCAL_SELLER', isPublished: true },
-    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', isDropshippingActive: true },
-    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', isAlibaba: true },
-    { sourceType: 'DROPSHIPPING', isPublished: true, publicationStatus: 'published', importSourceType: 'ALIBABA_API' },
+    { sourceType: 'LOCAL_SELLER', publicationStatus: 'published' },
+    { sourceType: 'DROPSHIPPING', isPublished: true },
+    { sourceType: 'DROPSHIPPING', publicationStatus: 'published' },
+    { sourceType: 'DROPSHIPPING', isAlibaba: true },
+    { sourceType: 'DROPSHIPPING', importSourceType: 'ALIBABA_API' },
+    { sourceType: 'DROPSHIPPING', isDropshippingActive: true },
   ],
 };
 

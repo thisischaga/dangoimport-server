@@ -181,6 +181,154 @@ function sanitizeStoredCjPublicDoc(publicDoc, sourceDoc) {
   return publicDoc;
 }
 
+function normalizeAlibabaImageList(images) {
+  if (!Array.isArray(images)) return [];
+
+  const seen = new Set();
+  const collected = [];
+
+  for (const item of images) {
+    const url = typeof item === 'string' ? item : item?.url;
+    const cleaned = String(url || '').trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    collected.push(cleaned);
+  }
+
+  return collected;
+}
+
+function extractAlibabaKeyAttributes(doc = {}) {
+  const candidates = [
+    doc.normalized?.keyAttributes,
+    doc.rawAlibabaData?.keyAttributes,
+    doc.rawPayload?.keyAttributes,
+    doc.rawSections?.keyAttributes,
+    doc.keyAttributes,
+  ];
+
+  const groups = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (Array.isArray(candidate.attributes)) {
+      groups.push(...candidate.attributes);
+    } else if (Array.isArray(candidate)) {
+      groups.push(...candidate);
+    }
+  }
+
+  return groups
+    .map((group) => {
+      const attributes = Array.isArray(group?.attributes) ? group.attributes : [];
+      return {
+        type: group?.type || 'Alibaba attribute',
+        attributes: attributes
+          .map((attribute) => {
+            const values = Array.isArray(attribute?.values)
+              ? attribute.values
+                  .map((value) => (typeof value === 'string' ? value : value?.value))
+                  .filter(Boolean)
+              : [];
+            const value = attribute?.value || values[0] || '';
+            return {
+              name: attribute?.name || '',
+              value,
+              values,
+            };
+          })
+          .filter((attribute) => attribute.name && (attribute.value || attribute.values.length)),
+      };
+    })
+    .filter((group) => Array.isArray(group.attributes) && group.attributes.length > 0);
+}
+
+function extractAlibabaInventory(doc = {}) {
+  const candidates = [
+    doc.normalized?.inventory,
+    doc.rawAlibabaData?.inventory,
+    doc.rawPayload?.inventory,
+    doc.rawSections?.inventory,
+    doc.inventory?.raw,
+    doc.inventory,
+  ];
+
+  const extracted = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (Array.isArray(candidate)) {
+      extracted.push(...candidate);
+    } else if (typeof candidate === 'object') {
+      extracted.push(candidate);
+    }
+  }
+
+  return extracted
+    .map((entry) => {
+      if (Array.isArray(entry?.inventory_list)) {
+        return {
+          shippingFrom: entry.shipping_from || entry.shippingFrom || '',
+          inventoryList: entry.inventory_list.map((item) => ({
+            inventoryUnit: item.inventory_unit || item.inventoryUnit || '',
+            inventoryCount: item.inventory_count ?? item.inventoryCount ?? null,
+            productId: item.product_id ?? item.productId ?? null,
+            skuId: item.sku_id ?? item.skuId ?? null,
+          })),
+        };
+      }
+
+      if (entry && typeof entry === 'object') {
+        const base = { ...entry };
+        delete base.raw;
+        delete base.quantityRaw;
+        if (base.shippingFrom || base.shipping_from || base.availability || base.quantityVerified !== undefined) {
+          return base;
+        }
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function buildAlibabaPublicDetail(doc = {}) {
+  const normalized = doc.normalized || {};
+  const sourceProductId = doc.sourceProductId || normalized.sourceProductId || doc.externalProductId || normalized.externalProductId || String(doc.externalSourceKey || '').replace(/^alibaba:/i, '') || null;
+  const sourceUrl = doc.sourceUrl || normalized.sourceUrl || doc.rawAlibabaData?.detail_url || doc.rawPayload?.detail_url || doc.rawSections?.product?.detail_url || doc.detail_url || null;
+  const galleryImages = normalizeAlibabaImageList(
+    doc.images || normalized.images || doc.rawAlibabaData?.images || doc.rawPayload?.images || doc.rawSections?.product?.images,
+  );
+  const supplierInfo = normalized.supplier || doc.supplier || {};
+  const supplierSummary = {
+    name: supplierInfo.name || supplierInfo.companyName || supplierInfo.raw || 'Alibaba',
+    platform: supplierInfo.platform || 'Alibaba',
+    productId: supplierInfo.productId || supplierInfo.product_id || sourceProductId || null,
+    country: supplierInfo.country || supplierInfo.shipFromCountryName || supplierInfo.countryName || null,
+    url: supplierInfo.productUrl || supplierInfo.url || sourceUrl || null,
+  };
+
+  return {
+    sourceProductId,
+    sourceUrl,
+    source: 'ALIBABA',
+    galleryImages,
+    mainImage: doc.mainImage || doc.images?.[0]?.url || normalized.image || normalized.images?.[0]?.url || doc.rawAlibabaData?.main_image || doc.rawPayload?.main_image || galleryImages[0] || '',
+    supplierSummary,
+    alibaba: {
+      platform: 'Alibaba',
+      sourceProductId,
+      sourceUrl,
+      source: 'ALIBABA',
+      supplier: supplierSummary,
+      keyAttributes: extractAlibabaKeyAttributes(doc),
+      inventory: extractAlibabaInventory(doc),
+      shippingOrigin: normalized.shippingOrigin || doc.shippingOrigin || null,
+      priceTiers: computePublicPriceTiers(doc),
+      pricing: normalized.pricing || doc.pricing || null,
+      variantCount: Array.isArray(doc.variants) ? doc.variants.length : Array.isArray(normalized.variants) ? normalized.variants.length : 0,
+    },
+  };
+}
+
 async function toPublicProductDetail(product) {
   let doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
   const publicDoc = toPublicProduct(doc);
@@ -248,6 +396,17 @@ async function toPublicProductDetail(product) {
     specMap.set('Dimensions colis', doc.packageSize);
   }
   publicDoc.specifications = Array.from(specMap.entries()).map(([key, value]) => ({ key, value }));
+
+  if (isAlibaba) {
+    const alibabaDetails = buildAlibabaPublicDetail(doc);
+    publicDoc.sourceProductId = alibabaDetails.sourceProductId;
+    publicDoc.sourceUrl = alibabaDetails.sourceUrl;
+    publicDoc.source = alibabaDetails.source;
+    publicDoc.galleryImages = alibabaDetails.galleryImages;
+    publicDoc.mainImage = alibabaDetails.mainImage || publicDoc.mainImage;
+    publicDoc.supplierSummary = alibabaDetails.supplierSummary;
+    publicDoc.alibaba = alibabaDetails.alibaba;
+  }
 
   if (isDropshippingProduct(doc)) {
     return sanitizeStoredCjPublicDoc(publicDoc, doc);
