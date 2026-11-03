@@ -468,6 +468,60 @@ exports.getImportedProductById = async (req, res) => {
   }
 };
 
+exports.deleteImportedProduct = async (req, res) => {
+  try {
+    const rawId = String(req.params.id || '').trim();
+    if (!rawId) {
+      return res.status(400).json({ success: false, message: 'Identifiant produit requis.' });
+    }
+
+    const mongoId = mongoose.Types.ObjectId.isValid(rawId) ? rawId : null;
+
+    const alibabaProduct = await AlibabaProduct.findOne({
+      source: 'ALIBABA',
+      $or: [
+        ...(mongoId ? [{ _id: mongoId }] : []),
+        { sourceProductId: rawId },
+        { externalProductId: rawId },
+      ],
+    }).lean();
+
+    const relatedProductDelete = await Product.deleteMany({
+      $or: [
+        ...(alibabaProduct?._id ? [{ alibabaProductId: alibabaProduct._id }] : []),
+        { source: 'ALIBABA', sourceProductId: rawId },
+        { source: 'ALIBABA', externalProductId: rawId },
+        ...(mongoId ? [{ alibabaProductId: mongoId }] : []),
+      ],
+    });
+
+    const deletedAlibabaProduct = alibabaProduct
+      ? await AlibabaProduct.findByIdAndDelete(alibabaProduct._id)
+      : await AlibabaProduct.findOneAndDelete({
+          source: 'ALIBABA',
+          $or: [
+            { sourceProductId: rawId },
+            { externalProductId: rawId },
+          ],
+        });
+
+    if (!deletedAlibabaProduct && relatedProductDelete.deletedCount === 0) {
+      return res.status(404).json({ success: false, message: 'Produit Alibaba importé introuvable.' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Produit Alibaba supprimé du catalogue.',
+      deleted: {
+        alibabaProduct: Boolean(deletedAlibabaProduct),
+        productRecords: relatedProductDelete.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
 exports.updateCommercialData = async (req, res) => {
   try {
     const id = req.params.id;

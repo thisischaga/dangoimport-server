@@ -123,6 +123,8 @@ function normalizeDropshippingInput(body = {}) {
 async function stampOfficialImportPricing(payload) {
   const config = await getImportPricingConfig();
   const pricing = calculateImportPricing(payload, { config });
+  const hasManualWeight = payload.weight != null && String(payload.weight).trim() !== '';
+
   payload.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
   payload.productMarkupMultiplier = pricing.productMarkupMultiplier;
   payload.minimumProductPrice = pricing.minimumProductPrice;
@@ -132,7 +134,7 @@ async function stampOfficialImportPricing(payload) {
   payload.shippingCategory = pricing.shippingCategory;
   payload.estimatedImportDays = pricing.estimatedImportDays;
   payload.costPrice = pricing.convertedSupplierPriceFCFA;
-  payload.weight = String(pricing.weight);
+  payload.weight = hasManualWeight ? String(payload.weight).trim() : String(pricing.weight);
   if (payload.supplier) {
     payload.supplier.convertedSupplierPriceFCFA = pricing.convertedSupplierPriceFCFA;
     payload.supplier.shippingCost = 0;

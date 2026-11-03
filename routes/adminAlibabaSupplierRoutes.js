@@ -25,6 +25,7 @@ router.post('/import-selected', alibabaSupplierController.importSelected);
 // Gestion avancée des produits Alibaba importés
 router.get('/imported', alibabaSupplierController.getImportedProducts);
 router.get('/imported/:id', alibabaSupplierController.getImportedProductById);
+router.delete('/imported/:id', alibabaSupplierController.deleteImportedProduct);
 router.patch('/imported/:id', alibabaSupplierController.updateCommercialData);
 router.post('/imported/:id/sync', alibabaSupplierController.syncImportedProduct);
 router.post('/imported/:id/validate-quality', alibabaSupplierController.validateQuality);
