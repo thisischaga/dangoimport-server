@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Product = require('../Models/Product');
 const AlibabaProduct = require('../Models/AlibabaProduct');
 const { alibabaConfig } = require('../config/alibaba');
