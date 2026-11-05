@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const Product = require('../Models/Product');
 const AlibabaProduct = require('../Models/AlibabaProduct');
 const { alibabaConfig } = require('../config/alibaba');
 const { testConnection, alibabaCall } = require('../services/alibaba/alibabaClient');
@@ -477,7 +476,6 @@ exports.deleteImportedProduct = async (req, res) => {
     }
 
     const mongoId = mongoose.Types.ObjectId.isValid(rawId) ? rawId : null;
-
     const alibabaProduct = await AlibabaProduct.findOne({
       source: 'ALIBABA',
       $or: [
@@ -486,15 +484,6 @@ exports.deleteImportedProduct = async (req, res) => {
         { externalProductId: rawId },
       ],
     }).lean();
-
-    const relatedProductDelete = await Product.deleteMany({
-      $or: [
-        ...(alibabaProduct?._id ? [{ alibabaProductId: alibabaProduct._id }] : []),
-        { source: 'ALIBABA', sourceProductId: rawId },
-        { source: 'ALIBABA', externalProductId: rawId },
-        ...(mongoId ? [{ alibabaProductId: mongoId }] : []),
-      ],
-    });
 
     const deletedAlibabaProduct = alibabaProduct
       ? await AlibabaProduct.findByIdAndDelete(alibabaProduct._id)
@@ -506,7 +495,7 @@ exports.deleteImportedProduct = async (req, res) => {
           ],
         });
 
-    if (!deletedAlibabaProduct && relatedProductDelete.deletedCount === 0) {
+    if (!deletedAlibabaProduct) {
       return res.status(404).json({ success: false, message: 'Produit Alibaba importé introuvable.' });
     }
 
@@ -514,8 +503,7 @@ exports.deleteImportedProduct = async (req, res) => {
       success: true,
       message: 'Produit Alibaba supprimé du catalogue.',
       deleted: {
-        alibabaProduct: Boolean(deletedAlibabaProduct),
-        productRecords: relatedProductDelete.deletedCount || 0,
+        alibabaProduct: true,
       },
     });
   } catch (error) {
@@ -526,13 +514,7 @@ exports.deleteImportedProduct = async (req, res) => {
 exports.updateCommercialData = async (req, res) => {
   try {
     const id = req.params.id;
-    let product = await Product.findById(id);
-    let sourceType = 'Product';
-
-    if (!product) {
-      product = await AlibabaProduct.findById(id);
-      sourceType = 'AlibabaProduct';
-    }
+    const product = await AlibabaProduct.findById(id);
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
@@ -545,24 +527,22 @@ exports.updateCommercialData = async (req, res) => {
       }
     });
 
-    if (sourceType === 'AlibabaProduct') {
-      if (req.body.name !== undefined) product.name = req.body.name;
-      if (req.body.description !== undefined) product.description = req.body.description;
-      if (req.body.category !== undefined) product.category = req.body.category;
-      if (req.body.brand !== undefined) product.brand = req.body.brand;
-      if (req.body.price !== undefined) {
-        product.normalized = {
-          ...(product.normalized || {}),
-          pricing: {
-            ...(product.normalized?.pricing || {}),
-            sellingPrice: Number(req.body.price),
-          },
-        };
-      }
-      if (req.body.isPublished !== undefined) {
-        product.isPublished = Boolean(req.body.isPublished);
-        product.status = req.body.isPublished ? 'IMPORTED' : 'RAW';
-      }
+    if (req.body.name !== undefined) product.name = req.body.name;
+    if (req.body.description !== undefined) product.description = req.body.description;
+    if (req.body.category !== undefined) product.category = req.body.category;
+    if (req.body.brand !== undefined) product.brand = req.body.brand;
+    if (req.body.price !== undefined) {
+      product.normalized = {
+        ...(product.normalized || {}),
+        pricing: {
+          ...(product.normalized?.pricing || {}),
+          sellingPrice: Number(req.body.price),
+        },
+      };
+    }
+    if (req.body.isPublished !== undefined) {
+      product.isPublished = Boolean(req.body.isPublished);
+      product.status = req.body.isPublished ? 'IMPORTED' : 'RAW';
     }
 
     if (req.body.isPublished !== undefined) {
@@ -576,25 +556,11 @@ exports.updateCommercialData = async (req, res) => {
             warnings: quality.warnings,
           });
         }
-        if (sourceType === 'Product') {
-          product.isPublished = true;
-          product.publicationStatus = 'published';
-          product.importStatus = 'PUBLISHED';
-        } else {
-          product.isPublished = true;
-          product.status = 'IMPORTED';
-        }
+        product.isPublished = true;
+        product.status = 'IMPORTED';
       } else {
-        if (sourceType === 'Product') {
-          product.isPublished = false;
-          product.publicationStatus = 'unpublished';
-          if (product.importStatus === 'PUBLISHED') {
-            product.importStatus = 'READY_TO_PUBLISH';
-          }
-        } else {
-          product.isPublished = false;
-          product.status = 'RAW';
-        }
+        product.isPublished = false;
+        product.status = 'RAW';
       }
     }
 
@@ -640,19 +606,12 @@ exports.syncImportedProduct = async (req, res) => {
 exports.validateQuality = async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
-
     const alibabaDoc = await AlibabaProduct.findById(id).lean();
-    if (alibabaDoc) {
-      const product = mapAlibabaProductForAdmin(alibabaDoc);
-      return res.json({ success: true, data: validateProductQualityForPublication(product) });
-    }
-
-    const product = await Product.findById(id).lean();
-    if (!product) {
+    if (!alibabaDoc) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
-    const quality = validateProductQualityForPublication(product);
-    return res.json({ success: true, data: quality });
+    const product = mapAlibabaProductForAdmin(alibabaDoc);
+    return res.json({ success: true, data: validateProductQualityForPublication(product) });
   } catch (error) {
     return handleError(res, error);
   }

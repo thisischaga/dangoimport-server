@@ -1,5 +1,5 @@
 const express = require('express');
-const Product = require('../Models/Product');
+const AlibabaProduct = require('../Models/AlibabaProduct');
 const User = require('../Models/User');
 const AuditLog = require('../Models/AuditLog');
 const Notification = require('../Models/Notification');
@@ -8,6 +8,88 @@ const emailService = require('../utils/emailService');
 const { alertAdminActivity } = require('../utils/securityAlerts');
 
 const router = express.Router();
+
+function getMarketplaceMeta(product = {}) {
+  const safeNormalized = product.normalized && typeof product.normalized === 'object' ? product.normalized : {};
+  return {
+    ...(safeNormalized.marketplace || {}),
+    history: Array.isArray(safeNormalized.marketplace?.history) ? safeNormalized.marketplace.history : [],
+  };
+}
+
+function setMarketplaceMeta(product, patch = {}) {
+  const current = getMarketplaceMeta(product);
+  const next = { ...current, ...patch };
+  product.normalized = {
+    ...(product.normalized && typeof product.normalized === 'object' ? product.normalized : {}),
+    marketplace: next,
+  };
+  return next;
+}
+
+function pushMarketplaceHistory(product, action, comment, performedBy, role = 'admin', date = new Date()) {
+  const meta = getMarketplaceMeta(product);
+  const next = {
+    ...meta,
+    history: [
+      ...(Array.isArray(meta.history) ? meta.history : []),
+      { action, comment, performedBy, role, date },
+    ],
+  };
+  setMarketplaceMeta(product, next);
+  return next;
+}
+
+function getMarketplaceValidationStatus(product = {}) {
+  const meta = getMarketplaceMeta(product);
+  if (meta.validationStatus) return meta.validationStatus;
+  if (product.isPublished) return 'approved';
+  if (product.status === 'ERROR') return 'rejected';
+  if (meta.changeRequestComment) return 'changes_requested';
+  return 'pending';
+}
+
+function normalizeAlibabaMarketplaceProduct(doc) {
+  if (!doc) return null;
+  const product = doc.toObject ? doc.toObject() : { ...doc };
+  const raw = product.normalized && typeof product.normalized === 'object' ? product.normalized : {};
+  const marketplace = raw.marketplace || {};
+  const description = product.description || raw.description || product.rawPayload?.description || product.rawSections?.product?.description || '';
+  const price = Number(
+    raw?.pricing?.sellingPrice
+    ?? raw?.pricing?.price
+    ?? raw?.price
+    ?? product.pricing?.sourcePrice
+    ?? product.pricing?.tiers?.[0]?.price
+    ?? 0,
+  );
+  const stock = Number(product.inventory?.quantityRaw ?? raw?.inventory?.available ?? raw?.stock ?? product.stock ?? 0);
+
+  return {
+    ...product,
+    _id: product._id,
+    id: String(product._id),
+    name: product.name || product.title || '',
+    title: product.title || product.name || '',
+    description: String(description || '').trim(),
+    shortDescription: String(description || '').slice(0, 220),
+    category: product.category || raw.category || '',
+    brand: product.brand || raw.brand || '',
+    vendorName: product.supplier?.name || product.brand || 'Alibaba Supplier',
+    vendorId: product.vendorId || product.supplier?.companyId || null,
+    image: product.mainImage || product.images?.[0]?.url || '',
+    images: Array.isArray(product.images) ? product.images.map((img) => (typeof img === 'string' ? img : img?.url || '')).filter(Boolean) : [],
+    price: Number.isFinite(price) ? price : 0,
+    stock: Number.isFinite(stock) ? stock : 0,
+    validationStatus: getMarketplaceValidationStatus(product),
+    isPublished: Boolean(product.isPublished),
+    publicationStatus: product.isPublished ? 'published' : 'draft',
+    rejectionReason: marketplace.rejectionReason || '',
+    changeRequestComment: marketplace.changeRequestComment || '',
+    history: Array.isArray(marketplace.history) ? marketplace.history : [],
+    updatedAt: product.updatedAt || product.lastSyncedAt || new Date(),
+  };
+}
 
 // Helper helper for audit logging
 const logAudit = async (req, action, targetResource, targetId, details = {}) => {
@@ -72,8 +154,11 @@ const getValidationPriority = (status) => {
 // 1. GET /api/admin/marketplace/products/pending — Produits en attente de validation
 router.get('/products/pending', verifyAdmin, async (req, res) => {
   try {
-    const products = await Product.find({ validationStatus: 'pending' }).sort({ createdAt: -1, updatedAt: -1 });
-    return res.status(200).json({ success: true, count: products.length, data: products });
+    const products = await AlibabaProduct.find({ source: 'ALIBABA' })
+      .sort({ createdAt: -1, updatedAt: -1 })
+      .lean();
+    const normalized = (products || []).map(normalizeAlibabaMarketplaceProduct).filter((p) => p && p.validationStatus === 'pending');
+    return res.status(200).json({ success: true, count: normalized.length, data: normalized });
   } catch (err) {
     console.error('[AdminMarketplace] get pending products:', err);
     return res.status(500).json({ message: 'Erreur lors de la récupération des produits en attente.' });
@@ -84,19 +169,23 @@ router.get('/products/pending', verifyAdmin, async (req, res) => {
 router.get('/products/all', verifyAdmin, async (req, res) => {
   try {
     const { status, category, search } = req.query;
-    const query = {};
-    if (status) query.validationStatus = status;
+    const query = { source: 'ALIBABA' };
     if (category) query.category = category;
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
-        { vendorName: { $regex: search, $options: 'i' } },
-        { sku: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: 'i' } },
+        { brand: { $regex: search, $options: 'i' } },
+        { sourceProductId: { $regex: search, $options: 'i' } },
       ];
     }
 
-    const products = await Product.find(query).sort({ createdAt: -1, updatedAt: -1 });
-    return res.status(200).json({ success: true, count: products.length, data: products });
+    const products = await AlibabaProduct.find(query).sort({ createdAt: -1, updatedAt: -1 }).lean();
+    const normalized = (products || []).map(normalizeAlibabaMarketplaceProduct).filter(Boolean);
+    const filtered = status
+      ? normalized.filter((p) => p.validationStatus === status)
+      : normalized;
+    return res.status(200).json({ success: true, count: filtered.length, data: filtered });
   } catch (err) {
     console.error('[AdminMarketplace] get all products:', err);
     return res.status(500).json({ message: 'Erreur lors de la récupération des produits.' });
@@ -106,79 +195,69 @@ router.get('/products/all', verifyAdmin, async (req, res) => {
 // 3. PUT /api/admin/marketplace/products/:id/approve — Approuver et publier
 router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await AlibabaProduct.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
-    // Validate required fields before approving to avoid Mongoose validation errors
+    const normalized = normalizeAlibabaMarketplaceProduct(product);
     const missing = [];
-    if (!product.name || !String(product.name).trim()) missing.push('name');
-    if (!product.category || !String(product.category).trim()) missing.push('category');
-    if (product.price === undefined || product.price === null || Number(product.price) <= 0) missing.push('price (doit être supérieur à 0)');
-    if (product.stock === undefined || product.stock === null) missing.push('stock');
-    if (!product.description || !String(product.description).trim()) missing.push('description');
+    if (!normalized?.name?.trim()) missing.push('name');
+    if (!normalized?.category?.trim()) missing.push('category');
+    if (Number(normalized?.price || 0) <= 0) missing.push('price (doit être supérieur à 0)');
+    if (Number(normalized?.stock ?? 0) < 0) missing.push('stock');
+    if (!normalized?.description?.trim()) missing.push('description');
 
     if (missing.length > 0) {
-      // Do not attempt to save; return a clear error so the admin can request changes
       return res.status(400).json({ success: false, message: 'Impossible d\'approuver : champs requis manquants ou prix égal à 0.', missingFields: missing });
     }
 
-    product.validationStatus = 'approved';
     product.isPublished = true;
-    product.rejectionReason = '';
-    product.changeRequestComment = '';
-    product.updatedAt = new Date();
-
-    const adminUser = req.adminUser || req.admin || req.user || {};
-    const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
-    product.history.push({
-      action: 'Approuvé',
-      comment: 'Le produit a été validé et publié sur la marketplace Dango Import.',
-      performedBy: adminName,
-      role: 'admin',
-      date: new Date(),
+    product.status = 'IMPORTED';
+    product.lastSyncedAt = new Date();
+    setMarketplaceMeta(product, {
+      validationStatus: 'approved',
+      rejectionReason: '',
+      changeRequestComment: '',
     });
-
+    pushMarketplaceHistory(product, 'Approuvé', 'Le produit a été validé et publié sur la marketplace Dango Import.', req.adminUser?.firstname || req.admin?.firstname || 'Admin', 'admin');
     await product.save();
 
-    // Audit Log
-    await logAudit(req, 'APPROVE_PRODUCT', 'Product', product._id, { productName: product.name });
+    await logAudit(req, 'APPROVE_PRODUCT', 'AlibabaProduct', product._id, { productName: product.name });
 
-    // Récupérer l'email du vendeur
+    const vendorId = product.vendorId || product.supplier?.companyId || null;
     let vendorEmail = '';
-    if (product.vendorId) {
-      const vendorUser = await User.findById(product.vendorId);
+    if (vendorId) {
+      const vendorUser = await User.findById(vendorId);
       if (vendorUser) vendorEmail = vendorUser.userEmail;
     }
 
-    // Email Resend
     if (vendorEmail) {
       await emailService.sendApprovalEmail({
         vendorEmail,
-        vendorName: product.vendorName,
+        vendorName: product.supplier?.name || product.brand || 'Alibaba Supplier',
         productName: product.name,
         productUrl: `https://dangoimport.com/product/${product._id}`,
       });
     }
 
-    // Notification vendeur Dango Seller
-    await notifyVendor(req, {
-      vendorId: product.vendorId,
-      title: 'Produit approuvé ! 🎉',
-      message: `Votre produit "${product.name}" a été approuvé par l'équipe et est maintenant en ligne.`,
-      type: 'product_approved',
-      link: '/products',
-    });
+    if (vendorId) {
+      await notifyVendor(req, {
+        vendorId,
+        title: 'Produit approuvé ! 🎉',
+        message: `Votre produit "${product.name}" a été approuvé par l'équipe et est maintenant en ligne.`,
+        type: 'product_approved',
+        link: '/products',
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Produit approuvé et publié avec succès.',
-      data: product,
+      data: normalizeAlibabaMarketplaceProduct(product),
     });
   } catch (err) {
     console.error('[AdminMarketplace] approve product:', err);
-    // If this is a Mongoose validation error, return a 400 with missing fields for the admin UI
     if (err && err.name === 'ValidationError') {
       try {
         const missing = Object.keys(err.errors || {}).filter((k) => err.errors[k] && err.errors[k].kind === 'required');
@@ -199,60 +278,57 @@ router.put('/products/:id/reject', verifyAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Le motif du rejet est obligatoire.' });
     }
 
-    const product = await Product.findById(req.params.id);
+    const product = await AlibabaProduct.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
-    product.validationStatus = 'rejected';
     product.isPublished = false;
-    product.rejectionReason = reason.trim();
-    product.updatedAt = new Date();
+    product.status = 'ERROR';
+    setMarketplaceMeta(product, {
+      validationStatus: 'rejected',
+      rejectionReason: reason.trim(),
+      changeRequestComment: '',
+    });
 
     const adminUser = req.adminUser || req.admin || req.user || {};
     const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
-    product.history.push({
-      action: 'Rejeté',
-      comment: reason.trim(),
-      performedBy: adminName,
-      role: 'admin',
-      date: new Date(),
-    });
-
+    pushMarketplaceHistory(product, 'Rejeté', reason.trim(), adminName, 'admin');
     await product.save();
 
-    // Audit Log
-    await logAudit(req, 'REJECT_PRODUCT', 'Product', product._id, { productName: product.name, reason });
+    await logAudit(req, 'REJECT_PRODUCT', 'AlibabaProduct', product._id, { productName: product.name, reason });
 
-    // Email & Notification
+    const vendorId = product.vendorId || product.supplier?.companyId || null;
     let vendorEmail = '';
-    if (product.vendorId) {
-      const vendorUser = await User.findById(product.vendorId);
+    if (vendorId) {
+      const vendorUser = await User.findById(vendorId);
       if (vendorUser) vendorEmail = vendorUser.userEmail;
     }
 
     if (vendorEmail) {
       await emailService.sendRejectionEmail({
         vendorEmail,
-        vendorName: product.vendorName,
+        vendorName: product.supplier?.name || product.brand || 'Alibaba Supplier',
         productName: product.name,
         rejectionReason: reason.trim(),
         editUrl: 'https://business.dangoimport.com/products',
       });
     }
 
-    await notifyVendor(req, {
-      vendorId: product.vendorId,
-      title: 'Produit rejeté ❌',
-      message: `Votre produit "${product.name}" a été rejeté. Motif : ${reason.trim()}`,
-      type: 'product_rejected',
-      link: '/products',
-    });
+    if (vendorId) {
+      await notifyVendor(req, {
+        vendorId,
+        title: 'Produit rejeté ❌',
+        message: `Votre produit "${product.name}" a été rejeté. Motif : ${reason.trim()}`,
+        type: 'product_rejected',
+        link: '/products',
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Produit rejeté avec succès.',
-      data: product,
+      data: normalizeAlibabaMarketplaceProduct(product),
     });
   } catch (err) {
     console.error('[AdminMarketplace] reject product:', err);
@@ -268,60 +344,56 @@ router.put('/products/:id/request-changes', verifyAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Le commentaire des modifications attendues est obligatoire.' });
     }
 
-    const product = await Product.findById(req.params.id);
+    const product = await AlibabaProduct.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
-    product.validationStatus = 'changes_requested';
     product.isPublished = false;
-    product.changeRequestComment = comment.trim();
-    product.updatedAt = new Date();
+    setMarketplaceMeta(product, {
+      validationStatus: 'changes_requested',
+      changeRequestComment: comment.trim(),
+      rejectionReason: '',
+    });
 
     const adminUser = req.adminUser || req.admin || req.user || {};
     const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
-    product.history.push({
-      action: 'Modifications demandées',
-      comment: comment.trim(),
-      performedBy: adminName,
-      role: 'admin',
-      date: new Date(),
-    });
-
+    pushMarketplaceHistory(product, 'Modifications demandées', comment.trim(), adminName, 'admin');
     await product.save();
 
-    // Audit Log
-    await logAudit(req, 'REQUEST_CHANGES_PRODUCT', 'Product', product._id, { productName: product.name, comment });
+    await logAudit(req, 'REQUEST_CHANGES_PRODUCT', 'AlibabaProduct', product._id, { productName: product.name, comment });
 
-    // Email & Notification
+    const vendorId = product.vendorId || product.supplier?.companyId || null;
     let vendorEmail = '';
-    if (product.vendorId) {
-      const vendorUser = await User.findById(product.vendorId);
+    if (vendorId) {
+      const vendorUser = await User.findById(vendorId);
       if (vendorUser) vendorEmail = vendorUser.userEmail;
     }
 
     if (vendorEmail) {
       await emailService.sendChangesRequestedEmail({
         vendorEmail,
-        vendorName: product.vendorName,
+        vendorName: product.supplier?.name || product.brand || 'Alibaba Supplier',
         productName: product.name,
         comment: comment.trim(),
         editUrl: 'https://business.dangoimport.com/products',
       });
     }
 
-    await notifyVendor(req, {
-      vendorId: product.vendorId,
-      title: 'Modifications demandées 📝',
-      message: `Des corrections sont nécessaires sur votre produit "${product.name}".`,
-      type: 'changes_requested',
-      link: '/products',
-    });
+    if (vendorId) {
+      await notifyVendor(req, {
+        vendorId,
+        title: 'Modifications demandées 📝',
+        message: `Des corrections sont nécessaires sur votre produit "${product.name}".`,
+        type: 'changes_requested',
+        link: '/products',
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Demande de modifications transmise au vendeur.',
-      data: product,
+      data: normalizeAlibabaMarketplaceProduct(product),
     });
   } catch (err) {
     console.error('[AdminMarketplace] request changes:', err);
@@ -332,38 +404,35 @@ router.put('/products/:id/request-changes', verifyAdmin, async (req, res) => {
 // 6. PUT /api/admin/marketplace/products/:id/toggle-disable — Désactiver/Activer un produit publié
 router.put('/products/:id/toggle-disable', verifyAdmin, async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await AlibabaProduct.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Produit introuvable.' });
     }
 
-    if (product.validationStatus === 'disabled' && Number(product.price || 0) <= 0) {
+    const currentStatus = getMarketplaceValidationStatus(product);
+    if (currentStatus === 'disabled' && Number(normalizeAlibabaMarketplaceProduct(product).price || 0) <= 0) {
       return res.status(400).json({ success: false, message: 'Impossible de réactiver un produit dont le prix est de 0$ / 0 FCFA.' });
     }
 
-    const newStatus = product.validationStatus === 'disabled' ? 'approved' : 'disabled';
-    product.validationStatus = newStatus;
-    product.isPublished = newStatus === 'approved' && Number(product.price || 0) > 0;
-    product.updatedAt = new Date();
+    const newStatus = currentStatus === 'disabled' ? 'approved' : 'disabled';
+    product.isPublished = newStatus === 'approved' && Number(normalizeAlibabaMarketplaceProduct(product).price || 0) > 0;
+    setMarketplaceMeta(product, {
+      validationStatus: newStatus,
+      rejectionReason: '',
+      changeRequestComment: '',
+    });
 
     const adminUser = req.adminUser || req.admin || req.user || {};
     const adminName = `${adminUser.firstname || ''} ${adminUser.surname || 'Admin'}`.trim();
-    product.history.push({
-      action: newStatus === 'disabled' ? 'Désactivé par Admin' : 'Réactivé par Admin',
-      comment: newStatus === 'disabled' ? 'Masqué temporairement de la marketplace.' : 'Remis en ligne.',
-      performedBy: adminName,
-      role: 'admin',
-      date: new Date(),
-    });
-
+    pushMarketplaceHistory(product, newStatus === 'disabled' ? 'Désactivé par Admin' : 'Réactivé par Admin', newStatus === 'disabled' ? 'Masqué temporairement de la marketplace.' : 'Remis en ligne.', adminName, 'admin');
     await product.save();
 
-    await logAudit(req, 'TOGGLE_DISABLE_PRODUCT', 'Product', product._id, { newStatus });
+    await logAudit(req, 'TOGGLE_DISABLE_PRODUCT', 'AlibabaProduct', product._id, { newStatus });
 
     return res.status(200).json({
       success: true,
       message: `Produit ${newStatus === 'disabled' ? 'désactivé' : 'réactivé'} avec succès.`,
-      data: product,
+      data: normalizeAlibabaMarketplaceProduct(product),
     });
   } catch (err) {
     console.error('[AdminMarketplace] toggle disable:', err);
