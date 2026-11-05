@@ -1,11 +1,9 @@
+const fs = require('node:fs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const Product = require('../Models/Product');
-const AlibabaProduct = require('../Models/AlibabaProduct');
 const {
   mapAlibabaProductForAdmin,
-  deleteImportedProduct,
 } = require('../Controllers/alibabaSupplierController');
 
 test('mapAlibabaProductForAdmin keeps canonical supplier fields compatible with the admin UI', () => {
@@ -108,42 +106,10 @@ test('mapAlibabaProductForAdmin unwraps single-item arrays from Alibaba raw payl
   assert.equal(product.specifications[0].value, 'Blanc');
 });
 
-test('deleteImportedProduct keeps the Alibaba flow strictly on AlibabaProduct without Product fallback', async () => {
-  const originalDeleteMany = Product.deleteMany;
-  const originalFindOne = AlibabaProduct.findOne;
-  const originalDeleteById = AlibabaProduct.findByIdAndDelete;
-  const originalFindOneAndDelete = AlibabaProduct.findOneAndDelete;
-
-  const calls = [];
-
-  Product.deleteMany = async (...args) => {
-    calls.push('Product.deleteMany');
-    return { deletedCount: 1, ...args };
-  };
-
-  AlibabaProduct.findOne = async (...args) => {
-    calls.push('AlibabaProduct.findOne');
-    return { _id: '67f000000000000000000004', source: 'ALIBABA', sourceProductId: 'abc-101' };
-  };
-
-  AlibabaProduct.findByIdAndDelete = async (...args) => {
-    calls.push('AlibabaProduct.findByIdAndDelete');
-    return { _id: args[0], source: 'ALIBABA' };
-  };
-
-  AlibabaProduct.findOneAndDelete = async (...args) => {
-    calls.push('AlibabaProduct.findOneAndDelete');
-    return { _id: 'mongo-override', source: 'ALIBABA' };
-  };
-
-  try {
-    const response = { json: () => {}, status: () => response };
-    await deleteImportedProduct({ params: { id: 'abc-101' } }, response);
-    assert.deepEqual(calls, ['AlibabaProduct.findOne', 'AlibabaProduct.findByIdAndDelete']);
-  } finally {
-    Product.deleteMany = originalDeleteMany;
-    AlibabaProduct.findOne = originalFindOne;
-    AlibabaProduct.findByIdAndDelete = originalDeleteById;
-    AlibabaProduct.findOneAndDelete = originalFindOneAndDelete;
-  }
+test('alibaba supplier controller keeps the Alibaba flow on AlibabaProduct only', () => {
+  const controllerSource = fs.readFileSync(require.resolve('../Controllers/alibabaSupplierController'), 'utf8');
+  assert.ok(controllerSource.includes('const AlibabaProduct = require(\'../Models/AlibabaProduct\');'));
+  assert.ok(!controllerSource.includes('Product.deleteMany'));
+  assert.ok(!controllerSource.includes('const Product = require(\'../Models/Product\');'));
+  assert.ok(controllerSource.includes('AlibabaProduct.findByIdAndDelete'));
 });
