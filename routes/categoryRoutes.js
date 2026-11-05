@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 
 const slugify = (value = '') =>
   String(value)

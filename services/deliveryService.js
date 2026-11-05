@@ -194,7 +194,7 @@ async function determineDeliveryProvider({ store, clientLocation }) {
 
 async function calculateDeliveryForItems({ items = [], clientLocation = null }) {
   const Store = require('../Models/Store');
-  const Product = require('../Models/Product');
+  const Product = require('../Models/AlibabaProduct');
 
   if (!Array.isArray(items) || items.length === 0) {
     return {

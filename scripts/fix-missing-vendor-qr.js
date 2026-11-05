@@ -6,7 +6,7 @@ const connectDB = require('../Congfig/db');
 dotenv.config();
 
 const ShopOrder = require('../Models/ShopOrder');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const QRCode = require('../Models/QRCode');
 const VendorOrder = require('../Models/VendorOrder');
 const Store = require('../Models/Store');

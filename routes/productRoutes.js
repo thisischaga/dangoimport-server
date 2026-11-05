@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const Review = require('../Models/Review');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { toPublicProduct, toPublicProducts, toPublicProductDetail } = require('../utils/publicProduct');

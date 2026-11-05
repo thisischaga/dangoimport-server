@@ -1,4 +1,4 @@
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 
 function duplicateFieldMessage(keyPattern = {}) {
   if (keyPattern.sku) return 'Ce SKU est déjà utilisé par un autre produit. Choisissez un code unique ou laissez le champ vide.';

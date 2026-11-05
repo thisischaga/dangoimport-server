@@ -4,7 +4,7 @@
  */
 require('dotenv').config();
 const connectDB = require('../Congfig/db');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 
 async function migrate() {
   await connectDB();

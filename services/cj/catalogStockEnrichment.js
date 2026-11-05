@@ -1,4 +1,4 @@
-const Product = require('../../Models/Product');
+const Product = require('../../Models/AlibabaProduct');
 const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const {
   isCjDropshippingProduct,

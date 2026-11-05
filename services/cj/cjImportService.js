@@ -1,4 +1,4 @@
-const Product = require('../../Models/Product');
+const Product = require('../../Models/AlibabaProduct');
 const SupplierSyncJob = require('../../Models/SupplierSyncJob');
 const { cjConfig, assertCjConfigured } = require('../../config/cj');
 const { getCJProducts, getCJProductDetail } = require('./cjProductService');

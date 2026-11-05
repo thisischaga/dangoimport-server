@@ -1,6 +1,6 @@
 const express = require('express');
 const Wishlist = require('../Models/Wishlist');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const verifyToken = require('../Middlewares/verifyTokens');
 
 const router = express.Router();

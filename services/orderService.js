@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const ShopOrder = require('../Models/ShopOrder');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const VendorOrder = require('../Models/VendorOrder');
 const Store = require('../Models/Store');
 const User = require('../Models/User');

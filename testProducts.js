@@ -4,7 +4,7 @@
  */
 
 const mongoose = require('mongoose');
-const Product = require('./Models/Product');
+const Product = require('./Models/AlibabaProduct');
 require('dotenv').config();
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/dangoimport';

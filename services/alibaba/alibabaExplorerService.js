@@ -1,4 +1,3 @@
-const Product = require('../../Models/Product');
 const AlibabaProduct = require('../../Models/AlibabaProduct');
 const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
 const { searchAlibabaProducts, getAlibabaProductDetail, getAlibabaRawProduct } = require('./alibabaProductService');

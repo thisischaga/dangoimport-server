@@ -1,6 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const Promotion = require('../Models/Promotion');
 const ShopOrder = require('../Models/ShopOrder');
 const OrderHistory = require('../Models/OrderHistory');

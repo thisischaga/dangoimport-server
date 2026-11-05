@@ -38,7 +38,7 @@ const { requireOwnerEmail, escapeRegExp, isAdminUser } = require('./Middlewares/
 const Commande = require('./Models/Commande');
 const Admin = require('./Models/Admin');
 const Achat = require('./Models/Achat');
-const Product = require('./Models/Product');
+const Product = require('./Models/AlibabaProduct');
 const Devis = require('./Models/Devis');
 const Newsletter = require('./Models/Newsletter');
 const VendorRequest = require('./Models/VendorRequest');
@@ -1253,7 +1253,7 @@ const startServer = async () => {
         await user.save();
 
         // Synchroniser tous les produits de ce vendeur
-        const Product = require('./Models/Product');
+        const Product = require('./Models/AlibabaProduct');
         await Product.updateMany(
           { vendorId: user._id },
           { $set: { isVendorCertified: user.isCertified } }

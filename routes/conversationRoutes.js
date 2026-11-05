@@ -4,7 +4,7 @@ const verifyToken = require('../Middlewares/verifyTokens');
 const Conversation = require('../Models/Conversation');
 const Message = require('../Models/Message');
 const User = require('../Models/User');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const { getIO } = require('../utils/socket');
 
 router.use(verifyToken);

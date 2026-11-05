@@ -1,5 +1,5 @@
 const slugify = require('slugify');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const {
   PLATFORM_VENDOR_NAME,
   toNumber,

@@ -1,7 +1,7 @@
 const express = require('express');
 const Order = require('../Models/Commande');
 const Cart = require('../Models/Cart');
-const Product = require('../Models/Product');
+const Product = require('../Models/AlibabaProduct');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { validatePromotion } = require('../utils/promoValidation');
 
