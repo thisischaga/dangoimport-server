@@ -1,4 +1,3 @@
-const Product = require('../../Models/Product');
 const AlibabaProduct = require('../../Models/AlibabaProduct');
 const { alibabaConfig } = require('../../config/alibaba');
 const { getAlibabaProductDetail } = require('./alibabaProductService');
@@ -16,12 +15,14 @@ const { toNumber } = require('../../utils/dropshippingCalculations');
 async function findExistingAlibabaProduct(externalProductId) {
   const idStr = String(externalProductId || '').trim();
   const key = buildExternalSourceKey(idStr);
-  return Product.findOne({
-    sourceType: 'DROPSHIPPING',
+  return AlibabaProduct.findOne({
+    source: 'ALIBABA',
     $or: [
-      { externalSourceKey: key },
-      { 'supplier.platform': alibabaConfig.platformKey, 'supplier.productId': idStr },
-      { source: 'ALIBABA', sourceProductId: idStr },
+      { externalProductId: key },
+      { sourceProductId: idStr },
+      { externalProductId: idStr },
+      { 'supplier.companyId': idStr },
+      { sourceUrl: { $regex: idStr, $options: 'i' } },
     ],
   });
 }
@@ -184,18 +185,33 @@ async function upsertAlibabaProduct(externalProductId, {
     };
     payload.history = [...(existing.history || []), historyEntry];
 
-    const updated = await updateDropshippingProduct(existing._id, {
-      ...payload,
-      alibabaProductId: existing.alibabaProductId || alibabaProduct._id,
-    }, adminUser);
-    const updatedObj = updated.toObject ? updated.toObject() : updated;
-    await AlibabaProduct.findByIdAndUpdate(alibabaProduct._id, {
-      $set: {
-        publishedProductId: updatedObj._id || existing._id,
-        isPublished: Boolean(updatedObj.isPublished),
-        status: updatedObj.importStatus || 'SYNCED',
+    const updated = await AlibabaProduct.findByIdAndUpdate(
+      existing._id,
+      {
+        $set: {
+          ...payload,
+          name: payload.name || existing.name,
+          description: payload.description || existing.description,
+          shortDescription: payload.shortDescription || existing.shortDescription,
+          category: payload.category || existing.category,
+          price: payload.price || existing.price,
+          brand: payload.brand || existing.brand,
+          images: payload.images || existing.images,
+          mainImage: payload.image || existing.image || existing.mainImage,
+          importWarnings: payload.importWarnings || [],
+          importErrors: payload.importErrors || [],
+          status: payload.importStatus || 'SYNCED',
+          isPublished: Boolean(payload.isPublished),
+          updatedAt: new Date(),
+          normalized: {
+            ...(existing.normalized || {}),
+            ...(payload.normalized || {}),
+          },
+        },
       },
-    });
+      { new: true },
+    );
+    const updatedObj = updated && updated.toObject ? updated.toObject() : updated;
     return {
       success: true,
       alreadyImported: false,
@@ -231,14 +247,23 @@ async function upsertAlibabaProduct(externalProductId, {
     role: 'admin',
     date: new Date(),
   }];
-  stamped.alibabaProductId = alibabaProduct._id;
-  const created = await Product.create(stamped);
-  await AlibabaProduct.findByIdAndUpdate(alibabaProduct._id, {
-    $set: {
-      publishedProductId: created._id,
-      isPublished: Boolean(created.isPublished),
-      status: created.importStatus || 'IMPORTED',
+
+  const created = await AlibabaProduct.create({
+    ...alibabaSnapshot,
+    ...stamped,
+    source: 'ALIBABA',
+    sourceProductId: alibabaSnapshot.sourceProductId || id,
+    externalProductId: alibabaSnapshot.externalProductId || id,
+    sourceUrl: alibabaSnapshot.sourceUrl || stamped.sourceUrl || '',
+    rawPayload: rawSource,
+    normalized: {
+      ...(alibabaSnapshot.normalized || {}),
+      ...(stamped.normalized || {}),
     },
+    importWarnings: stamped.importWarnings || [],
+    importErrors: stamped.importErrors || [],
+    status: stamped.importStatus || 'IMPORTED',
+    isPublished: Boolean(stamped.isPublished),
   });
   const createdObj = created.toObject ? created.toObject() : created;
   return {
