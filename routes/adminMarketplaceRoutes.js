@@ -55,15 +55,21 @@ function normalizeAlibabaMarketplaceProduct(doc) {
   const raw = product.normalized && typeof product.normalized === 'object' ? product.normalized : {};
   const marketplace = raw.marketplace || {};
   const description = product.description || raw.description || product.rawPayload?.description || product.rawSections?.product?.description || '';
-  const price = Number(
-    raw?.pricing?.sellingPrice
-    ?? raw?.pricing?.price
-    ?? raw?.price
-    ?? product.pricing?.sourcePrice
-    ?? product.pricing?.tiers?.[0]?.price
-    ?? 0,
-  );
-  const stock = Number(product.inventory?.quantityRaw ?? raw?.inventory?.available ?? raw?.stock ?? product.stock ?? 0);
+
+  // Chercher le prix dans toutes les sources possibles (Alibaba n'a pas forcément de champ price direct)
+  const priceFromNormalized = Number(raw?.pricing?.sellingPrice ?? raw?.pricing?.price ?? raw?.price ?? 0);
+  const priceFromPricing = Number(product.pricing?.sourcePrice ?? product.pricing?.tiers?.[0]?.price ?? 0);
+  const priceFromVariants = Number(product.variants?.[0]?.pricing?.[0]?.price ?? 0);
+  const rawPrice = priceFromNormalized || priceFromPricing || priceFromVariants;
+  // Si le prix brut est en USD (< 1000), on le convertit en XOF
+  const price = rawPrice > 0 && rawPrice < 1000
+    ? Math.round(rawPrice * 610 * 1.3)   // USD → XOF avec marge
+    : rawPrice;
+
+  const stock = Number(product.inventory?.quantityRaw ?? raw?.inventory?.available ?? raw?.stock ?? product.stock ?? 999);
+  const rawImgFirst = Array.isArray(product.images) && product.images.length > 0
+    ? (typeof product.images[0] === 'string' ? product.images[0] : product.images[0]?.url || '')
+    : '';
 
   return {
     ...product,
@@ -77,10 +83,10 @@ function normalizeAlibabaMarketplaceProduct(doc) {
     brand: product.brand || raw.brand || '',
     vendorName: product.supplier?.name || product.brand || 'Alibaba Supplier',
     vendorId: product.vendorId || product.supplier?.companyId || null,
-    image: product.mainImage || product.images?.[0]?.url || '',
+    image: product.mainImage || rawImgFirst || '',
     images: Array.isArray(product.images) ? product.images.map((img) => (typeof img === 'string' ? img : img?.url || '')).filter(Boolean) : [],
     price: Number.isFinite(price) ? price : 0,
-    stock: Number.isFinite(stock) ? stock : 0,
+    stock: Number.isFinite(stock) ? Math.max(0, stock) : 999,
     validationStatus: getMarketplaceValidationStatus(product),
     isPublished: Boolean(product.isPublished),
     publicationStatus: product.isPublished ? 'published' : 'draft',
@@ -154,7 +160,14 @@ const getValidationPriority = (status) => {
 // 1. GET /api/admin/marketplace/products/pending — Produits en attente de validation
 router.get('/products/pending', verifyAdmin, async (req, res) => {
   try {
-    const products = await AlibabaProduct.find({ source: 'ALIBABA' })
+    const products = await AlibabaProduct.find({
+      $or: [
+        { source: 'ALIBABA' },
+        { source: 'alibaba' },
+        { isAlibaba: true },
+        { sourceProductId: { $exists: true } },
+      ],
+    })
       .sort({ createdAt: -1, updatedAt: -1 })
       .lean();
     const normalized = (products || []).map(normalizeAlibabaMarketplaceProduct).filter((p) => p && p.validationStatus === 'pending');
@@ -169,14 +182,25 @@ router.get('/products/pending', verifyAdmin, async (req, res) => {
 router.get('/products/all', verifyAdmin, async (req, res) => {
   try {
     const { status, category, search } = req.query;
-    const query = { source: 'ALIBABA' };
+    const query = {
+      $or: [
+        { source: 'ALIBABA' },
+        { source: 'alibaba' },
+        { isAlibaba: true },
+        { sourceProductId: { $exists: true } },
+      ],
+    };
     if (category) query.category = category;
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { title: { $regex: search, $options: 'i' } },
-        { brand: { $regex: search, $options: 'i' } },
-        { sourceProductId: { $regex: search, $options: 'i' } },
+      query.$and = [
+        {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { title: { $regex: search, $options: 'i' } },
+            { brand: { $regex: search, $options: 'i' } },
+            { sourceProductId: { $regex: search, $options: 'i' } },
+          ],
+        },
       ];
     }
 
@@ -192,6 +216,24 @@ router.get('/products/all', verifyAdmin, async (req, res) => {
   }
 });
 
+function resolveAlibabaEffectivePrice(product = {}) {
+  // Priority: normalized.pricing.sellingPrice > pricing.sourcePrice > pricing.tiers[0].price > variants[0].pricing[0].price
+  const candidates = [
+    product.normalized?.pricing?.sellingPrice,
+    product.normalized?.pricing?.price,
+    product.normalized?.price,
+    product.price,
+    product.pricing?.sourcePrice,
+    product.pricing?.tiers?.[0]?.price,
+    product.variants?.[0]?.pricing?.[0]?.price,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
+
 // 3. PUT /api/admin/marketplace/products/:id/approve — Approuver et publier
 router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
   try {
@@ -201,10 +243,14 @@ router.put('/products/:id/approve', verifyAdmin, async (req, res) => {
     }
 
     const normalized = normalizeAlibabaMarketplaceProduct(product);
+    const effectivePrice = resolveAlibabaEffectivePrice(product.toObject ? product.toObject() : product);
     const missing = [];
     if (!normalized?.name?.trim()) missing.push('name');
     if (!normalized?.category?.trim()) missing.push('category');
-    if (Number(normalized?.price || 0) <= 0) missing.push('price (doit être supérieur à 0)');
+    // Pour les produits Alibaba, le prix peut être dans pricing.tiers ou variants — pas obligatoirement dans price
+    if (effectivePrice <= 0 && Number(normalized?.price || 0) <= 0) {
+      missing.push('price (doit être supérieur à 0 — vérifiez pricing.sourcePrice ou pricing.tiers)');
+    }
     if (Number(normalized?.stock ?? 0) < 0) missing.push('stock');
     if (!normalized?.description?.trim()) missing.push('description');
 

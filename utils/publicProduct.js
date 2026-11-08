@@ -51,7 +51,7 @@ function computePublicPriceTiers(doc = {}) {
     const currency = String(tier.currency || doc.currency || 'USD').toUpperCase();
     let priceXof = 0;
     if (currency === 'USD') {
-      priceXof = Math.round(rawTierPrice * 610);
+      priceXof = Math.round(rawTierPrice * 620);
     } else if (currency === 'CNY') {
       priceXof = Math.round(rawTierPrice * 85);
     } else {
@@ -111,6 +111,103 @@ function toPublicProduct(product) {
   if (!product) return null;
 
   const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+
+  const isAlibaba = Boolean(
+    doc.isAlibaba === true ||
+    String(doc.source || '').toUpperCase() === 'ALIBABA' ||
+    doc.sourceProductId ||
+    doc.externalProductId ||
+    doc.importSourceType === 'ALIBABA_API' ||
+    String(doc.supplier?.platform || '').toLowerCase() === 'alibaba' ||
+    /^alibaba:/i.test(String(doc.externalSourceKey || ''))
+  );
+
+  if (isAlibaba) {
+    // Conserver la naturalité pure des données Alibaba natives
+    const publicDoc = { ...doc };
+    publicDoc.source = 'ALIBABA';
+    publicDoc.isAlibaba = true;
+    publicDoc.isPublished = true;
+    publicDoc.publicationStatus = 'published';
+    if (publicDoc.status === 'ERROR') {
+      publicDoc.status = 'SYNCED';
+    }
+
+    // Supprimer les champs artificiels indésirables imposés auparavant
+    delete publicDoc.vendorName;
+    delete publicDoc.originLabel;
+    delete publicDoc.fulfillmentPlatform;
+
+    if (!publicDoc.name && publicDoc.title) publicDoc.name = publicDoc.title;
+    if (!publicDoc.title && publicDoc.name) publicDoc.title = publicDoc.name;
+
+    // Résoudre l'image principale pour le client
+    const rawGallery = [
+      ...(Array.isArray(doc.images) && doc.images.length > 0 ? doc.images : []),
+      ...(Array.isArray(doc.galleryImages) ? doc.galleryImages : []),
+      ...(Array.isArray(doc.rawPayload?.result_data?.images) ? doc.rawPayload.result_data.images : []),
+      ...(Array.isArray(doc.rawPayload?.images) ? doc.rawPayload.images : []),
+      ...(Array.isArray(doc.rawAlibabaData?.images) ? doc.rawAlibabaData.images : []),
+      ...(Array.isArray(doc.rawAlibabaData?.result_data?.images) ? doc.rawAlibabaData.result_data.images : []),
+      ...(Array.isArray(doc.rawSections?.product?.images) ? doc.rawSections.product.images : []),
+      ...(Array.isArray(doc.normalized?.images) ? doc.normalized.images : []),
+    ];
+    const galleryUrls = Array.from(new Set(
+      rawGallery
+        .map((img) => (typeof img === 'string' ? img : img?.url))
+        .filter((u) => u && typeof u === 'string')
+    ));
+    publicDoc.mainImage = doc.mainImage || doc.image || galleryUrls[0] || doc.normalized?.image || doc.rawPayload?.result_data?.product_image || '';
+    publicDoc.image = publicDoc.mainImage;
+    publicDoc.images = galleryUrls.length > 0 ? galleryUrls : (publicDoc.mainImage ? [publicDoc.mainImage] : []);
+
+    // Calculer un prix d'affichage en FCFA (1 USD = 620 FCFA × markup 1.3)
+    if (!publicDoc.price || Number(publicDoc.price) <= 0) {
+      const directPrice = Number(
+        doc.price
+        || doc.normalized?.price
+        || doc.normalized?.pricing?.sellingPrice
+        || doc.normalized?.variants?.[0]?.price
+        || 0
+      );
+      if (directPrice > 0) {
+        publicDoc.price = directPrice;
+      } else {
+        const rawUsd = Number(
+          doc.pricing?.sourcePrice
+          || doc.pricing?.tiers?.[0]?.price
+          || doc.variants?.[0]?.pricing?.[0]?.price
+          || doc.normalized?.variants?.[0]?.sourcePrice
+          || doc.normalized?.variants?.[0]?.supplierPriceUsd
+          || doc.rawPayload?.result_data?.skus?.[0]?.ladder_price?.[0]?.price
+          || doc.rawPayload?.result_data?.wholesale_trade?.price
+          || doc.rawPayload?.skus?.[0]?.ladder_price?.[0]?.price
+          || doc.rawPayload?.result_data?.price
+          || doc.rawAlibabaData?.result_data?.skus?.[0]?.ladder_price?.[0]?.price
+          || doc.rawAlibabaData?.skus?.[0]?.ladder_price?.[0]?.price
+          || doc.rawAlibabaData?.result_data?.skus?.[0]?.price
+          || doc.sourcePriceTiers?.[0]?.price
+          || 0,
+        );
+        if (rawUsd > 0) {
+          publicDoc.price = Math.round(rawUsd * 620 * 1.3);
+        }
+      }
+    }
+
+    // S'assurer que le stock est positif
+    publicDoc.stock = Number(publicDoc.stock) > 0 ? Number(publicDoc.stock) : 999;
+
+    // Résoudre le poids
+    const resolvedWeight = resolveAlibabaWeightValue(doc);
+    if (resolvedWeight) {
+      publicDoc.weight = resolvedWeight;
+      publicDoc.weightUnit = doc.logistics?.weightUnit || doc.normalized?.logistics?.weightUnit || 'kg';
+    }
+
+    return publicDoc;
+  }
+
   let publicDoc = { ...doc };
 
   INTERNAL_FIELDS.forEach((field) => {
@@ -143,17 +240,6 @@ function toPublicProduct(product) {
     delete publicDoc.supplier;
   } else {
     publicDoc.originLabel = resolveLocalOriginLabel(doc);
-  }
-
-  const isAlibaba = Boolean(
-    doc.isAlibaba === true ||
-    doc.importSourceType === 'ALIBABA_API' ||
-    doc.supplier?.platform === 'alibaba' ||
-    /^alibaba:/i.test(String(doc.externalSourceKey || ''))
-  );
-  if (isAlibaba) {
-    publicDoc.isAlibaba = true;
-    publicDoc.fulfillmentPlatform = 'Alibaba';
   }
 
   if (Array.isArray(publicDoc.variants)) {
@@ -218,6 +304,8 @@ function normalizeAlibabaImageList(images) {
 
 function extractAlibabaKeyAttributes(doc = {}) {
   const candidates = [
+    doc.rawPayload?.result_data?.keyAttributes,
+    doc.rawAlibabaData?.result_data?.keyAttributes,
     doc.normalized?.keyAttributes,
     doc.rawAlibabaData?.keyAttributes,
     doc.rawPayload?.keyAttributes,
@@ -235,23 +323,49 @@ function extractAlibabaKeyAttributes(doc = {}) {
     }
   }
 
+  // Si on a des attributs plats (result_data.attributes ou doc.attributes)
+  const flatAttributes = [
+    ...(Array.isArray(doc.rawPayload?.result_data?.attributes) ? doc.rawPayload.result_data.attributes : []),
+    ...(Array.isArray(doc.rawAlibabaData?.result_data?.attributes) ? doc.rawAlibabaData.result_data.attributes : []),
+    ...(Array.isArray(doc.attributes) ? doc.attributes : []),
+    ...(Array.isArray(doc.normalized?.attributes) ? doc.normalized.attributes : []),
+  ];
+
+  if (flatAttributes.length > 0) {
+    const flatItems = flatAttributes
+      .map((attr) => {
+        const name = attr?.attribute_name || attr?.attr_name_desc || attr?.name || attr?.key || '';
+        const value = attr?.attribute_value || attr?.attr_value_desc || attr?.value || '';
+        if (!name || !value) return null;
+        return { name: String(name).trim(), value: String(value).trim(), values: [String(value).trim()] };
+      })
+      .filter(Boolean);
+
+    if (flatItems.length > 0) {
+      groups.push({
+        type: 'Spécifications techniques',
+        attributes: flatItems,
+      });
+    }
+  }
+
   return groups
     .map((group) => {
       const attributes = Array.isArray(group?.attributes) ? group.attributes : [];
       return {
-        type: group?.type || 'Alibaba attribute',
+        type: group?.type || 'Spécifications',
         attributes: attributes
           .map((attribute) => {
             const values = Array.isArray(attribute?.values)
               ? attribute.values
                   .map((value) => (typeof value === 'string' ? value : value?.value))
                   .filter(Boolean)
-              : [];
+              : (attribute?.value ? [String(attribute.value)] : []);
             const value = attribute?.value || values[0] || '';
             return {
               name: attribute?.name || '',
               value,
-              values,
+              values: values.map((v) => (typeof v === 'string' ? { value: v } : v)),
             };
           })
           .filter((attribute) => attribute.name && (attribute.value || attribute.values.length)),
@@ -310,6 +424,7 @@ function extractAlibabaInventory(doc = {}) {
 
 function resolveAlibabaWeightValue(doc = {}) {
   const candidates = [
+    doc.logistics?.weight,
     doc.normalized?.logistics?.weight,
     doc.normalized?.weight,
     doc.rawAlibabaData?.logistics?.weight,
@@ -326,11 +441,27 @@ function resolveAlibabaWeightValue(doc = {}) {
     doc.rawSections?.product?.weight,
     doc.rawSections?.product?.gross_weight,
     doc.rawSections?.product?.net_weight,
+    doc.packaging?.weight,
     doc.wholesaleTrade?.weight,
     doc.productShippingInfo?.weight,
     doc.logisticsInfo?.weight,
     doc.weight,
   ];
+
+  // Chercher dans les spécifications (ex: "Poids brut", "Single gross weight", "Weight")
+  const allSpecs = [
+    ...(Array.isArray(doc.specifications) ? doc.specifications : []),
+    ...(Array.isArray(doc.normalized?.specifications) ? doc.normalized.specifications : []),
+    ...(Array.isArray(doc.attributes) ? doc.attributes : []),
+    ...(Array.isArray(doc.rawAlibabaData?.result_data?.attributes) ? doc.rawAlibabaData.result_data.attributes : []),
+  ];
+  for (const s of allSpecs) {
+    const key = String(s?.key || s?.name || s?.attr_name_desc || s?.attributeName || '').toLowerCase();
+    if (/poids|weight|gross|masse/i.test(key)) {
+      const val = s?.value || s?.val || s?.attr_value_desc || s?.attributeValue;
+      if (val) candidates.push(val);
+    }
+  }
 
   const normalizePositiveWeight = (value) => {
     if (value == null || value === '') return null;
@@ -422,8 +553,11 @@ async function toPublicProductDetail(product) {
 
   const isAlibaba = Boolean(
     doc.isAlibaba === true ||
+    String(doc.source || '').toUpperCase() === 'ALIBABA' ||
+    doc.sourceProductId ||
+    doc.externalProductId ||
     doc.importSourceType === 'ALIBABA_API' ||
-    doc.supplier?.platform === 'alibaba' ||
+    String(doc.supplier?.platform || '').toLowerCase() === 'alibaba' ||
     /^alibaba:/i.test(String(doc.externalSourceKey || ''))
   );
 
@@ -510,8 +644,80 @@ async function toPublicProductDetail(product) {
     publicDoc.weightUnit = alibabaDetails.weightUnit || publicDoc.weightUnit || 'kg';
     publicDoc.galleryImages = alibabaDetails.galleryImages;
     publicDoc.mainImage = alibabaDetails.mainImage || publicDoc.mainImage;
+    publicDoc.image = publicDoc.mainImage;
     publicDoc.supplierSummary = alibabaDetails.supplierSummary;
     publicDoc.alibaba = alibabaDetails.alibaba;
+    publicDoc.isPublished = true;
+    publicDoc.publicationStatus = 'published';
+
+    // Description enrichie (HTML et prose)
+    const rawDesc = doc.rawPayload?.result_data?.description
+      || doc.rawAlibabaData?.result_data?.description
+      || doc.rawPayload?.description
+      || doc.descriptionHtml
+      || doc.description
+      || '';
+    publicDoc.description = rawDesc;
+    publicDoc.descriptionHtml = rawDesc;
+    publicDoc.alibabaDescriptionHtml = rawDesc;
+
+    // Vidéo du produit
+    publicDoc.videoUrl = doc.rawPayload?.result_data?.video_url
+      || doc.rawPayload?.video_url
+      || doc.rawAlibabaData?.result_data?.video_url
+      || doc.videoUrl
+      || (Array.isArray(doc.videos) ? doc.videos[0] : '')
+      || '';
+
+    // Variantes et SKUs
+    const rawSkus = doc.rawPayload?.result_data?.skus
+      || doc.rawAlibabaData?.result_data?.skus
+      || doc.rawPayload?.skus
+      || doc.variants
+      || [];
+    publicDoc.alibabaSKUs = rawSkus;
+    if (Array.isArray(doc.variants) && doc.variants.length > 0) {
+      publicDoc.variants = doc.variants;
+    } else if (Array.isArray(rawSkus) && rawSkus.length > 0) {
+      publicDoc.variants = rawSkus.map((sku, idx) => ({
+        skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
+        name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
+        price: Number(sku.ladder_price?.[0]?.price ? Math.round(Number(sku.ladder_price[0].price) * 620 * 1.3) : publicDoc.price),
+        image: sku.image || publicDoc.mainImage,
+        stock: 999,
+      }));
+    }
+
+    // Attributs clés et fiche technique
+    const keyAttrs = extractAlibabaKeyAttributes(doc);
+    publicDoc.keyAttributes = keyAttrs;
+    publicDoc.alibabaKeyAttributes = { attributes: keyAttrs };
+
+    // Certifications
+    publicDoc.certifications = doc.rawPayload?.result_data?.certifications
+      || doc.rawAlibabaData?.result_data?.certifications
+      || doc.certifications
+      || [];
+
+    // Marque et modèle
+    publicDoc.modelNumber = doc.modelNumber || doc.rawPayload?.result_data?.mode_id || doc.rawAlibabaData?.result_data?.mode_id || '';
+    publicDoc.brand = doc.brand || doc.rawPayload?.result_data?.brand || doc.rawAlibabaData?.result_data?.brand || '';
+
+    // Paliers de prix d'origine USD
+    if (!publicDoc.sourcePriceTiers && Array.isArray(rawSkus?.[0]?.ladder_price)) {
+      publicDoc.sourcePriceTiers = rawSkus[0].ladder_price.map((l) => ({
+        minQty: Number(l.min_quantity || 1),
+        maxQty: Number(l.max_quantity) > 0 ? Number(l.max_quantity) : null,
+        price: Number(l.price || 0),
+        currency: l.currency || 'USD',
+      }));
+    }
+
+    delete publicDoc.vendorName;
+    delete publicDoc.originLabel;
+    delete publicDoc.fulfillmentPlatform;
+
+    return publicDoc;
   }
 
   if (isDropshippingProduct(doc)) {

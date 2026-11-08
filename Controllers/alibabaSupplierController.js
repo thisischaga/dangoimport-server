@@ -363,7 +363,12 @@ exports.getImportedProducts = async (req, res) => {
     const sort = String(req.query.sort || 'recent');
 
     const baseFilter = {
-      source: 'ALIBABA',
+      $or: [
+        { source: 'ALIBABA' },
+        { source: 'alibaba' },
+        { isAlibaba: true },
+        { sourceProductId: { $exists: true } },
+      ],
     };
 
     if (search) {
@@ -402,7 +407,14 @@ exports.getImportedProducts = async (req, res) => {
         .lean(),
       AlibabaProduct.aggregate([
         {
-          $match: { source: 'ALIBABA' },
+          $match: {
+            $or: [
+              { source: 'ALIBABA' },
+              { source: 'alibaba' },
+              { isAlibaba: true },
+              { sourceProductId: { $exists: true } },
+            ],
+          },
         },
         {
           $group: {

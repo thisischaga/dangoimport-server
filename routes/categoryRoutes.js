@@ -18,7 +18,6 @@ router.get('/', async (req, res) => {
       {
         $match: {
           category: { $exists: true, $ne: '' },
-          isPublished: true,
         },
       },
       {
@@ -78,14 +77,14 @@ router.get('/', async (req, res) => {
 router.get('/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
-    const products = await Product.find({ isPublished: true }).select('category').lean();
+    const products = await Product.find({}).select('category').lean();
 
     const matched = products.find((p) => slugify(p.category) === slug);
     if (!matched) {
       return res.status(404).json({ message: 'Catégorie introuvable' });
     }
 
-    const productCount = await Product.countDocuments({ category: matched.category, isPublished: true });
+    const productCount = await Product.countDocuments({ category: matched.category });
 
     res.json({
       data: {
@@ -108,7 +107,7 @@ router.get('/:slug', async (req, res) => {
 router.get('/:slug/products', async (req, res) => {
   try {
     const { slug } = req.params;
-    const products = await Product.find({ isPublished: true }).select('category').lean();
+    const products = await Product.find({}).select('category').lean();
     const matchedCategory = products.find((p) => slugify(p.category) === slug);
 
     if (!matchedCategory) {
@@ -128,7 +127,7 @@ router.get('/:slug/products', async (req, res) => {
       limit = 20
     } = req.query;
 
-    const match = { category: matchedCategory.category, isPublished: true };
+    const match = { category: matchedCategory.category };
     if (minPrice) match.price = { ...(match.price || {}), $gte: Number(minPrice) };
     if (maxPrice) match.price = { ...(match.price || {}), $lte: Number(maxPrice) };
     if (brand) match.brand = brand;

@@ -1,420 +1,491 @@
 const express = require('express');
-const router = express.Router();
 const mongoose = require('mongoose');
-const Product = require('../Models/AlibabaProduct');
-const Review = require('../Models/Review');
-const verifyToken = require('../Middlewares/verifyTokens');
-const { toPublicProduct, toPublicProducts, toPublicProductDetail } = require('../utils/publicProduct');
-const { enrichCatalogProductsStock } = require('../services/cj/catalogStockEnrichment');
-const { mixProductsForDisplay, shouldMixCatalogSort } = require('../utils/mixCatalogDisplay');
+const AlibabaProduct = require('../Models/AlibabaProduct');
+const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
 
-const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const router = express.Router();
 
-function hasPublicPublicationState(product = {}) {
-  return product.isPublished === true || String(product.publicationStatus || '').toLowerCase() === 'published';
+// ─────────────────────────────────────────────
+// Migration au démarrage : publier automatiquement TOUS les produits Alibaba
+// qui ne sont pas en erreur (sans bloquer le démarrage du serveur)
+// ─────────────────────────────────────────────
+(async () => {
+  try {
+    const result = await AlibabaProduct.updateMany(
+      {},
+      {
+        $set: {
+          isPublished: true,
+          publicationStatus: 'published',
+        },
+      },
+    );
+    await AlibabaProduct.updateMany(
+      { status: { $in: ['ERROR', 'SYNC_ERROR'] } },
+      { $set: { status: 'SYNCED' } },
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`[productRoutes] Migration: ${result.modifiedCount} produit(s) Alibaba publiés automatiquement.`);
+    }
+  } catch (err) {
+    console.error('[productRoutes] Migration isPublished error:', err.message);
+  }
+})();
+
+function escapeRegExp(string) {
+  return String(string || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function isPubliclyVisibleProduct(product = {}) {
-  if (!product || Number(product.price || 0) <= 0) return false;
+/**
+ * Filtre de base pour les produits publics Alibaba :
+ * Par défaut (aucun paramètre), retourne TOUS les produits ({}) pour affichage direct sur la boutique.
+ */
+function getPublicCatalogFilter(query = {}) {
+  const conditions = [];
 
-  const validationStatus = String(product.validationStatus || '').toLowerCase();
-  const blockedStatuses = new Set(['rejected', 'disabled', 'draft', 'archived']);
-  const publicPublished = hasPublicPublicationState(product);
-
-  if (blockedStatuses.has(validationStatus) && !publicPublished) return false;
-
-  if (product.sourceType === 'DROPSHIPPING') {
-    if (!publicPublished) return false;
-    return (
-      product.isDropshippingActive === true
-      || product.isAlibaba === true
-      || product.importSourceType === 'ALIBABA_API'
-      || product.publicationStatus === 'published'
-    );
+  // Exclure seulement les produits explicitement dépubliés si demandé
+  if (query.published === 'false') {
+    conditions.push({ isPublished: false });
+  } else if (query.published === 'true') {
+    conditions.push({ isPublished: true });
   }
 
-  return publicPublished || product.sourceType == null || product.sourceType === 'LOCAL_SELLER';
+  // Filtre par catégorie
+  if (query.category && String(query.category).trim() !== '' && query.category !== 'all') {
+    const catStr = String(query.category).trim();
+    conditions.push({
+      $or: [
+        { category: new RegExp(`^${escapeRegExp(catStr)}$`, 'i') },
+        { 'normalized.category': new RegExp(`^${escapeRegExp(catStr)}$`, 'i') },
+        { 'rawAlibabaData.result_data.category': new RegExp(`^${escapeRegExp(catStr)}$`, 'i') },
+      ],
+    });
+  }
+
+  // Filtre par marque
+  if (query.brand && String(query.brand).trim()) {
+    conditions.push({
+      brand: new RegExp(escapeRegExp(String(query.brand).trim()), 'i'),
+    });
+  }
+
+  // Filtre par recherche textuelle (q ou search)
+  const searchTerm = String(query.search || query.q || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegExp(searchTerm), 'i');
+    conditions.push({
+      $or: [
+        { name: searchRegex },
+        { title: searchRegex },
+        { 'normalized.name': searchRegex },
+        { sourceProductId: searchRegex },
+        { externalProductId: searchRegex },
+        { category: searchRegex },
+        { brand: searchRegex },
+        { description: searchRegex },
+      ],
+    });
+  }
+
+  if (conditions.length === 0) return {};
+  if (conditions.length === 1) return conditions[0];
+  return { $and: conditions };
 }
 
-const PUBLIC_CATALOG_SOURCE_FILTER = {
-  price: { $gt: 0 },
-  validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-  $or: [
-    { sourceType: { $exists: false }, isPublished: true },
-    { sourceType: { $exists: false }, publicationStatus: 'published' },
-    { sourceType: 'LOCAL_SELLER', isPublished: true },
-    { sourceType: 'LOCAL_SELLER', publicationStatus: 'published' },
-    { sourceType: 'DROPSHIPPING', isPublished: true },
-    { sourceType: 'DROPSHIPPING', publicationStatus: 'published' },
-    { sourceType: 'DROPSHIPPING', isAlibaba: true },
-    { sourceType: 'DROPSHIPPING', importSourceType: 'ALIBABA_API' },
-    { sourceType: 'DROPSHIPPING', isDropshippingActive: true },
-  ],
-};
+/**
+ * Résout les options de tri MongoDB
+ */
+function getSortOptions(sortKey = 'recent') {
+  switch (String(sortKey).toLowerCase()) {
+    case 'price_asc':
+    case 'price-asc':
+      return { 'pricing.sourcePrice': 1, 'variants.pricing.price': 1, price: 1 };
+    case 'price_desc':
+    case 'price-desc':
+      return { 'pricing.sourcePrice': -1, 'variants.pricing.price': -1, price: -1 };
+    case 'name':
+    case 'name_asc':
+      return { name: 1, title: 1 };
+    case 'oldest':
+      return { createdAt: 1 };
+    case 'popular':
+    case 'rating':
+      return { rating: -1, updatedAt: -1 };
+    case 'newest':
+    case 'recent':
+    case 'updated':
+    default:
+      return { updatedAt: -1, createdAt: -1 };
+  }
+}
 
-// GET /api/products/featured - Produits en vedette
+// ─────────────────────────────────────────────
+// 1. GET /api/products : Liste du catalogue public
+// ─────────────────────────────────────────────
+router.get('/', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const filter = getPublicCatalogFilter(req.query);
+    const sort = getSortOptions(req.query.sort);
+
+    const [total, rawProducts] = await Promise.all([
+      AlibabaProduct.countDocuments(filter),
+      AlibabaProduct.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    // Auto-publication continue : s'assurer que les produits Alibaba sont visibles
+    AlibabaProduct.updateMany(
+      { isPublished: { $ne: true } },
+      { $set: { isPublished: true, publicationStatus: 'published' } }
+    ).catch(() => {});
+
+    const products = rawProducts.map((doc) => {
+      try {
+        const pub = toPublicProduct(doc);
+        return pub || doc;
+      } catch (err) {
+        console.error('[productRoutes] Error formatting doc:', err);
+        return doc;
+      }
+    }).filter(Boolean);
+    return res.json({
+      success: true,
+      count: products.length,
+      total,
+      page,
+      pages: Math.ceil(total / limit) || 1,
+      data: products,
+      products,
+    });
+    
+  } catch (error) {
+    console.error('[productRoutes] GET / error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des produits.',
+      error: error.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 2. GET /api/products/featured : Sélection de produits phares
+// ─────────────────────────────────────────────
 router.get('/featured', async (req, res) => {
   try {
-    const limitNum = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 12));
+    const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 12));
+    const filter = getPublicCatalogFilter(req.query);
 
-    // Rechercher d'abord les produits marqués isFeatured = true
-    let products = await Product.find({
-      isPublished: true,
-      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-      isFeatured: true,
-      ...PUBLIC_CATALOG_SOURCE_FILTER,
-    })
-      .sort({ createdAt: -1 })
-      .limit(limitNum)
+    const rawProducts = await AlibabaProduct.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(limit)
       .lean();
 
-    // Si pas assez de produits vedettes, compléter avec les plus récents
-    if (products.length < limitNum) {
-      const existingIds = products.map(p => p._id);
-      const remaining = limitNum - products.length;
-      const extra = await Product.find({
-        _id: { $nin: existingIds },
-        isPublished: true,
-        validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-        ...PUBLIC_CATALOG_SOURCE_FILTER,
-      })
-        .sort({ isBestSeller: -1, totalSales: -1, createdAt: -1 })
-        .limit(remaining)
-        .lean();
+    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(Boolean);
 
-      products = [...products, ...extra];
-    }
-
-    products = mixProductsForDisplay(await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 }));
-
-    return res.status(200).json({ success: true, data: await toPublicProducts(products), count: products.length });
+    return res.json({
+      success: true,
+      count: products.length,
+      data: products,
+      products,
+    });
   } catch (error) {
-    console.error('Erreur GET /api/products/featured :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération des produits en vedette' });
+    console.error('[productRoutes] GET /featured error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des produits phares.',
+    });
   }
 });
 
-// GET /api/products/similar/:id - Produits similaires
+// ─────────────────────────────────────────────
+// 3. GET /api/products/categories : Liste des catégories uniques
+// ─────────────────────────────────────────────
+router.get('/categories', async (req, res) => {
+  try {
+    const rawCategories = await AlibabaProduct.distinct('category', {
+      category: { $nin: [null, ''] },
+    });
+
+    const normalizedRaw = await AlibabaProduct.distinct('normalized.category', {
+      'normalized.category': { $nin: [null, ''] },
+    });
+
+    const set = new Set([...rawCategories, ...normalizedRaw].map((c) => String(c || '').trim()).filter(Boolean));
+    const categories = Array.from(set).sort((a, b) => a.localeCompare(b, 'fr'));
+
+    return res.json({
+      success: true,
+      data: categories,
+      categories,
+    });
+  } catch (error) {
+    console.error('[productRoutes] GET /categories error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des catégories.',
+    });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 4. GET /api/products/similar/:id : Produits similaires
+// ─────────────────────────────────────────────
 router.get('/similar/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const limitNum = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const rawId = String(req.params.id || '').trim();
+    const query = mongoose.Types.ObjectId.isValid(rawId)
+      ? { _id: rawId }
+      : { $or: [{ sourceProductId: rawId }, { externalProductId: rawId }, { slug: rawId }] };
 
-    let product = null;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      product = await Product.findById(id).lean();
-    }
-    if (!product) {
-      product = await Product.findOne({ slug: id }).lean();
-    }
-
-    if (!product) {
-      return res.status(200).json({ success: true, data: [] });
+    const target = await AlibabaProduct.findOne(query).lean();
+    if (!target) {
+      return res.json({ success: true, data: [], products: [] });
     }
 
+    const category = target.category || target.normalized?.category;
     const filter = {
-      _id: { $ne: product._id },
-      isPublished: true,
-      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-      ...PUBLIC_CATALOG_SOURCE_FILTER,
+      _id: { $ne: target._id },
+      category: category ? new RegExp(`^${escapeRegExp(category)}$`, 'i') : { $exists: true },
+      status: { $ne: 'ERROR' },
     };
 
-    if (product.category) {
-      filter.category = product.category;
-    }
-
-    let similar = await Product.find(filter)
-      .sort({ totalSales: -1, createdAt: -1 })
-      .limit(limitNum)
+    const rawSimilar = await AlibabaProduct.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(8)
       .lean();
 
-    similar = await enrichCatalogProductsStock(similar, { maxLiveRefresh: 8 });
+    const similar = rawSimilar.map((doc) => toPublicProduct(doc)).filter(Boolean);
 
-    return res.status(200).json({ success: true, data: await toPublicProducts(similar) });
+    return res.json({
+      success: true,
+      data: similar,
+      products: similar,
+    });
   } catch (error) {
-    console.error('Erreur GET /api/products/similar/:id :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+    console.error('[productRoutes] GET /similar/:id error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des produits similaires.',
+    });
   }
 });
 
-// GET /api/products/vendor/:vendorName - Produits par vendeur
+// ─────────────────────────────────────────────
+// 5. GET /api/products/vendor/:vendorName : Produits d'un fournisseur / usine
+// ─────────────────────────────────────────────
 router.get('/vendor/:vendorName', async (req, res) => {
   try {
     const vendorName = decodeURIComponent(req.params.vendorName || '').trim();
-    if (!vendorName) {
-      return res.status(200).json({ success: true, data: [] });
-    }
-
-    const products = await Product.find({
-      vendorName: new RegExp(`^${escapeRegex(vendorName)}$`, 'i'),
-      isPublished: true,
-      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] },
-      ...PUBLIC_CATALOG_SOURCE_FILTER,
-    })
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const enriched = await enrichCatalogProductsStock(products, { maxLiveRefresh: 12 });
-
-    return res.status(200).json({ success: true, data: await toPublicProducts(enriched), count: enriched.length });
-  } catch (error) {
-    console.error('Erreur GET /api/products/vendor/:vendorName :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur' });
-  }
-});
-
-// GET /api/products - Catalogue public des produits avec filtres et pagination
-router.get('/', async (req, res) => {
-  try {
-    const {
-      search,
-      category,
-      brand,
-      minPrice,
-      maxPrice,
-      promo,
-      newArrival,
-      bestSeller,
-      sort,
-      page = 1,
-      limit = 200
-    } = req.query;
-
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 200));
-    const skip = (pageNum - 1) * limitNum;
+    const regex = new RegExp(`^${escapeRegExp(vendorName)}$`, 'i');
 
     const filter = {
-      isPublished: true,
-      validationStatus: { $nin: ['rejected', 'disabled', 'draft', 'archived'] }
+      $or: [
+        { vendorName: regex },
+        { brand: regex },
+        { 'rawPayload.result_data.supplier': regex },
+        { 'pricing.raw.supplier': regex },
+      ],
+      status: { $ne: 'ERROR' },
     };
 
-    if (category && category !== 'Tous') {
-      filter.category = category;
-    }
+    const rawProducts = await AlibabaProduct.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(50)
+      .lean();
 
-    if (brand) {
-      filter.brand = new RegExp(escapeRegex(brand), 'i');
-    }
+    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(Boolean);
 
-    if (promo === 'true') {
-      filter.$or = [
-        { isPromo: true },
-        { salePrice: { $gt: 0 } }
-      ];
-    }
-
-    if (newArrival === 'true') {
-      filter.isNewArrival = true;
-    }
-
-    if (bestSeller === 'true') {
-      filter.isBestSeller = true;
-    }
-
-    const min = parseFloat(minPrice);
-    const max = parseFloat(maxPrice);
-    if (!isNaN(min) || !isNaN(max)) {
-      filter.price = {};
-      if (!isNaN(min)) filter.price.$gte = min;
-      if (!isNaN(max)) filter.price.$lte = max;
-    }
-
-    if (search && typeof search === 'string' && search.trim()) {
-      const rx = new RegExp(escapeRegex(search.trim()), 'i');
-      filter.$or = [
-        { name: rx },
-        { brand: rx },
-        { category: rx },
-        { tags: rx },
-        { shortDescription: rx }
-      ];
-    }
-
-    let sortOption = { createdAt: -1 };
-    const mixDisplay = shouldMixCatalogSort(sort);
-    switch (sort) {
-      case 'price_asc':
-      case 'price-asc':
-        sortOption = { price: 1, createdAt: -1 };
-        break;
-      case 'price_desc':
-      case 'price-desc':
-        sortOption = { price: -1, createdAt: -1 };
-        break;
-      case 'popular':
-      case 'sales':
-        sortOption = { totalSales: -1, createdAt: -1 };
-        break;
-      case 'name_asc':
-        sortOption = { name: 1 };
-        break;
-      case 'name_desc':
-        sortOption = { name: -1 };
-        break;
-      default:
-        sortOption = { isFeatured: -1, createdAt: -1 };
-    }
-
-    const catalogFilter = { $and: [filter, PUBLIC_CATALOG_SOURCE_FILTER] };
-    const total = await Product.countDocuments(catalogFilter);
-    let productsRaw;
-    if (mixDisplay) {
-      const poolSize = Math.min(800, Math.max(limitNum + skip, 200));
-      const pool = await Product.find(catalogFilter)
-        .sort(sortOption)
-        .limit(poolSize)
-        .lean();
-      productsRaw = mixProductsForDisplay(pool).slice(skip, skip + limitNum);
-    } else {
-      productsRaw = await Product.find(catalogFilter)
-        .sort(sortOption)
-        .skip(skip)
-        .limit(limitNum)
-        .lean();
-    }
-
-    const products = await enrichCatalogProductsStock(productsRaw, {
-      maxLiveRefresh: Math.min(limitNum, 15),
-    });
-
-    return res.status(200).json({
+    return res.json({
       success: true,
-      data: await toPublicProducts(products),
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.max(1, Math.ceil(total / limitNum)),
-        totalItems: total,
-        itemsPerPage: limitNum
-      }
+      data: products,
+      products,
     });
   } catch (error) {
-    console.error('Erreur GET /api/products :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur lors du chargement des produits' });
+    console.error('[productRoutes] GET /vendor/:vendorName error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des produits du fournisseur.',
+    });
   }
 });
 
-// GET /api/products/:id/reviews - Avis d'un produit
-router.get('/:id/reviews', async (req, res) => {
+// ─────────────────────────────────────────────
+// 6. GET /api/products/slug/:slug : Produit par slug
+// ─────────────────────────────────────────────
+router.get('/slug/:slug', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const slug = String(req.params.slug || '').trim();
+    const product = await AlibabaProduct.findOne({
+      $or: [
+        { slug },
+        { 'normalized.slug': slug },
+        { sourceProductId: slug },
+        { externalProductId: slug },
+      ],
+    }).lean();
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(200).json({ success: true, data: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0 } });
-    }
-
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
-    const skip = (pageNum - 1) * limitNum;
-
-    const [reviews, total] = await Promise.all([
-      Review.find({ productId: id })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-      Review.countDocuments({ productId: id })
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      data: reviews,
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.max(1, Math.ceil(total / limitNum)),
-        totalItems: total
-      }
-    });
-  } catch (error) {
-    console.error('Erreur GET /api/products/:id/reviews :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur' });
-  }
-});
-
-// POST /api/products/:id/reviews - Ajouter un avis (auth requise)
-router.post('/:id/reviews', verifyToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rating, title, comment } = req.body;
-    const userId = req.user?.id || req.user?.userId;
-    const userName = `${req.user?.userFirstname || ''} ${req.user?.userSurname || ''}`.trim()
-      || req.user?.userEmail
-      || 'Acheteur';
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'ID produit invalide' });
-    }
-
-    if (!rating || !comment) {
-      return res.status(400).json({ message: 'Note et commentaire obligatoires' });
-    }
-
-    const product = await Product.findById(id);
     if (!product) {
-      return res.status(404).json({ message: 'Produit introuvable' });
+      return res.status(404).json({
+        success: false,
+        message: 'Produit introuvable.',
+      });
     }
 
-    const existing = await Review.findOne({ productId: id, userId });
-    if (existing) {
-      return res.status(400).json({ message: 'Vous avez déjà laissé un avis pour ce produit.' });
-    }
-
-    const newReview = new Review({
-      productId: id,
-      userId,
-      userName,
-      rating: Number(rating),
-      title: title || 'Avis client',
-      comment,
+    const detail = await toPublicProductDetail(product);
+    return res.json({
+      success: true,
+      data: detail,
+      product: detail,
     });
-
-    await newReview.save();
-
-    // Recalculer la note moyenne du produit
-    const reviews = await Review.find({ productId: id }).select('rating').lean();
-    const avgRating = reviews.reduce((sum, r) => sum + r.rating, 0) / (reviews.length || 1);
-
-    product.rating = Math.round(avgRating * 10) / 10;
-    product.totalReviews = reviews.length;
-    await product.save();
-
-    return res.status(201).json({ success: true, message: 'Avis enregistré avec succès', data: newReview });
   } catch (error) {
-    console.error('Erreur POST /api/products/:id/reviews :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+    console.error('[productRoutes] GET /slug/:slug error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération du produit.',
+    });
   }
 });
 
-// GET /api/products/:id - Un seul produit par ID ou Slug
+// ─────────────────────────────────────────────
+// 7. GET /api/products/:id/reviews : Avis clients
+// ─────────────────────────────────────────────
+router.get('/:id/reviews', async (req, res) => {
+  return res.json({
+    success: true,
+    data: [],
+    reviews: [],
+    pagination: {
+      total: 0,
+      page: 1,
+      pages: 1,
+      limit: 10,
+    },
+  });
+});
+
+// ─────────────────────────────────────────────
+// 8. PATCH /api/products/:id/visibility : Gestion publication et visibilité
+// ─────────────────────────────────────────────
+router.patch('/:id/visibility', async (req, res) => {
+  try {
+    const rawId = String(req.params.id || '').trim();
+    const query = mongoose.Types.ObjectId.isValid(rawId)
+      ? { _id: rawId }
+      : { $or: [{ sourceProductId: rawId }, { externalProductId: rawId }] };
+
+    const update = {};
+    if (req.body.isPublished !== undefined) {
+      update.isPublished = Boolean(req.body.isPublished);
+      update.publicationStatus = req.body.isPublished ? 'published' : 'draft';
+    }
+    if (req.body.status !== undefined) {
+      update.status = String(req.body.status).toUpperCase();
+    }
+
+    const updated = await AlibabaProduct.findOneAndUpdate(query, { $set: update }, { new: true }).lean();
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Produit Alibaba introuvable.' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Visibilité mise à jour avec succès.',
+      data: toPublicProduct(updated),
+    });
+  } catch (error) {
+    console.error('[productRoutes] PATCH /:id/visibility error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la mise à jour de la visibilité.',
+    });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 9. GET /api/products/:id : Détail produit par ID MongoDB ou ID Alibaba
+// ─────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = String(req.params.id || '').trim();
+    if (!rawId) {
+      return res.status(404).json({ success: false, message: 'ID produit manquant.' });
+    }
+
+    const cleanId = rawId.replace(/^alibaba:/i, '');
+    const numId = !isNaN(Number(cleanId)) ? Number(cleanId) : null;
+
     let product = null;
 
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      product = await Product.findById(id).lean();
+    // 1. Recherche par _id MongoDB (strictement 24 caractères hexadécimaux)
+    if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
+      try {
+        product = await AlibabaProduct.findById(rawId).lean();
+      } catch (e) {}
+    }
+
+    // 2. Recherche par tous les identifiants possibles (sourceProductId, externalProductId, slug, etc.)
+    if (!product) {
+      const orConditions = [
+        { sourceProductId: rawId },
+        { sourceProductId: cleanId },
+        { externalProductId: rawId },
+        { externalProductId: cleanId },
+        { externalProductId: `alibaba:${cleanId}` },
+        { slug: rawId },
+        { slug: cleanId },
+        { 'normalized.slug': rawId },
+        { 'normalized.slug': cleanId },
+        { 'rawPayload.product_id': rawId },
+        { 'rawPayload.result_data.product_id': rawId },
+      ];
+      if (numId !== null) {
+        orConditions.push(
+          { sourceProductId: numId },
+          { externalProductId: numId },
+          { 'rawPayload.product_id': numId },
+          { 'rawPayload.result_data.product_id': numId },
+        );
+      }
+      product = await AlibabaProduct.findOne({ $or: orConditions }).lean();
     }
 
     if (!product) {
-      product = await Product.findOne({ slug: id }).lean();
+      console.warn(`[productRoutes] GET /api/products/${rawId} : Produit introuvable.`);
+      return res.status(404).json({
+        success: false,
+        message: 'Produit introuvable.',
+      });
     }
 
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Produit introuvable' });
+    let detail = null;
+    try {
+      detail = await toPublicProductDetail(product);
+    } catch (formatErr) {
+      console.error('[productRoutes] Erreur toPublicProductDetail, fallback produit brut:', formatErr);
+      detail = toPublicProduct(product) || product;
     }
 
-    if (!isPubliclyVisibleProduct(product)) {
-      return res.status(404).json({ success: false, message: 'Produit introuvable' });
-    }
-
-    const publicProduct = await toPublicProductDetail(product);
-    return res.status(200).json({ success: true, data: publicProduct, product: publicProduct });
+    return res.json({
+      success: true,
+      data: detail,
+      product: detail,
+    });
   } catch (error) {
-    console.error('Erreur GET /api/products/:id :', error);
-    return res.status(500).json({ success: false, message: 'Erreur serveur lors de la récupération du produit' });
+    console.error('[productRoutes] GET /:id error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération du détail produit.',
+      error: error.message,
+    });
   }
 });
 
 module.exports = router;
-module.exports.isPubliclyVisibleProduct = isPubliclyVisibleProduct;

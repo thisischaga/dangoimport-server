@@ -335,9 +335,54 @@ const AlibabaProductSchema = new Schema(
       default: [],
     },
 
+    price: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+
+    salePrice: {
+      type: Number,
+      default: null,
+    },
+
+    publicationStatus: {
+      type: String,
+      default: 'draft',
+      index: true,
+    },
+
+    validationStatus: {
+      type: String,
+      default: 'pending',
+      index: true,
+    },
+
+    sourceType: {
+      type: String,
+      default: 'DROPSHIPPING',
+      index: true,
+    },
+
+    isAlibaba: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
+    vendorName: {
+      type: String,
+      trim: true,
+    },
+
+    vendorId: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
+
     status: {
       type: String,
-      enum: ['RAW', 'IMPORTED', 'SYNCED', 'ERROR'],
+      enum: ['RAW', 'IMPORTED', 'SYNCED', 'ERROR', 'PUBLISHED', 'PRODUCT_ONLINE', 'SYNC_ERROR', 'TO_VERIFY', 'READY_TO_PUBLISH'],
       default: 'RAW',
       index: true,
     },
@@ -368,6 +413,7 @@ const AlibabaProductSchema = new Schema(
   {
     timestamps: true,
     minimize: false,
+    strict: false,
   }
 );
 

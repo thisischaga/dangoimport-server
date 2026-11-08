@@ -197,7 +197,13 @@ async function listDropshippingProducts(query = {}) {
   const limit = Math.min(100, Math.max(1, toNumber(query.limit, 20)));
   const skip = (page - 1) * limit;
 
-  const filter = { sourceType: 'DROPSHIPPING' };
+  const filter = {
+    $or: [
+      { sourceType: 'DROPSHIPPING' },
+      { source: 'ALIBABA' },
+      { isAlibaba: true },
+    ],
+  };
   if (query.active === 'true') filter.isDropshippingActive = true;
   if (query.active === 'false') filter.isDropshippingActive = false;
   if (query.published === 'true') filter.isPublished = true;
@@ -264,7 +270,10 @@ async function listDropshippingProducts(query = {}) {
 }
 
 async function getDropshippingProductById(id) {
-  const product = await Product.findOne({ _id: id, sourceType: 'DROPSHIPPING' }).lean();
+  const product = await Product.findOne({
+    _id: id,
+    $or: [{ sourceType: 'DROPSHIPPING' }, { source: 'ALIBABA' }, { isAlibaba: true }],
+  }).lean();
   return product ? prepareDropshippingProductForAdmin(product) : null;
 }
 
@@ -296,11 +305,47 @@ async function createDropshippingProduct(body, adminUser) {
 }
 
 async function updateDropshippingProduct(id, body, adminUser) {
-  const existing = await Product.findOne({ _id: id, sourceType: 'DROPSHIPPING' });
+  const existing = await Product.findOne({
+    _id: id,
+    $or: [{ sourceType: 'DROPSHIPPING' }, { source: 'ALIBABA' }, { isAlibaba: true }],
+  });
   if (!existing) {
     const err = new Error('Produit dropshipping introuvable.');
     err.status = 404;
     throw err;
+  }
+
+  const isAlibaba = existing.source === 'ALIBABA' || existing.isAlibaba || body.source === 'ALIBABA' || body.isAlibaba;
+  if (isAlibaba) {
+    // Produit Alibaba natif : on conserve la pureté des données brutes
+    // Seuls le statut de publication et la visibilité sont gérés sans injecter de données superflues
+    if (body.name !== undefined) existing.name = body.name;
+    if (body.title !== undefined) existing.title = body.title;
+    if (body.description !== undefined) existing.description = body.description;
+    if (body.category !== undefined) existing.category = body.category;
+    if (body.brand !== undefined && body.brand !== 'DANGO IMPORT') existing.brand = body.brand;
+    if (body.isPublished !== undefined) {
+      existing.isPublished = Boolean(body.isPublished);
+      existing.publicationStatus = body.isPublished ? 'published' : 'draft';
+    }
+    if (body.isDropshippingActive !== undefined) {
+      existing.isDropshippingActive = Boolean(body.isDropshippingActive);
+    }
+    if (body.status !== undefined) {
+      const validStatuses = ['RAW', 'IMPORTED', 'SYNCED', 'ERROR'];
+      const normalized = String(body.status).toUpperCase();
+      if (validStatuses.includes(normalized)) {
+        existing.status = normalized;
+      }
+      // Ignorer silencieusement les valeurs invalides (ex: 'PUBLISHED', 'PRODUCT_ONLINE')
+    }
+    // Jamais de vendorName "DANGO IMPORT" sur un produit Alibaba
+    if (existing.vendorName === 'DANGO IMPORT') {
+      existing.vendorName = undefined;
+    }
+
+    await existing.save();
+    return existing.toObject();
   }
 
   const payload = await stampOfficialImportPricing(

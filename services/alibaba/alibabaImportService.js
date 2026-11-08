@@ -200,7 +200,7 @@ async function upsertAlibabaProduct(externalProductId, {
           mainImage: payload.image || existing.image || existing.mainImage,
           importWarnings: payload.importWarnings || [],
           importErrors: payload.importErrors || [],
-          status: payload.importStatus || 'SYNCED',
+          status: quality.errors.length > 0 ? 'ERROR' : (payload.isPublished ? 'PUBLISHED' : 'SYNCED'),
           isPublished: Boolean(payload.isPublished),
           updatedAt: new Date(),
           normalized: {
@@ -262,7 +262,7 @@ async function upsertAlibabaProduct(externalProductId, {
     },
     importWarnings: stamped.importWarnings || [],
     importErrors: stamped.importErrors || [],
-    status: stamped.importStatus || 'IMPORTED',
+    status: quality.errors.length > 0 ? 'ERROR' : (stamped.isPublished ? 'PUBLISHED' : 'IMPORTED'),
     isPublished: Boolean(stamped.isPublished),
   });
   const createdObj = created.toObject ? created.toObject() : created;
