@@ -683,8 +683,14 @@ async function toPublicProductDetail(product) {
         skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
         name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
         price: Number(sku.ladder_price?.[0]?.price ? Math.round(Number(sku.ladder_price[0].price) * 620 * 1.3) : publicDoc.price),
-        image: sku.image || publicDoc.mainImage,
+        image: sku.image || (sku.sku_attr_list || []).find((a) => a.attr_value_image)?.attr_value_image || publicDoc.mainImage,
         stock: 999,
+        attributes: (sku.sku_attr_list || []).map((a) => ({
+          name: a.attr_name_desc || a.attr_name || a.name || 'Option',
+          value: a.attr_value_desc || a.attr_value || a.value || '',
+          image: a.attr_value_image || a.image || '',
+        })),
+        sku_attr_list: sku.sku_attr_list || [],
       }));
     }
 
