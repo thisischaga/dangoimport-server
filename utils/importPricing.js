@@ -140,15 +140,41 @@ function convertSupplierPriceFcfa(product = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
   const stored = toNumber(safeProduct.convertedSupplierPriceFCFA ?? safeProduct.supplier?.convertedSupplierPriceFCFA, 0);
   if (stored > 0) return Math.round(stored);
-  const supplierPrice = toNumber(safeProduct.supplierRealPrice ?? safeProduct.supplier?.supplierPrice ?? safeProduct.costPrice, 0);
-  const currency = String(safeProduct.supplier?.supplierCurrency || safeProduct.currency || 'XOF').toUpperCase();
+
+  const directPrice = toNumber(safeProduct.salePrice || safeProduct.price || safeProduct.unitPrice || 0);
+
+  let supplierPrice = toNumber(
+    safeProduct.supplierRealPrice
+    ?? safeProduct.supplier?.supplierPrice
+    ?? safeProduct.costPrice
+    ?? safeProduct.pricing?.sourcePrice
+    ?? safeProduct.pricing?.tiers?.[0]?.price
+    ?? safeProduct.sourcePriceTiers?.[0]?.price
+    ?? safeProduct.publicPriceTiers?.[0]?.price
+    ?? safeProduct.variants?.[0]?.ladderPrices?.[0]?.price
+    ?? safeProduct.variants?.[0]?.price
+    ?? safeProduct.wholesale?.price
+    ?? 0
+  );
+
+  let currency = String(
+    safeProduct.supplier?.supplierCurrency
+    || safeProduct.pricing?.currency
+    || safeProduct.currency
+    || (supplierPrice > 0 ? 'USD' : 'XOF')
+  ).toUpperCase();
+
+  if (supplierPrice <= 0 && directPrice > 0) {
+    return Math.round(directPrice);
+  }
+
   if (currency === 'USD') {
-    return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig.usdToXofRate, 610)));
+    return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig?.usdToXofRate || 610, 610)));
   }
   if (currency === 'CNY') {
-    return Math.max(0, Math.round(supplierPrice * toNumber(alibabaConfig.cnyToXofRate, 85)));
+    return Math.max(0, Math.round(supplierPrice * toNumber(alibabaConfig?.cnyToXofRate || 85, 85)));
   }
-  return Math.round(supplierPrice);
+  return Math.round(supplierPrice || directPrice);
 }
 
 function lineSupplierGoodsUsd(line = {}) {

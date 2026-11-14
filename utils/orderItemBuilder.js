@@ -3,9 +3,10 @@ const {
   calculateMargin,
   PLATFORM_VENDOR_NAME,
   toNumber,
+  applyProductMarkup,
 } = require('./dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('./cjCatalogHelpers');
-const { calculateImportPricing, assertValidOrderQuantity } = require('./importPricing');
+const { calculateImportPricing, assertValidOrderQuantity, convertSupplierPriceFcfa } = require('./importPricing');
 const { getImportPricingConfigSync } = require('../services/importPricingService');
 
 function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitPriceOverride } = {}) {
@@ -77,13 +78,46 @@ function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitP
   return item;
 }
 
+function resolveProductPurchasablePrice(product, quantity = 1) {
+  if (!product) return 0;
+  const direct = toNumber(product.price || product.salePrice || product.unitPrice, 0);
+  if (direct > 0) return direct;
+
+  try {
+    const importPricing = calculateImportPricing(product, {
+      quantity: Math.max(1, toNumber(quantity, 1)),
+      config: getImportPricingConfigSync(),
+    });
+    if (importPricing && importPricing.productPrice > 0) {
+      return importPricing.productPrice;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const converted = convertSupplierPriceFcfa(product);
+  if (converted > 0) {
+    return applyProductMarkup(converted, toNumber(product.productMarkupMultiplier, 1.3), 0);
+  }
+
+  return 0;
+}
+
 function assertProductPurchasable(product, quantity = 1) {
   if (!product) {
     throw new Error('Produit introuvable.');
   }
 
-  if (Number(product.price || 0) <= 0) {
+  const validPrice = resolveProductPurchasablePrice(product, quantity);
+  if (validPrice <= 0) {
     throw new Error(`Le produit "${product.name}" n'a pas un prix valide.`);
+  }
+
+  if (toNumber(product.price, 0) <= 0) {
+    product.price = validPrice;
+  }
+  if (toNumber(product.salePrice, 0) <= 0) {
+    product.salePrice = validPrice;
   }
 
   if (product.sourceType === 'DROPSHIPPING') {
