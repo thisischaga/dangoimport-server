@@ -4,12 +4,6 @@ const { cjConfig } = require('../config/cj');
 const { alibabaConfig } = require('../config/alibaba');
 const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
 
-const { DEFAULT_IMPORT_PRICING, SHIPPING_CATEGORIES, cloneImportPricingDefaults } = require('../config/importPricing');
-const { toNumber, applyProductMarkup } = require('./dropshippingCalculations');
-const { cjConfig } = require('../config/cj');
-const { alibabaConfig } = require('../config/alibaba');
-const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
-
 function mergeImportPricingConfig(overrides = {}) {
   const base = cloneImportPricingDefaults();
   const productMarkupMultiplier = Math.max(
