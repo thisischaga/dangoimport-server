@@ -29,7 +29,6 @@ async function loadCheckoutProducts(items = []) {
 
   const products = await Product.find({
     _id: { $in: normalized.map((r) => r.productId) },
-    sourceType: 'DROPSHIPPING',
   }).lean();
 
   const byId = new Map(products.map((p) => [String(p._id), p]));
@@ -38,10 +37,7 @@ async function loadCheckoutProducts(items = []) {
   for (const row of normalized) {
     const product = byId.get(String(row.productId));
     if (!product) {
-      throw new Error('Produit dropshipping introuvable.');
-    }
-    if (!isDropshippingProduct(product)) {
-      throw new Error('Ce panier contient un produit non dropshipping.');
+      throw new Error('Produit introuvable dans le catalogue.');
     }
     assertProductPurchasable({ ...product, stock: resolveDropshipSellableStock(product) }, row.quantity);
     assertValidOrderQuantity(product, row.quantity);

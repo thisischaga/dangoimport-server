@@ -55,7 +55,11 @@ function calculateSellingPrice({
 }
 
 function isDropshippingProduct(product) {
-  return product?.sourceType === 'DROPSHIPPING';
+  if (!product) return false;
+  if (product?.sourceType === 'DROPSHIPPING') return true;
+  if (product?.source === 'ALIBABA' || product?.isAlibaba) return true;
+  if (product?.supplier?.platform === 'alibaba' || product?.supplier?.platform === 'cj') return true;
+  return true;
 }
 
 function getSupplierSnapshot(product) {

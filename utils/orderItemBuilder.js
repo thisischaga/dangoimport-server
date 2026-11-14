@@ -99,10 +99,12 @@ function assertProductPurchasable(product, quantity = 1) {
   if (product.sourceType === 'DROPSHIPPING') {
     assertValidOrderQuantity(product, qty);
   }
-  const available = product.sourceType === 'DROPSHIPPING'
+  const isImport = isDropshippingProduct(product);
+  const available = isImport
     ? resolveDropshipSellableStock(product)
     : toNumber(product.stock, 0);
-  if (available < qty) {
+  const effectiveStock = (isImport && available <= 0) ? 9999 : available;
+  if (effectiveStock < qty) {
     throw new Error(`Stock insuffisant pour le produit ${product.name}`);
   }
 }

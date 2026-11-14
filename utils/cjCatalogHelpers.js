@@ -521,8 +521,13 @@ function resolveDropshipSellableStock(product = {}) {
     /^alibaba:/i.test(String(product.externalSourceKey || ''))
   );
   if (isAlibaba) {
-    const rawStock = toNumber(product.stock, 0);
-    return rawStock > 0 ? rawStock : 0;
+    const rawStock = toNumber(
+      product.stock
+      ?? product.inventory?.quantityRaw
+      ?? product.inventory?.raw?.[0]?.inventory_list?.[0]?.inventory_count,
+      9999
+    );
+    return rawStock > 0 ? rawStock : 9999;
   }
 
   let stock = toNumber(product.stock, 0);

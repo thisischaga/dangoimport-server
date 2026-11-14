@@ -29,6 +29,7 @@ const { validatePromotion } = require('../utils/promoValidation');
 const {
   validateDropshippingCheckoutPayload,
 } = require('../services/dropshippingCheckoutService');
+const { isDropshippingProduct } = require('../utils/dropshippingCalculations');
 
 const router = express.Router();
 
@@ -393,14 +394,10 @@ router.post('/checkout', verifyToken, async (req, res) => {
     if (productDocs.some((p) => !p)) {
       return res.status(404).json({ message: 'Produit introuvable dans le panier.' });
     }
-    const hasDropship = productDocs.some((p) => p.sourceType === 'DROPSHIPPING');
-    const hasLocal = productDocs.some((p) => p.sourceType !== 'DROPSHIPPING');
-    if (hasDropship && hasLocal) {
-      return res.status(400).json({
-        message: 'Panier mixte non supporté. Finalisez séparément les produits locaux et dropshipping.',
-      });
-    }
-    const isDropshippingCheckout = payload.checkoutMode === 'dropshipping' || hasDropship;
+    const isDropshippingCheckout =
+      payload.checkoutMode === 'dropshipping' ||
+      payload.type === 'dropshipping' ||
+      productDocs.some((p) => isDropshippingProduct(p));
 
     let orderItems = [];
     let subtotal = 0;
