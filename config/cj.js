@@ -33,7 +33,7 @@ const cjConfig = {
   requestDelayMs: Math.max(0, toNumber(process.env.CJ_REQUEST_DELAY_MS, 1000)),
   requestTimeoutMs: Math.max(5000, toNumber(process.env.CJ_REQUEST_TIMEOUT_MS, 30000)),
   maxRetries: Math.max(0, toNumber(process.env.CJ_MAX_RETRIES, 2)),
-  usdToXofRate: Math.max(1, toNumber(process.env.CJ_USD_TO_XOF_RATE, 610)),
+  usdToXofRate: Math.max(1, toNumber(process.env.CJ_USD_TO_XOF_RATE, 620)),
   translateToFr: toBool(process.env.CJ_TRANSLATE_TO_FR, true),
   /** Stock affiché boutique si CJ ne remonte pas d’inventaire */
   defaultPublicStock: Math.max(1, toNumber(process.env.CJ_DEFAULT_PUBLIC_STOCK, 50)),

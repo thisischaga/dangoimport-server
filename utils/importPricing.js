@@ -4,6 +4,12 @@ const { cjConfig } = require('../config/cj');
 const { alibabaConfig } = require('../config/alibaba');
 const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
 
+const { DEFAULT_IMPORT_PRICING, SHIPPING_CATEGORIES, cloneImportPricingDefaults } = require('../config/importPricing');
+const { toNumber, applyProductMarkup } = require('./dropshippingCalculations');
+const { cjConfig } = require('../config/cj');
+const { alibabaConfig } = require('../config/alibaba');
+const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
+
 function mergeImportPricingConfig(overrides = {}) {
   const base = cloneImportPricingDefaults();
   const productMarkupMultiplier = Math.max(
@@ -23,6 +29,7 @@ function mergeImportPricingConfig(overrides = {}) {
     0,
     toNumber(overrides.chinaDomesticShippingUsd, base.chinaDomesticShippingUsd),
   );
+  const localDeliveryFee = Math.max(0, Math.round(toNumber(overrides.localDeliveryFee, base.localDeliveryFee || 2000)));
   const estimatedImportDays = {
     min: Math.max(1, toNumber(overrides.estimatedImportDays?.min, base.estimatedImportDays.min)),
     max: Math.max(1, toNumber(overrides.estimatedImportDays?.max, base.estimatedImportDays.max)),
@@ -57,6 +64,7 @@ function mergeImportPricingConfig(overrides = {}) {
     shippingRatePerKg,
     chinaDomesticShippingUsd,
     shippingMarkup,
+    localDeliveryFee,
     defaultMinimumOrderQuantity,
     lightProductMaxWeightKg: Math.max(0.05, toNumber(overrides.lightProductMaxWeightKg, base.lightProductMaxWeightKg)),
     lightProductMaxPrice: Math.max(0, Math.round(toNumber(overrides.lightProductMaxPrice, base.lightProductMaxPrice))),
@@ -115,7 +123,8 @@ function parseProductWeightKg(product = {}) {
   if (specKg > 0) return specKg;
   if (supplierKg > 0) return supplierKg;
   if (storedKg > 0) return storedKg;
-  return 0;
+  // Poids inconnu → on utilise 0.5 kg par défaut pour éviter des frais nuls
+  return 0.5;
 }
 
 function inferShippingCategory(product = {}) {
@@ -169,7 +178,7 @@ function convertSupplierPriceFcfa(product = {}) {
   }
 
   if (currency === 'USD') {
-    return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig?.usdToXofRate || 610, 610)));
+    return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig?.usdToXofRate || 620, 620)));
   }
   if (currency === 'CNY') {
     return Math.max(0, Math.round(supplierPrice * toNumber(alibabaConfig?.cnyToXofRate || 85, 85)));
@@ -197,7 +206,7 @@ function calculateChinaDomesticShipping(lines = [], config) {
   }));
   const groupCount = groups.length;
   const usd = Number((groupCount * usdPerGroup).toFixed(2));
-  const fcfa = Math.max(0, Math.round(usd * toNumber(cjConfig.usdToXofRate, 610)));
+  const fcfa = Math.max(0, Math.round(usd * toNumber(cjConfig.usdToXofRate, 620)));
   const goodsUsd = Number(groups.reduce((sum, row) => sum + row.goodsUsd, 0).toFixed(2));
   return {
     usdPerGroup,
@@ -356,8 +365,10 @@ function calculateImportOrderPricing(lines = [], config) {
   });
   const itemsTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
   const totalWeightKg = roundKg(itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0));
-  const ratePerKg = toNumber(cfg.shippingRatePerKg, 13500);
-  const shippingCost = Math.round(ratePerKg * totalWeightKg);
+  const ratePerKg = toNumber(cfg.shippingRatePerKg, 10000);
+  const shippingTransitCost = Math.round(ratePerKg * totalWeightKg);
+  const localDeliveryFee = toNumber(cfg.localDeliveryFee, 2000);
+  const shippingCost = shippingTransitCost + localDeliveryFee;
   const days = itemQuotes.map((row) => row.estimatedDays);
   const minDays = days.length ? Math.min(...days.map((row) => row.min)) : cfg.estimatedImportDays.min;
   const maxDays = days.length ? Math.max(...days.map((row) => row.max)) : cfg.estimatedImportDays.max;
@@ -370,8 +381,9 @@ function calculateImportOrderPricing(lines = [], config) {
     billedWeight: totalWeightKg,
     ratePerKg,
     shippingRatePerKg: ratePerKg,
-    shippingBaseCost: shippingCost,
+    shippingBaseCost: shippingTransitCost,
     shippingMarkup: 0,
+    localDeliveryFee,
     shippingCost,
     chinaDomesticShipping,
     chinaDomesticShippingUsd: chinaDomesticShipping.usd,

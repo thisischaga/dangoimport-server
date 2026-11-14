@@ -538,27 +538,10 @@ router.post('/checkout', verifyToken, async (req, res) => {
 
     const fedapayTransaction = await FedapayTransaction.create(transactionPayload);
     const token = await fedapayTransaction.generateToken();
-    const requestedMode = String(payload.paymentMode || payload.payment_method || '').toLowerCase();
-    const wantsMobileMoney = requestedMode === 'mobile_money'
-      || ['mtn', 'moov', 'moov_tg', 'togocel', 'celtiis', 'bestcash', 'coris'].includes(requestedMode);
-    const mmCountry = payload.countryCode || customer.phone_number.country || 'BJ';
-    const mmNetwork = normalizeFedapayNetwork(payload.network, mmCountry);
-    let paymentMode = 'redirect';
-    let paymentMessage = 'Redirection vers FedaPay.';
-    if (wantsMobileMoney && mmNetwork) {
-      try {
-        await sendMobileMoneyPush(fedapayTransaction, {
-          network: mmNetwork,
-          phone: customer.phone_number.number,
-          countryCode: mmCountry,
-        });
-        paymentMode = 'mobile_money';
-        paymentMessage = 'Validez le paiement sur votre téléphone (saisissez votre code secret).';
-      } catch (mmError) {
-        console.warn('[fedapayRoutes] Mobile Money push failed, fallback hosted checkout:', mmError.message);
-        paymentMessage = mmError.message || 'Paiement Mobile Money indisponible, redirection FedaPay.';
-      }
-    }
+
+    // Toujours utiliser la redirection vers FedaPay (pas de Mobile Money push)
+    const paymentMode = 'redirect';
+    const paymentMessage = 'Redirection vers FedaPay.';
 
     const localTx = await createLocalTransaction({
       checkoutUrl: token.url,
