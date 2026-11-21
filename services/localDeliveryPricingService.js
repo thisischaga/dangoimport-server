@@ -166,9 +166,67 @@ function readProductWeightKg(product) {
   const candidate = logistics.weight ?? product.weightKg ?? product.weight;
   const unit = logistics.weightUnit || product.weightUnit;
   if (typeof candidate === 'number' && unit) {
-    return parseWeightToKg(`${candidate} ${unit}`);
+    const weightKg = parseWeightToKg(`${candidate} ${unit}`);
+    if (weightKg > 0) return weightKg;
+  } else {
+    const weightKg = parseWeightToKg(candidate);
+    if (weightKg > 0) return weightKg;
   }
-  return parseWeightToKg(candidate);
+  const specification = getProductSpecifications(product).find(({ key }) => /weight|poids|masse/i.test(key));
+  return specification ? parseWeightToKg(specification.value) : 0;
+}
+
+function getProductSpecifications(product) {
+  const rows = [];
+  const addRow = (key, value) => {
+    if (key == null || value == null) return;
+    const normalizedKey = String(key).trim();
+    const normalizedValue = String(value).trim();
+    if (normalizedKey && normalizedValue) rows.push({ key: normalizedKey, value: normalizedValue });
+  };
+  const visit = (value, depth = 0) => {
+    if (depth > 8 || value == null) return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, depth + 1));
+      return;
+    }
+    if (typeof value !== 'object') return;
+
+    const key = value.key || value.name || value.attr_name_desc || value.attr_name
+      || value.attributeName || value.prop_name || value.property_name;
+    const rowValue = value.value ?? value.val ?? value.attr_value_desc ?? value.attr_value
+      ?? value.attributeValue ?? value.prop_value ?? value.property_value;
+    if (key && rowValue != null) {
+      addRow(key, rowValue);
+    } else if (key && Array.isArray(value.values)) {
+      value.values.forEach((entry) => {
+        addRow(key, typeof entry === 'object' ? entry?.value ?? entry?.attr_value_desc : entry);
+      });
+    }
+
+    for (const field of ['specifications', 'attributes', 'attribute_list', 'attr_list', 'product_attributes']) {
+      if (value[field]) visit(value[field], depth + 1);
+    }
+  };
+
+  visit(product.specifications);
+  visit(product.attributes);
+  visit(product.rawSections?.keyAttributes);
+  visit(product.rawPayload?.keyAttributes);
+  visit(product.rawPayload?.result_data?.keyAttributes);
+  visit(product.rawPayload?.raw?.keyAttributes);
+  return rows;
+}
+
+function volumeFromPackageSize(value) {
+  const text = String(value || '').trim().toLowerCase().replace(/,/g, '.');
+  const dimensions = text.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
+  if (!dimensions || dimensions.length !== 3 || dimensions.some((dimension) => dimension <= 0)) return 0;
+  const unit = text.match(/\b(mm|millimeters?|millimetres?|cm|centimeters?|centimetres?|m|meters?|metres?)\b/i)?.[1]?.toLowerCase() || 'cm';
+  const toMeters = unit.startsWith('mm') || unit.startsWith('millimet') ? 0.001
+    : unit.startsWith('m') && !unit.startsWith('mm') && !unit.startsWith('millimet') ? 1
+      : 0.01;
+  return dimensions.reduce((volume, dimension) => volume * dimension * toMeters, 1);
 }
 
 function readProductVolumeM3(product) {
@@ -183,13 +241,18 @@ function readProductVolumeM3(product) {
     logistics.packageWidth,
     logistics.packageHeight,
   ].map(Number);
-  if (dimensions.some((dimension) => !Number.isFinite(dimension) || dimension <= 0)) return 0;
+  if (dimensions.every((dimension) => Number.isFinite(dimension) && dimension > 0)) {
+    const unit = String(logistics.dimensionUnit || 'cm').trim().toLowerCase();
+    const toMeters = unit === 'm' ? 1 : unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : 0;
+    if (toMeters) return dimensions.reduce((volume, dimension) => volume * dimension * toMeters, 1);
+  }
 
-  const unit = String(logistics.dimensionUnit || 'cm').trim().toLowerCase();
-  const toMeters = unit === 'm' ? 1 : unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : 0;
-  return toMeters
-    ? dimensions.reduce((volume, dimension) => volume * dimension * toMeters, 1)
-    : 0;
+  const packageSize = product.packageSize
+    || product.packaging?.packageSize
+    || product.dimensions?.formatted
+    || product.packaging?.dimensions?.formatted
+    || getProductSpecifications(product).find(({ key }) => /package size|dimensions?|taille du colis/i.test(key))?.value;
+  return volumeFromPackageSize(packageSize);
 }
 
 function classifyBasket(lines, config) {

@@ -105,6 +105,33 @@ test('derives volume from imported package dimensions when stored volume is abse
   assert.equal(quote.internalMeasurements.totalVolumeM3, 0.00735);
 });
 
+test('reads weight and package size from nested Alibaba key attributes', () => {
+  const quote = calculateLocalDeliveryQuote({
+    lines: [{
+      quantity: 1,
+      product: {
+        name: 'Organisateur auto',
+        rawSections: {
+          keyAttributes: {
+            attributes: [{
+              attributes: [
+                { name: 'Single Gross Weight', values: [{ value: '0.2 kg' }] },
+                { name: 'Single Package Size', values: [{ value: '42 x 35 x 5 cm' }] },
+              ],
+            }],
+          },
+        },
+      },
+    }],
+    ...destination,
+    config,
+  });
+
+  assert.equal(quote.category, 'S');
+  assert.equal(quote.internalMeasurements.totalWeightKg, 0.2);
+  assert.equal(quote.internalMeasurements.totalVolumeM3, 0.00735);
+});
+
 test('adds the configured fragile handling charge once per basket', () => {
   const quote = calculateLocalDeliveryQuote({
     lines: [
