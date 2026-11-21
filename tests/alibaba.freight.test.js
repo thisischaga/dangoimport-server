@@ -33,6 +33,42 @@ test('InterCargo defaults retain the Dango discounted destination tariffs', () =
   assert.equal(resolved.destinations.BJ.air.categories.normal.rate, 8820);
   assert.equal(resolved.destinations.BJ.air.categories.smartphone_tablet.rate, 14700);
   assert.equal(resolved.destinations.TG.air.enabled, false);
+  assert.equal(resolved.destinations.TG.air.categories.normal.initialRate, null);
+});
+
+test('keeps Benin and Togo freight rates independent and applies each destination tariff', () => {
+  const resolved = config({
+    destinations: {
+      BJ: { air: { categories: { normal: { initialRate: 10000, discountPercent: 10 } } } },
+      TG: { sea: { categories: { normal: { initialRate: 200000, discountPercent: 5 } } } },
+    },
+  });
+  const beninQuote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: { name: 'Produit aérien', logistics: { grossWeight: 1, airCategory: 'normal' } },
+  }], 'BJ', 'air', resolved);
+  const togoQuote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: {
+      name: 'Produit maritime',
+      logistics: { seaCategory: 'normal', packageLength: 10, packageWidth: 10, packageHeight: 10, dimensionUnit: 'cm' },
+    },
+  }], 'TG', 'sea', resolved);
+
+  assert.equal(beninQuote.cost, 9000);
+  assert.equal(togoQuote.items[0].rate, 190000);
+  assert.equal(togoQuote.cost, 190);
+});
+
+test('removes inherited default air rates from disabled Togo settings', () => {
+  const legacyConfig = JSON.parse(JSON.stringify(DEFAULT_ALIBABA_FREIGHT_CONFIG));
+  legacyConfig.destinations.TG.air.categories = JSON.parse(
+    JSON.stringify(legacyConfig.destinations.BJ.air.categories),
+  );
+
+  const resolved = normalizeConfig(legacyConfig);
+  assert.equal(resolved.destinations.TG.air.enabled, false);
+  assert.equal(resolved.destinations.TG.air.categories.normal.initialRate, null);
 });
 
 test('maritime freight uses configured category, volume, and destination rate', () => {

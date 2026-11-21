@@ -9,6 +9,10 @@ const AIR_CATEGORIES = {
   smartphone_tablet: { label: 'Smartphones et tablettes', initialRate: 15000, discountPercent: 2, storageDays: 30, volumetricEnabled: false },
 };
 
+const TOGO_AIR_CATEGORIES = Object.fromEntries(
+  Object.entries(AIR_CATEGORIES).map(([key, category]) => [key, { ...category, initialRate: null }]),
+);
+
 const SEA_CATEGORIES = {
   normal: { label: 'Marchandises normales', initialRate: 255000, discountPercent: 2, storageDays: 60 },
   fragile: { label: 'Marchandises fragiles', initialRate: 300000, discountPercent: 2, storageDays: 60 },
@@ -27,7 +31,7 @@ const DEFAULT_ALIBABA_FREIGHT_CONFIG = Object.freeze({
     TG: {
       label: 'Togo',
       defaultMode: 'sea',
-      air: { enabled: false, categories: AIR_CATEGORIES },
+      air: { enabled: false, categories: TOGO_AIR_CATEGORIES },
       sea: {
         enabled: true,
         fallbackVolumeM3: 0.01,
@@ -82,10 +86,29 @@ function normalizeConfig(input = {}) {
     if (destinationInput.defaultMode !== undefined && !['air', 'sea'].includes(destinationInput.defaultMode)) {
       throw validationError(`Mode par défaut invalide pour ${destinationDefault.label}.`);
     }
+    let airInput = destinationInput.air;
+    const storedAirCategories = airInput?.categories;
+    const hasLegacyDefaultTogoAirRates = destinationCode === 'TG'
+      && airInput?.enabled === false
+      && Object.entries(AIR_CATEGORIES).every(([key, category]) => {
+        const stored = storedAirCategories?.[key];
+        return stored
+          && Number(stored.initialRate) === category.initialRate
+          && Number(stored.discountPercent) === category.discountPercent
+          && Number(stored.storageDays) === category.storageDays;
+      });
+    if (hasLegacyDefaultTogoAirRates) {
+      airInput = {
+        ...airInput,
+        categories: Object.fromEntries(
+          Object.entries(storedAirCategories).map(([key, category]) => [key, { ...category, initialRate: null }]),
+        ),
+      };
+    }
     defaults.destinations[destinationCode] = {
       label: destinationDefault.label,
       defaultMode: destinationInput.defaultMode || destinationDefault.defaultMode,
-      air: normalizeMode(destinationInput.air, destinationDefault.air, `${destinationDefault.label} aérien`),
+      air: normalizeMode(airInput, destinationDefault.air, `${destinationDefault.label} aérien`),
       sea: normalizeMode(destinationInput.sea, destinationDefault.sea, `${destinationDefault.label} maritime`),
     };
     if (!defaults.destinations[destinationCode][defaults.destinations[destinationCode].defaultMode].enabled) {
@@ -125,20 +148,24 @@ function normalizeMode(input = {}, defaults, label) {
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') {
     throw validationError(`La disponibilité ${label} doit être un booléen.`);
   }
+  const enabled = input.enabled === undefined ? defaults.enabled : input.enabled;
   const categories = {};
   for (const [key, categoryDefault] of Object.entries(defaults.categories)) {
     const row = input.categories?.[key] || {};
     if (row.volumetricEnabled !== undefined && typeof row.volumetricEnabled !== 'boolean') {
       throw validationError(`Le calcul volumétrique ${row.label || categoryDefault.label} doit être un booléen.`);
     }
-    const initialRate = positiveNumber(row.initialRate ?? categoryDefault.initialRate, `Tarif initial ${label} / ${categoryDefault.label}`);
+    const configuredInitialRate = row.initialRate ?? categoryDefault.initialRate;
+    const initialRate = configuredInitialRate === null && !enabled
+      ? null
+      : positiveNumber(configuredInitialRate, `Tarif initial ${label} / ${categoryDefault.label}`, { min: 0.01 });
     const discountPercent = positiveNumber(row.discountPercent ?? categoryDefault.discountPercent, `Réduction ${label} / ${categoryDefault.label}`, { max: 100 });
     const storageDays = positiveNumber(row.storageDays ?? categoryDefault.storageDays, `Délai de stockage ${label} / ${categoryDefault.label}`, { min: 1, max: 3650 });
     categories[key] = {
       label: categoryDefault.label,
       initialRate,
       discountPercent,
-      rate: Math.round(initialRate * (1 - discountPercent / 100)),
+      rate: initialRate === null ? null : Math.round(initialRate * (1 - discountPercent / 100)),
       storageDays,
       ...(Object.prototype.hasOwnProperty.call(categoryDefault, 'volumetricEnabled')
         ? { volumetricEnabled: row.volumetricEnabled ?? categoryDefault.volumetricEnabled }
@@ -146,7 +173,7 @@ function normalizeMode(input = {}, defaults, label) {
     };
   }
   return {
-    enabled: input.enabled === undefined ? defaults.enabled : input.enabled,
+    enabled,
     ...(Object.prototype.hasOwnProperty.call(defaults, 'fallbackVolumeM3')
       ? {
           fallbackVolumeM3: positiveNumber(
