@@ -6,7 +6,7 @@ const {
   PLATFORM_VENDOR_NAME,
 } = require('../utils/dropshippingCalculations');
 const { toPublicProduct } = require('../utils/publicProduct');
-const { buildShopOrderItem } = require('../utils/orderItemBuilder');
+const { assertProductPurchasable, buildShopOrderItem } = require('../utils/orderItemBuilder');
 
 test('calculateMargin returns expected profit', () => {
   const margin = calculateMargin({
@@ -103,4 +103,31 @@ test('buildShopOrderItem snapshots dropshipping fields', () => {
   assert.equal(item.vendorName, PLATFORM_VENDOR_NAME);
   assert.equal(item.price, 15600);
   assert.equal(isDropshippingProduct({ sourceType: 'DROPSHIPPING' }), true);
+});
+
+test('published Alibaba products remain purchasable without a CJ active flag', () => {
+  assert.doesNotThrow(() => assertProductPurchasable({
+    _id: '64abc12345678901234567890',
+    name: 'Produit Alibaba publié',
+    source: 'ALIBABA',
+    sourceType: 'DROPSHIPPING',
+    isAlibaba: true,
+    isPublished: true,
+    price: 25000,
+    stock: 100,
+    minimumOrderQuantity: 1,
+  }, 1));
+});
+
+test('inactive non-Alibaba dropshipping products remain unavailable', () => {
+  assert.throws(() => assertProductPurchasable({
+    _id: '64abc12345678901234567891',
+    name: 'Produit CJ désactivé',
+    sourceType: 'DROPSHIPPING',
+    importSourceType: 'CJ_API',
+    isDropshippingActive: false,
+    isPublished: true,
+    price: 25000,
+    stock: 100,
+  }, 1), /n'est pas disponible/);
 });

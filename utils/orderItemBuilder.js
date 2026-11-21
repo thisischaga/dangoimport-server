@@ -6,7 +6,12 @@ const {
   applyProductMarkup,
 } = require('./dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('./cjCatalogHelpers');
-const { calculateImportPricing, assertValidOrderQuantity, convertSupplierPriceFcfa } = require('./importPricing');
+const {
+  calculateImportPricing,
+  assertValidOrderQuantity,
+  convertSupplierPriceFcfa,
+  isAlibabaManagedProduct,
+} = require('./importPricing');
 const { getImportPricingConfigSync } = require('../services/importPricingService');
 
 function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitPriceOverride } = {}) {
@@ -121,7 +126,7 @@ function assertProductPurchasable(product, quantity = 1) {
   }
 
   if (product.sourceType === 'DROPSHIPPING') {
-    if (!product.isDropshippingActive) {
+    if (!product.isDropshippingActive && !isAlibabaManagedProduct(product)) {
       throw new Error(`Le produit ${product.name} n'est pas disponible.`);
     }
     if (product.isPublished === false) {

@@ -56,6 +56,38 @@ test('maritime freight uses configured category, volume, and destination rate', 
   assert.equal(quote.storageDays, 60);
 });
 
+test('Togo maritime freight estimates volume only when product dimensions are missing', () => {
+  const resolved = config();
+  const quote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: {
+      _id: 'item-without-dimensions',
+      name: 'Organisateur auto',
+      logistics: {},
+    },
+  }], 'TG', undefined, resolved);
+
+  assert.equal(quote.cost, 1764);
+  assert.equal(quote.totalVolumeM3, 0.01);
+  assert.equal(quote.items[0].volumeEstimated, true);
+
+  const measuredQuote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: {
+      name: 'Produit avec dimensions',
+      logistics: {
+        packageLength: 20,
+        packageWidth: 10,
+        packageHeight: 5,
+        dimensionUnit: 'cm',
+      },
+    },
+  }], 'TG', undefined, resolved);
+
+  assert.equal(measuredQuote.totalVolumeM3, 0.001);
+  assert.equal(measuredQuote.items[0].volumeEstimated, false);
+});
+
 test('air volumetric billing remains opt-in and applies the configured method and rounding', () => {
   const resolved = config({
     volumetric: { enabled: true, coefficient: 167, method: 'max', roundingMode: 'ceil', roundingIncrementKg: 1 },
