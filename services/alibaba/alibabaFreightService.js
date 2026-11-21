@@ -244,25 +244,15 @@ function normalizeCategory(value, categories) {
     smartphones: 'smartphone_tablet',
     tablets: 'smartphone_tablet',
   };
-  return categories[aliases[key]] ? aliases[key] : 'normal';
+  return categories[aliases[key]] ? aliases[key] : null;
 }
 
 function inferFreightCategory(product = {}, mode, categories) {
   const logistics = product.logistics || {};
   const requested = String(logistics[mode === 'air' ? 'airCategory' : 'seaCategory'] || '')
     .trim().toLowerCase().replace(/[\s-]+/g, '_');
-  const explicitAliases = {
-    machines: 'machine',
-    heavy_articles: 'heavy',
-    fragile_goods: 'fragile',
-    special_products: 'special',
-    medical_equipment: 'medical',
-    computers: 'computer',
-    smartphones: 'smartphone_tablet',
-    tablets: 'smartphone_tablet',
-  };
-  const explicit = explicitAliases[requested] || requested;
-  if (categories[explicit]) return explicit;
+  const explicit = normalizeCategory(requested, categories);
+  if (explicit) return explicit;
 
   const haystack = [
     product.name,

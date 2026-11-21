@@ -659,6 +659,9 @@ exports.updateCommercialData = async (req, res) => {
           && value !== null && value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
           return res.status(400).json({ success: false, message: `Valeur logistique invalide : ${field}.` });
         }
+        if (field === 'localAdditionalParcelCount' && value !== null && value !== '' && !Number.isInteger(Number(value))) {
+          return res.status(400).json({ success: false, message: 'Le nombre de colis additionnels doit être entier.' });
+        }
         if (field === 'allowedTransportModes'
           && (!Array.isArray(value) || value.some((mode) => !['air', 'sea'].includes(mode)))) {
           return res.status(400).json({ success: false, message: 'Modes de transport invalides.' });
