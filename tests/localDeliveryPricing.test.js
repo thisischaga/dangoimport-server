@@ -9,9 +9,12 @@ const {
 const config = normalizeLocalDeliveryConfig(DEFAULT_LOCAL_DELIVERY_CONFIG);
 const destination = { countryCode: 'BJ', city: 'Cotonou', district: 'centre-ville' };
 
-test('uses the country rate for any city or district with an explicit parcel profile', () => {
+test('uses stored weight and volume for any city or district without a manual parcel profile', () => {
   const quote = calculateLocalDeliveryQuote({
-    lines: [{ quantity: 1, product: { name: 'Produit S', logistics: { localDeliveryProfile: 'S' } } }],
+    lines: [{
+      quantity: 1,
+      product: { name: 'Produit S', logistics: { weight: 2, weightUnit: 'kg', volumeCm3: 27000 } },
+    }],
     countryCode: 'BJ',
     city: 'Ville hors grille',
     district: 'Quartier hors grille',
@@ -32,7 +35,7 @@ test('uses admin-configured country rates and rejects unsupported countries', ()
     },
   });
   const quote = calculateLocalDeliveryQuote({
-    lines: [{ product: { logistics: { localDeliveryProfile: 'S' } } }],
+    lines: [{ product: { logistics: { weight: 2, weightUnit: 'kg', volumeCm3: 27000 } } }],
     countryCode: 'BJ',
     city: 'Toute ville',
     district: 'Tout quartier',
@@ -41,7 +44,7 @@ test('uses admin-configured country rates and rejects unsupported countries', ()
   assert.equal(quote.fee, 1750);
   assert.throws(
     () => calculateLocalDeliveryQuote({
-      lines: [{ product: { logistics: { localDeliveryProfile: 'S' } } }],
+      lines: [{ product: { logistics: { weight: 2, weightUnit: 'kg', volumeCm3: 27000 } } }],
       countryCode: 'XX',
       config: customConfig,
     }),
@@ -49,11 +52,11 @@ test('uses admin-configured country rates and rejects unsupported countries', ()
   );
 });
 
-test('classifies the whole measured basket from weight and dimensions', () => {
+test('classifies the whole basket from stored weight and volume without dimensions', () => {
   const quote = calculateLocalDeliveryQuote({
     lines: [{
       quantity: 1,
-      product: { name: 'Colis moyen', logistics: { grossWeight: 6, packageLength: 50, packageWidth: 10, packageHeight: 10, dimensionUnit: 'cm' } },
+      product: { name: 'Colis moyen', logistics: { grossWeight: 6, weightUnit: 'kg', volumeCm3: 30000 } },
     }],
     ...destination,
     config,
@@ -66,8 +69,8 @@ test('classifies the whole measured basket from weight and dimensions', () => {
 test('adds the configured fragile handling charge once per basket', () => {
   const quote = calculateLocalDeliveryQuote({
     lines: [
-      { quantity: 2, product: { logistics: { localDeliveryProfile: 'S', fragile: true } } },
-      { quantity: 1, product: { logistics: { localDeliveryProfile: 'S', fragile: true } } },
+      { quantity: 2, product: { logistics: { grossWeight: 1, weightUnit: 'kg', volumeCm3: 10000, fragile: true } } },
+      { quantity: 1, product: { logistics: { grossWeight: 2, weightUnit: 'kg', volumeCm3: 10000, fragile: true } } },
     ],
     ...destination,
     config,
@@ -81,20 +84,23 @@ test('requires a quote when the parcel category has no country tariff', () => {
   assert.throws(
     () => calculateLocalDeliveryQuote({
       ...destination,
-      lines: [{ product: { logistics: { localDeliveryProfile: 'XL' } } }],
+      lines: [{ product: { logistics: { grossWeight: 31, weightUnit: 'kg', volumeCm3: 310000 } } }],
       config,
     }),
     (error) => error.code === 'LOCAL_DELIVERY_QUOTE_REQUIRED',
   );
 });
 
-test('does not estimate a local category when both a profile and reliable measurements are missing', () => {
+test('reports product rows with missing stored weight or volume', () => {
   assert.throws(
     () => calculateLocalDeliveryQuote({
-      lines: [{ product: { name: 'Données manquantes', logistics: {} } }],
+      lines: [{
+        product: { name: 'Produit sans volume', logistics: { weight: 1, weightUnit: 'kg' } },
+      }],
       ...destination,
       config,
     }),
-    (error) => error.code === 'LOCAL_DELIVERY_PROFILE_REQUIRED',
+    (error) => error.code === 'LOCAL_DELIVERY_MEASUREMENTS_REQUIRED'
+      && error.message.includes('Produit sans volume'),
   );
 });

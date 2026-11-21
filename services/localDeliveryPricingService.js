@@ -9,7 +9,6 @@ const DEFAULT_LOCAL_DELIVERY_CONFIG = {
     standardMaxWeightKg: 5,
     mediumMaxWeightKg: 15,
     largeMaxWeightKg: 30,
-    standardDimensionsCm: { length: 40, width: 30, height: 30 },
     standardVolumeM3: 0.036,
     largeMaxVolumeM3: 0.3,
   },
@@ -56,16 +55,10 @@ function normalizeConfig(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const base = clone(DEFAULT_LOCAL_DELIVERY_CONFIG);
   const classification = source.classification || {};
-  const dimensions = classification.standardDimensionsCm || {};
   base.classification = {
     standardMaxWeightKg: positiveNumber(classification.standardMaxWeightKg ?? base.classification.standardMaxWeightKg, 'Poids maximal S', { min: 0.01 }),
     mediumMaxWeightKg: positiveNumber(classification.mediumMaxWeightKg ?? base.classification.mediumMaxWeightKg, 'Poids maximal M', { min: 0.01 }),
     largeMaxWeightKg: positiveNumber(classification.largeMaxWeightKg ?? base.classification.largeMaxWeightKg, 'Poids maximal L', { min: 0.01 }),
-    standardDimensionsCm: {
-      length: positiveNumber(dimensions.length ?? base.classification.standardDimensionsCm.length, 'Longueur maximale S', { min: 0.01 }),
-      width: positiveNumber(dimensions.width ?? base.classification.standardDimensionsCm.width, 'Largeur maximale S', { min: 0.01 }),
-      height: positiveNumber(dimensions.height ?? base.classification.standardDimensionsCm.height, 'Hauteur maximale S', { min: 0.01 }),
-    },
     standardVolumeM3: positiveNumber(classification.standardVolumeM3 ?? base.classification.standardVolumeM3, 'Volume maximal S', { min: 0.000001 }),
     largeMaxVolumeM3: positiveNumber(classification.largeMaxVolumeM3 ?? base.classification.largeMaxVolumeM3, 'Volume maximal L', { min: 0.000001 }),
   };
@@ -166,81 +159,66 @@ async function updateLocalDeliveryConfig(payload = {}, changedBy = 'admin') {
 
 function readProductWeightKg(product) {
   const logistics = product.logistics || {};
-  const candidate = logistics.grossWeight ?? logistics.weight ?? product.weightKg ?? product.weight;
+  const candidate = logistics.grossWeight
+    ?? logistics.weight
+    ?? logistics.netWeight
+    ?? product.weightKg
+    ?? product.weight;
+  const unit = logistics.weightUnit || product.weightUnit;
+  if (typeof candidate === 'number' && unit) {
+    return parseWeightToKg(`${candidate} ${unit}`);
+  }
   return parseWeightToKg(candidate);
 }
 
-function productDimensionsCm(product) {
+function readProductVolumeM3(product) {
   const logistics = product.logistics || {};
-  const dims = [logistics.packageLength, logistics.packageWidth, logistics.packageHeight].map(Number);
-  if (dims.some((value) => !Number.isFinite(value) || value <= 0)) return null;
-  const unit = String(logistics.dimensionUnit || 'cm').toLowerCase();
-  const scale = unit === 'm' ? 100 : unit === 'mm' ? 0.1 : unit === 'cm' ? 1 : 0;
-  return scale ? dims.map((value) => value * scale).sort((a, b) => b - a) : null;
+  const volumeM3 = Number(logistics.volumeM3 ?? product.volumeM3);
+  if (Number.isFinite(volumeM3) && volumeM3 > 0) return volumeM3;
+  const volumeCm3 = Number(logistics.volumeCm3 ?? product.volumeCm3);
+  return Number.isFinite(volumeCm3) && volumeCm3 > 0 ? volumeCm3 / 1_000_000 : 0;
 }
 
 function classifyBasket(lines, config) {
   let minimumCategoryIndex = 0;
   let totalWeightKg = 0;
   let totalVolumeM3 = 0;
-  const largestDimensionsCm = [0, 0, 0];
-  let allProfilesAssigned = true;
-  let allMeasurementsAvailable = true;
+  const missingMeasurements = [];
 
   for (const line of lines) {
     const product = line.product || line;
     const quantity = Math.max(1, Number(line.quantity) || 1);
-    const logistics = product.logistics || {};
-    const profile = String(logistics.localDeliveryProfile || '').trim().toUpperCase();
-    const explicitIndex = CATEGORIES.indexOf(profile);
-    if (explicitIndex >= 0) {
-      minimumCategoryIndex = Math.max(minimumCategoryIndex, explicitIndex);
-    } else {
-      allProfilesAssigned = false;
-    }
-
     const weightKg = readProductWeightKg(product);
-    const dimensionsCm = productDimensionsCm(product);
-    if (!(weightKg > 0) || !dimensionsCm) {
-      allMeasurementsAvailable = false;
-    } else {
-      totalWeightKg += weightKg * quantity;
-      const volumeM3 = dimensionsCm.reduce((volume, dimension) => volume * dimension / 100, 1);
-      totalVolumeM3 += volumeM3 * quantity;
-      for (let index = 0; index < 3; index += 1) {
-        largestDimensionsCm[index] = Math.max(largestDimensionsCm[index], dimensionsCm[index]);
-      }
+    const volumeM3 = readProductVolumeM3(product);
+    if (!(weightKg > 0) || !(volumeM3 > 0)) {
+      missingMeasurements.push(product.name || product.title || 'Produit');
+      continue;
     }
+    totalWeightKg += weightKg * quantity;
+    totalVolumeM3 += volumeM3 * quantity;
   }
 
-  if (!allProfilesAssigned && !allMeasurementsAvailable) {
-    const error = new Error('Les informations logistiques sont insuffisantes pour calculer un tarif local fiable. Dango doit confirmer le profil du colis.');
+  if (missingMeasurements.length) {
+    const error = new Error(`Poids ou volume manquant dans la base pour : ${missingMeasurements.join(', ')}. Complétez ces données produit pour calculer la livraison locale.`);
     error.status = 422;
-    error.code = 'LOCAL_DELIVERY_PROFILE_REQUIRED';
+    error.code = 'LOCAL_DELIVERY_MEASUREMENTS_REQUIRED';
     throw error;
   }
 
   const thresholds = config.classification;
-  if (allMeasurementsAvailable) {
-    const { length: maxLength, width: maxWidth, height: maxHeight } = thresholds.standardDimensionsCm;
-    if (totalWeightKg > thresholds.largeMaxWeightKg || totalVolumeM3 > thresholds.largeMaxVolumeM3) {
-      minimumCategoryIndex = Math.max(minimumCategoryIndex, 3);
-    } else if (totalWeightKg > thresholds.mediumMaxWeightKg || totalVolumeM3 > thresholds.standardVolumeM3) {
-      minimumCategoryIndex = Math.max(minimumCategoryIndex, 2);
-    } else if (totalWeightKg > thresholds.standardMaxWeightKg
-      || largestDimensionsCm[0] > maxLength
-      || largestDimensionsCm[1] > maxWidth
-      || largestDimensionsCm[2] > maxHeight) {
-      minimumCategoryIndex = Math.max(minimumCategoryIndex, 1);
-    }
+  if (totalWeightKg > thresholds.largeMaxWeightKg || totalVolumeM3 > thresholds.largeMaxVolumeM3) {
+    minimumCategoryIndex = 3;
+  } else if (totalWeightKg > thresholds.mediumMaxWeightKg || totalVolumeM3 > thresholds.standardVolumeM3) {
+    minimumCategoryIndex = 2;
+  } else if (totalWeightKg > thresholds.standardMaxWeightKg) {
+    minimumCategoryIndex = 1;
   }
   return {
     category: CATEGORIES[minimumCategoryIndex],
-    internalMeasurements: allMeasurementsAvailable ? {
+    internalMeasurements: {
       totalWeightKg: Number(totalWeightKg.toFixed(3)),
       totalVolumeM3: Number(totalVolumeM3.toFixed(6)),
-      largestDimensionsCm,
-    } : null,
+    },
     hasFragileItems: lines.some((line) => (line.product || line).logistics?.fragile === true),
   };
 }
