@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   DEFAULT_ALIBABA_FREIGHT_CONFIG,
   calculateAlibabaFreightQuote,
+  inferFreightCategory,
   normalizeConfig,
 } = require('../services/alibaba/alibabaFreightService');
 
@@ -54,6 +55,13 @@ test('maritime freight uses configured category, volume, and destination rate', 
   assert.equal(quote.cost, 588000);
   assert.equal(quote.items[0].category, 'fragile');
   assert.equal(quote.storageDays, 60);
+});
+
+test('automatically classifies common Alibaba product categories when no override is set', () => {
+  const resolved = config();
+  assert.equal(inferFreightCategory({ name: 'Samsung smartphone', logistics: {} }, 'air', resolved.destinations.BJ.air.categories), 'smartphone_tablet');
+  assert.equal(inferFreightCategory({ name: 'Industrial sewing machine', logistics: {} }, 'sea', resolved.destinations.BJ.sea.categories), 'machine');
+  assert.equal(inferFreightCategory({ name: 'Ordinary storage basket', logistics: {} }, 'sea', resolved.destinations.BJ.sea.categories), 'normal');
 });
 
 test('Togo maritime freight estimates volume only when product dimensions are missing', () => {

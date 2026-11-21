@@ -247,6 +247,45 @@ function normalizeCategory(value, categories) {
   return categories[aliases[key]] ? aliases[key] : 'normal';
 }
 
+function inferFreightCategory(product = {}, mode, categories) {
+  const logistics = product.logistics || {};
+  const requested = String(logistics[mode === 'air' ? 'airCategory' : 'seaCategory'] || '')
+    .trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const explicitAliases = {
+    machines: 'machine',
+    heavy_articles: 'heavy',
+    fragile_goods: 'fragile',
+    special_products: 'special',
+    medical_equipment: 'medical',
+    computers: 'computer',
+    smartphones: 'smartphone_tablet',
+    tablets: 'smartphone_tablet',
+  };
+  const explicit = explicitAliases[requested] || requested;
+  if (categories[explicit]) return explicit;
+
+  const haystack = [
+    product.name,
+    product.title,
+    product.category,
+    product.subCategory,
+    product.description,
+  ].filter(Boolean).join(' ').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  if (mode === 'air') {
+    if (/smartphone|mobile phone|cell phone|tablet|iphone|ipad|samsung galaxy/.test(haystack)) return 'smartphone_tablet';
+    if (/ordinateur|laptop|notebook|computer|macbook|desktop pc/.test(haystack)) return 'computer';
+    if (/medical|medicale|medical|healthcare|medical device|medical equipment/.test(haystack)) return 'medical';
+    if (/battery|batterie|liquid|liquide|powder|poudre|chemical|chimique|magnet/.test(haystack)) return 'special';
+  } else {
+    if (/machine|machinery|equipment|equipment|industrial|generator|generateur|engine/.test(haystack)) return 'machine';
+    if (logistics.fragile || /fragile|glass|verre|ceramic|ceramique/.test(haystack)) return 'fragile';
+    if (logistics.hollowOrBulky || /heavy|lourd|oversize|bulky|volumineux/.test(haystack)) return 'heavy';
+  }
+  return 'normal';
+}
+
 function productVolumeM3(product = {}) {
   const logistics = product.logistics || {};
   const storedCm3 = Number(logistics.volumeCm3);
@@ -304,10 +343,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
       error.status = 422;
       throw error;
     }
-    const categoryKey = normalizeCategory(
-      logistics[modeKey === 'air' ? 'airCategory' : 'seaCategory'],
-      mode.categories,
-    );
+    const categoryKey = inferFreightCategory(product, modeKey, mode.categories);
     const category = mode.categories[categoryKey];
 
     if (modeKey === 'sea') {
@@ -409,4 +445,5 @@ module.exports = {
   updateAlibabaFreightConfig,
   calculateAlibabaFreightQuote,
   normalizeConfig,
+  inferFreightCategory,
 };

@@ -1,4 +1,6 @@
+const crypto = require('crypto');
 const Product = require('../Models/AlibabaProduct');
+const DropshippingCheckoutQuote = require('../Models/DropshippingCheckoutQuote');
 const {
   isDropshippingProduct,
   toNumber,
@@ -17,6 +19,10 @@ const {
   getAlibabaFreightConfig,
   calculateAlibabaFreightQuote,
 } = require('./alibaba/alibabaFreightService');
+const {
+  getLocalDeliveryConfig,
+  calculateLocalDeliveryQuote,
+} = require('./localDeliveryPricingService');
 
 const SUPPORTED_COUNTRIES = new Set(['TG', 'BJ', 'TOGO', 'BÉNIN', 'BENIN']);
 const DANGO_TRANSIT_OPTION_ID = 'dango-import:transit';
@@ -68,12 +74,6 @@ function mapTransitOption(quote) {
     estimatedDeliveryMin: quote.estimatedDays?.min ?? null,
     estimatedDeliveryMax: quote.estimatedDays?.max ?? null,
     transportMode: quote.transport?.transportMode || null,
-    billedWeight: quote.transport?.billableWeightKg ?? quote.billedWeight,
-    billedVolumeM3: quote.transport?.totalVolumeM3 ?? null,
-    ratePerKg: quote.ratePerKg,
-    shippingRatePerKg: quote.shippingRatePerKg || quote.ratePerKg,
-    shippingBaseCost: quote.shippingBaseCost,
-    shippingMarkup: 0,
   };
 }
 
@@ -81,44 +81,24 @@ function publicImportBreakdown(quote) {
   return {
     productTotal: quote.productTotal,
     itemsTotal: quote.itemsTotal,
-    billedWeight: quote.billedWeight,
-    totalWeightKg: quote.totalWeightKg,
-    ratePerKg: quote.ratePerKg,
-    shippingRatePerKg: quote.shippingRatePerKg || quote.ratePerKg,
-    shippingBaseCost: quote.shippingBaseCost,
-    shippingMarkup: 0,
+    internationalShippingCost: Number(quote.shippingBaseCost || 0),
+    localDeliveryFee: Number(quote.localDeliveryFee || 0),
     shippingCost: quote.shippingCost,
     total: quote.total,
-    estimatedDays: quote.estimatedDays,
-    estimatedDelivery: quote.estimatedDelivery,
-    estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
-    transport: quote.transport || null,
-    chinaDomesticShipping: quote.chinaDomesticShipping,
-    chinaDomesticShippingUsd: quote.chinaDomesticShippingUsd,
-    chinaDomesticShippingFcfa: quote.chinaDomesticShippingFcfa,
-    items: (quote.items || []).map((row) => ({
-      productPrice: row.productPrice,
-      unitPrice: row.unitPrice,
-      packPrice: row.packPrice,
-      packSize: row.packSize,
-      quantity: row.quantity,
-      productLineTotal: row.productLineTotal,
-      minimumOrderQuantity: row.minimumOrderQuantity,
-      quantityIncrement: row.quantityIncrement,
-      soldAsLot: row.soldAsLot,
-      weight: row.weight,
-      unitWeight: row.unitWeight,
-      billedWeight: row.shipping?.billedWeight,
-      ratePerKg: row.shipping?.ratePerKg,
-      shippingBaseCost: row.shippingBaseCost,
-      shippingCost: row.shippingCost,
-    })),
+    localDelivery: quote.localDelivery ? {
+      zoneName: quote.localDelivery.zoneName,
+      category: quote.localDelivery.category,
+      baseFee: quote.localDelivery.baseFee,
+      fragileSurcharge: quote.localDelivery.fragileSurcharge,
+      fee: quote.localDelivery.fee,
+    } : null,
   };
 }
 
 async function getImportShippingQuote({ items = [], destination = {}, transportMode } = {}) {
   const countryCode = normalizeCountryCode(destination.country || destination.countryCode);
   const city = String(destination.city || '').trim();
+  const district = String(destination.district || destination.neighborhood || '').trim();
   if (!SUPPORTED_COUNTRIES.has(countryCode) && !['TG', 'BJ'].includes(countryCode)) {
     const err = new Error('Destination non supportée pour la livraison dropshipping.');
     err.status = 400;
@@ -129,24 +109,27 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
     err.status = 400;
     throw err;
   }
+  if (!district) {
+    const err = new Error('Quartier requis pour calculer la livraison locale.');
+    err.status = 400;
+    throw err;
+  }
 
   const lines = await loadCheckoutProducts(items);
   const config = await getImportPricingConfig();
   const quote = calculateImportQuote(lines, config);
   const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
+  let freightConfig = null;
   if (alibabaLines.length > 0) {
-    const freightConfig = await getAlibabaFreightConfig();
+    freightConfig = await getAlibabaFreightConfig();
     const freight = calculateAlibabaFreightQuote(alibabaLines, countryCode, transportMode, freightConfig);
     const standardShipping = quote.items.reduce((sum, itemQuote, index) => (
       isAlibabaManagedProduct(lines[index]?.product)
         ? sum
         : sum + Number(itemQuote.shippingBaseCost || 0)
     ), 0);
-    const localDeliveryFee = Number(config.localDeliveryFee || 0);
     quote.transport = freight;
     quote.shippingBaseCost = freight.cost + standardShipping;
-    quote.shippingCost = quote.shippingBaseCost + localDeliveryFee;
-    quote.localDeliveryFee = localDeliveryFee;
     quote.shippingRatePerKg = null;
     quote.ratePerKg = null;
     quote.billedWeight = freight.billableWeightKg;
@@ -154,8 +137,20 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
     quote.estimatedDays = null;
     quote.estimatedDelivery = null;
     quote.estimatedDeliveryLabel = 'Délai d’acheminement non confirmé';
-    quote.total = Math.round(quote.productTotal + quote.shippingCost);
   }
+
+  const localConfig = await getLocalDeliveryConfig();
+  const localDelivery = calculateLocalDeliveryQuote({
+    lines,
+    countryCode,
+    city,
+    district,
+    config: localConfig,
+  });
+  quote.localDelivery = localDelivery;
+  quote.localDeliveryFee = localDelivery.fee;
+  quote.shippingCost = Number(quote.shippingBaseCost || 0) + localDelivery.fee;
+  quote.total = Math.round(quote.productTotal + quote.shippingCost);
   const option = mapTransitOption(quote);
 
   return {
@@ -168,11 +163,87 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
     total: quote.total,
     estimatedDays: quote.estimatedDays,
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
-    transport: quote.transport || null,
+    transportMode: quote.transport?.transportMode || null,
     options: [option],
     supplierName: PLATFORM_VENDOR_NAME,
     importBreakdown: publicImportBreakdown(quote),
+    quoteSnapshot: {
+      items: quote.items.map((row, index) => ({
+        ...row,
+        productId: String(lines[index]?.product?._id || ''),
+      })),
+      productTotal: quote.productTotal,
+      internationalShippingCost: Number(quote.shippingBaseCost || 0),
+      localDeliveryFee: localDelivery.fee,
+      shippingCost: quote.shippingCost,
+      total: quote.total,
+      estimatedDays: quote.estimatedDays,
+      estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+      transportMode: quote.transport?.transportMode || null,
+      importBreakdown: publicImportBreakdown(quote),
+      localDelivery,
+      pricingConfig: config,
+      freightConfig,
+      localDeliveryConfig: localConfig,
+    },
   };
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function cartSignature(items = []) {
+  const normalized = items.map((item) => ({
+    productId: String(item.productId || item._id || item.id || ''),
+    quantity: Math.max(1, toNumber(item.quantity, 1)),
+    selectedOptions: item.selectedOptions || {},
+  }));
+  return crypto.createHash('sha256').update(stableStringify(normalized)).digest('hex');
+}
+
+function destinationSignature(destination = {}) {
+  return stableStringify({
+    country: normalizeCountryCode(destination.country || destination.countryCode),
+    city: String(destination.city || '').trim().toLowerCase(),
+    district: String(destination.district || destination.neighborhood || '').trim().toLowerCase(),
+  });
+}
+
+async function createCheckoutQuote({ items, destination, transportMode, userId }) {
+  const result = await getImportShippingQuote({ items, destination, transportMode });
+  const quoteId = crypto.randomBytes(24).toString('hex');
+  await DropshippingCheckoutQuote.create({
+    quoteId,
+    userId: userId || null,
+    cartSignature: cartSignature(items),
+    destinationSignature: destinationSignature(destination),
+    snapshot: result.quoteSnapshot,
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+  });
+  const { quoteSnapshot, ...publicResult } = result;
+  return { ...publicResult, quoteId };
+}
+
+async function loadCheckoutQuote({ quoteId, items, destination, userId }) {
+  const quote = await DropshippingCheckoutQuote.findOne({
+    quoteId,
+    expiresAt: { $gt: new Date() },
+    ...(userId ? { userId } : {}),
+  }).lean();
+  if (!quote
+    || quote.cartSignature !== cartSignature(items)
+    || quote.destinationSignature !== destinationSignature(destination)) {
+    const error = new Error('Le devis a expiré ou les informations du panier/adresse ont changé. Recalculez la livraison.');
+    error.status = 409;
+    error.code = 'DROPSHIPPING_QUOTE_INVALID';
+    throw error;
+  }
+  return quote;
 }
 
 /** Conservé pour compatibilité des routes existantes — n’expose plus les méthodes CJ. */
@@ -189,6 +260,8 @@ async function validateDropshippingCheckoutPayload({
   destination = {},
   shippingAddress = {},
   transportMode,
+  quoteId,
+  userId,
 }) {
   const countryCode = normalizeCountryCode(
     destination.country || destination.countryCode || destinationCountry,
@@ -202,26 +275,53 @@ async function validateDropshippingCheckoutPayload({
     throw err;
   }
 
-  const quoteResult = await getImportShippingQuote({
-    items,
-    destination: { country: countryCode, city },
-    transportMode,
-  });
+  const resolvedDestination = {
+    country: countryCode,
+    city,
+    district: destination.district || destination.neighborhood || shippingAddress.district || shippingAddress.neighborhood,
+  };
+  let quoteResult;
+  let quoteSnapshot;
+  if (quoteId) {
+    const savedQuote = await loadCheckoutQuote({
+      quoteId,
+      items,
+      destination: resolvedDestination,
+      userId,
+    });
+    quoteSnapshot = savedQuote.snapshot;
+    quoteResult = {
+      shippingCost: quoteSnapshot.shippingCost,
+      estimatedDeliveryLabel: quoteSnapshot.estimatedDeliveryLabel,
+      estimatedDays: quoteSnapshot.estimatedDays,
+      transportMode: quoteSnapshot.transportMode,
+      importBreakdown: quoteSnapshot.importBreakdown,
+    };
+  } else {
+    quoteResult = await getImportShippingQuote({
+      items,
+      destination: resolvedDestination,
+      transportMode,
+    });
+    quoteSnapshot = quoteResult.quoteSnapshot;
+  }
   const providedShipping = toNumber(shippingCost, 0);
-  if (providedShipping > 0 && Math.abs(quoteResult.shippingCost - providedShipping) > 1) {
+  const savedShippingCost = quoteSnapshot?.shippingCost ?? quoteResult.shippingCost;
+  if (providedShipping > 0 && Math.abs(savedShippingCost - providedShipping) > 1) {
     const err = new Error('Les frais d’importation ont changé. Veuillez actualiser le checkout.');
     err.status = 409;
     throw err;
   }
 
   const lines = await loadCheckoutProducts(items);
-  const config = await getImportPricingConfig();
+  const config = quoteSnapshot?.pricingConfig || await getImportPricingConfig();
   let subtotal = 0;
   const orderItems = [];
-  const itemSnapshots = [];
+  const itemSnapshots = quoteSnapshot?.items || [];
 
-  for (const line of lines) {
-    const pricing = calculateImportPricing(line.product, {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const pricing = itemSnapshots[index] || calculateImportPricing(line.product, {
       quantity: line.quantity,
       config,
       includeShippingMarkup: false,
@@ -233,16 +333,21 @@ async function validateDropshippingCheckoutPayload({
     });
     built.importPricing = {
       productPrice: pricing.productPrice,
-      shipping: pricing.shipping,
+      shipping: pricing.shipping || pricing.shippingBaseCost,
       total: pricing.total,
     };
     subtotal += built.subtotal;
     orderItems.push(built);
-    itemSnapshots.push(pricing);
   }
 
-  const shippingCostFinal = quoteResult.shippingCost;
-  const total = Math.round(subtotal + shippingCostFinal);
+  if (quoteSnapshot && Math.abs(subtotal - Number(quoteSnapshot.productTotal || 0)) > 1) {
+    const err = new Error('Les prix des produits ne correspondent plus au devis. Recalculez la commande.');
+    err.status = 409;
+    throw err;
+  }
+  if (quoteSnapshot) subtotal = Number(quoteSnapshot.productTotal);
+  const shippingCostFinal = Number(savedShippingCost);
+  const total = Number(quoteSnapshot?.total ?? Math.round(subtotal + shippingCostFinal));
 
   if (!String(shippingAddress.fullAddress || '').trim()) {
     const err = new Error('Adresse de livraison incomplète.');
@@ -270,9 +375,19 @@ async function validateDropshippingCheckoutPayload({
     totalWeight: breakdown.totalWeightKg || breakdown.billedWeight,
     ratePerKg: breakdown.ratePerKg,
     shippingRatePerKg: breakdown.shippingRatePerKg || breakdown.ratePerKg,
-    baseCost: breakdown.shippingBaseCost,
+    baseCost: Number(quoteSnapshot?.internationalShippingCost ?? breakdown.internationalShippingCost ?? 0),
     markup: 0,
     shippingCost: shippingCostFinal,
+    internationalShippingCost: Number(quoteSnapshot?.internationalShippingCost ?? breakdown.internationalShippingCost ?? 0),
+    localDeliveryFee: Number(quoteSnapshot?.localDeliveryFee ?? breakdown.localDeliveryFee ?? 0),
+    localDelivery: quoteSnapshot?.localDelivery ? {
+      countryCode: quoteSnapshot.localDelivery.countryCode,
+      zoneId: quoteSnapshot.localDelivery.zoneId,
+      zoneName: quoteSnapshot.localDelivery.zoneName,
+      category: quoteSnapshot.localDelivery.category,
+      fee: quoteSnapshot.localDelivery.fee,
+      revision: quoteSnapshot.localDelivery.revision,
+    } : undefined,
     customerCost: shippingCostFinal,
     productPrice: primary.productPrice,
     productTotal: subtotal,
@@ -309,9 +424,10 @@ async function validateDropshippingCheckoutPayload({
     total,
     shippingMethod: DANGO_TRANSIT_OPTION_ID,
     shippingOptionId: DANGO_TRANSIT_OPTION_ID,
-    estimatedDeliveryLabel: quoteResult.estimatedDeliveryLabel,
-    transportMode: quoteResult.transport?.transportMode || null,
+    estimatedDeliveryLabel: quoteSnapshot?.estimatedDeliveryLabel || quoteResult.estimatedDeliveryLabel,
+    transportMode: quoteSnapshot?.transportMode || quoteResult.transportMode || null,
     importShipping,
+    transportPricingSnapshot: quoteSnapshot || null,
     cjShipping: undefined,
     quote: quoteResult,
   };
@@ -335,6 +451,8 @@ function cartIsDropshippingOnly(items = []) {
 module.exports = {
   DANGO_TRANSIT_OPTION_ID,
   getImportShippingQuote,
+  createCheckoutQuote,
+  loadCheckoutQuote,
   getCjShippingOptions,
   getDropshippingShippingQuote,
   validateDropshippingCheckoutPayload,

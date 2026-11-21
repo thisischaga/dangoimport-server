@@ -145,6 +145,7 @@ const buildOrder = ({
   estimatedDeliveryLabel,
   cjShipping,
   importShipping,
+  transportPricingSnapshot,
 }) => ({
   orderNumber: generateOrderNumber(),
   customerId: mongoose.isValidObjectId(userId) ? new mongoose.Types.ObjectId(userId) : null,
@@ -166,6 +167,11 @@ const buildOrder = ({
   notes: estimatedDeliveryLabel ? `Livraison estimée : ${estimatedDeliveryLabel}` : undefined,
   cjShipping: cjShipping || undefined,
   importShipping: importShipping || undefined,
+  transportPricingSnapshot: transportPricingSnapshot || undefined,
+  transportCostTracking: importShipping ? {
+    estimatedInternationalCost: Number(importShipping.internationalShippingCost || 0),
+    estimatedLocalDeliveryCost: Number(importShipping.localDeliveryFee || 0),
+  } : undefined,
 });
 
 const createOrderFromTransaction = async ({ transaction, session }) => {
@@ -191,14 +197,18 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     const built = buildShopOrderItem(product, {
       quantity: item.quantity,
       selectedOptions: item.selectedOptions || {},
+      unitPriceOverride: item.price != null ? Number(item.price) : undefined,
     });
+    if (item.importPricing) built.importPricing = item.importPricing;
     built.fulfillmentStatus = built.sourceType === 'DROPSHIPPING'
       ? 'SUPPLIER_ORDER_PENDING'
       : 'PAID';
     orderItems.push(built);
   }
 
-  const existingOrder = transaction.orderId ? await ShopOrder.findById(transaction.orderId).session(session) : null;
+  const existingOrder = transaction.orderId
+    ? await ShopOrder.findById(transaction.orderId).select('+transportPricingSnapshot +transportCostTracking').session(session)
+    : null;
   if (existingOrder) {
     existingOrder.items = orderItems;
     existingOrder.subtotal = subtotal;
@@ -211,6 +221,8 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     existingOrder.orderType = metadata.orderType || existingOrder.orderType || 'local';
     existingOrder.cjShipping = metadata.cjShipping || existingOrder.cjShipping;
     existingOrder.importShipping = metadata.importShipping || existingOrder.importShipping;
+    existingOrder.transportPricingSnapshot = metadata.transportPricingSnapshot || existingOrder.transportPricingSnapshot;
+    existingOrder.transportCostTracking = metadata.transportCostTracking || existingOrder.transportCostTracking;
     existingOrder.paymentMethod = 'FedaPay';
     existingOrder.status = 'confirmed';
     existingOrder.paymentStatus = 'completed';
@@ -235,6 +247,7 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
     cjShipping: metadata.cjShipping,
     importShipping: metadata.importShipping,
+    transportPricingSnapshot: metadata.transportPricingSnapshot,
   });
 
   orderPayload.status = 'confirmed';
@@ -276,6 +289,7 @@ const createPendingShopOrder = async ({ transaction }) => {
     estimatedDeliveryLabel: metadata.estimatedDeliveryLabel,
     cjShipping: metadata.cjShipping,
     importShipping: metadata.importShipping,
+    transportPricingSnapshot: metadata.transportPricingSnapshot,
   });
 
   orderPayload.status = 'pending';
@@ -407,9 +421,13 @@ router.post('/checkout', verifyToken, async (req, res) => {
     let orderType = 'local';
     let cjShipping = null;
     let importShipping = null;
+    let transportPricingSnapshot = null;
 
     if (isDropshippingCheckout) {
       orderType = 'dropshipping';
+      if (!payload.importQuoteId && !payload.quoteId) {
+        return res.status(400).json({ message: 'Devis de livraison manquant. Recalculez les frais avant le paiement.' });
+      }
       const validated = await validateDropshippingCheckoutPayload({
         items,
         shippingOptionId: payload.shippingOptionId || payload.shippingMethod,
@@ -417,8 +435,11 @@ router.post('/checkout', verifyToken, async (req, res) => {
         destination: {
           country: shippingAddress.country || payload.countryCode || payload.selectedCountry,
           city: shippingAddress.city || payload.city,
+          district: shippingAddress.district || shippingAddress.neighborhood,
         },
         shippingAddress,
+        quoteId: payload.importQuoteId || payload.quoteId,
+        userId: req.user?.id || req.user?.userId || payload.userId,
       });
       orderItems = validated.orderItems;
       subtotal = validated.subtotal;
@@ -427,6 +448,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
       estimatedDeliveryLabel = validated.estimatedDeliveryLabel;
       cjShipping = validated.cjShipping;
       importShipping = validated.importShipping;
+      transportPricingSnapshot = validated.transportPricingSnapshot;
     } else {
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
@@ -528,6 +550,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
           estimatedDeliveryLabel,
           cjShipping,
           importShipping,
+          transportPricingSnapshot,
           shippingOptionId: payload.shippingOptionId || shippingMethod,
           promoCode: payload.promoCode || '',
           checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',
@@ -563,6 +586,7 @@ router.post('/checkout', verifyToken, async (req, res) => {
         estimatedDeliveryLabel,
         cjShipping,
         importShipping,
+        transportPricingSnapshot,
         shippingOptionId: payload.shippingOptionId || shippingMethod,
         promoCode: payload.promoCode || 'Pas de code promo',
         checkoutMode: isDropshippingCheckout ? 'dropshipping' : 'local',

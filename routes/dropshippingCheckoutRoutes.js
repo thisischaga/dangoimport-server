@@ -1,7 +1,7 @@
 const express = require('express');
 const verifyToken = require('../Middlewares/verifyTokens');
 const {
-  getCjShippingOptions,
+  createCheckoutQuote,
   validateDropshippingCheckoutPayload,
 } = require('../services/dropshippingCheckoutService');
 
@@ -13,7 +13,12 @@ router.post('/shipping-options', verifyToken, async (req, res) => {
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
     }
-    const data = await getCjShippingOptions({ items, destination, transportMode });
+    const data = await createCheckoutQuote({
+      items,
+      destination,
+      transportMode,
+      userId: req.user?.id || req.user?.userId,
+    });
     return res.json({ success: true, data });
   } catch (error) {
     const status = error.status || 500;
@@ -32,9 +37,14 @@ router.post('/validate', verifyToken, async (req, res) => {
       shippingOptionId,
       shippingAddress,
       transportMode,
+      quoteId,
+      shippingCost,
     } = req.body || {};
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
+    }
+    if (!quoteId) {
+      return res.status(400).json({ success: false, message: 'Devis de livraison manquant. Recalculez les frais avant la validation.' });
     }
     const result = await validateDropshippingCheckoutPayload({
       items,
@@ -42,6 +52,9 @@ router.post('/validate', verifyToken, async (req, res) => {
       shippingOptionId,
       shippingAddress,
       transportMode,
+      quoteId,
+      shippingCost,
+      userId: req.user?.id || req.user?.userId,
     });
     return res.json({
       success: true,
@@ -51,6 +64,7 @@ router.post('/validate', verifyToken, async (req, res) => {
         total: result.total,
         currency: 'XOF',
         shippingOptionId: result.shippingOptionId,
+        quoteId,
         estimatedDeliveryLabel: result.estimatedDeliveryLabel,
         productTotal: result.subtotal,
         importShippingCost: result.shippingCost,
@@ -69,17 +83,19 @@ router.post('/validate', verifyToken, async (req, res) => {
 /** @deprecated Préférer POST /shipping-options */
 router.post('/quote', verifyToken, async (req, res) => {
   try {
-    const { items, destinationCountry, destinationCity, transportMode } = req.body || {};
+    const { items, destinationCountry, destinationCity, destinationDistrict, transportMode } = req.body || {};
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
     }
-    const data = await getCjShippingOptions({
+    const data = await createCheckoutQuote({
       items,
       destination: {
         country: destinationCountry,
         city: destinationCity,
+        district: destinationDistrict,
       },
       transportMode,
+      userId: req.user?.id || req.user?.userId,
     });
     return res.json({ success: true, data });
   } catch (error) {

@@ -648,13 +648,14 @@ exports.updateCommercialData = async (req, res) => {
       'packageLength', 'packageWidth', 'packageHeight', 'dimensionUnit',
       'airCategory', 'seaCategory', 'localDeliveryProfile', 'fragile',
       'hollowOrBulky', 'allowedTransportModes', 'volumeCm3', 'volumetricEnabled',
+      'localAdditionalParcelCount',
     ];
     if (req.body.logistics && typeof req.body.logistics === 'object') {
       product.logistics = product.logistics || {};
       for (const field of logisticsFields) {
         if (req.body.logistics[field] === undefined) continue;
         const value = req.body.logistics[field];
-        if (['weight', 'netWeight', 'grossWeight', 'packageLength', 'packageWidth', 'packageHeight', 'volumeCm3'].includes(field)
+        if (['weight', 'netWeight', 'grossWeight', 'packageLength', 'packageWidth', 'packageHeight', 'volumeCm3', 'localAdditionalParcelCount'].includes(field)
           && value !== null && value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
           return res.status(400).json({ success: false, message: `Valeur logistique invalide : ${field}.` });
         }
@@ -664,6 +665,11 @@ exports.updateCommercialData = async (req, res) => {
         }
         if (['fragile', 'hollowOrBulky'].includes(field) && typeof value !== 'boolean') {
           return res.status(400).json({ success: false, message: `${field} doit être un booléen.` });
+        }
+        if (field === 'localDeliveryProfile'
+          && value !== ''
+          && !['S', 'M', 'L', 'XL'].includes(String(value).toUpperCase())) {
+          return res.status(400).json({ success: false, message: 'Le profil local doit être S, M, L, XL ou automatique.' });
         }
         if (field === 'volumetricEnabled' && value !== null && value !== '' && typeof value !== 'boolean') {
           return res.status(400).json({ success: false, message: 'volumetricEnabled doit être vrai, faux ou hérité.' });

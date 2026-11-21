@@ -323,6 +323,7 @@ const AlibabaProductSchema = new Schema(
       airCategory: { type: String, trim: true, default: '' },
       seaCategory: { type: String, trim: true, default: '' },
       localDeliveryProfile: { type: String, trim: true, default: '' },
+      localAdditionalParcelCount: { type: Number, min: 0, default: null },
       fragile: { type: Boolean, default: false },
       hollowOrBulky: { type: Boolean, default: false },
       volumetricEnabled: { type: Boolean, default: null },
