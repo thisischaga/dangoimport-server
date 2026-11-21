@@ -159,11 +159,11 @@ async function updateLocalDeliveryConfig(payload = {}, changedBy = 'admin') {
 
 function readProductWeightKg(product) {
   const logistics = product.logistics || {};
-  const candidate = logistics.grossWeight
-    ?? logistics.weight
-    ?? logistics.netWeight
-    ?? product.weightKg
-    ?? product.weight;
+  const packageWeightKg = logistics.grossWeight ?? logistics.netWeight;
+  if (packageWeightKg !== null && packageWeightKg !== undefined && packageWeightKg !== '') {
+    return parseWeightToKg(`${packageWeightKg} kg`);
+  }
+  const candidate = logistics.weight ?? product.weightKg ?? product.weight;
   const unit = logistics.weightUnit || product.weightUnit;
   if (typeof candidate === 'number' && unit) {
     return parseWeightToKg(`${candidate} ${unit}`);
@@ -176,7 +176,20 @@ function readProductVolumeM3(product) {
   const volumeM3 = Number(logistics.volumeM3 ?? product.volumeM3);
   if (Number.isFinite(volumeM3) && volumeM3 > 0) return volumeM3;
   const volumeCm3 = Number(logistics.volumeCm3 ?? product.volumeCm3);
-  return Number.isFinite(volumeCm3) && volumeCm3 > 0 ? volumeCm3 / 1_000_000 : 0;
+  if (Number.isFinite(volumeCm3) && volumeCm3 > 0) return volumeCm3 / 1_000_000;
+
+  const dimensions = [
+    logistics.packageLength,
+    logistics.packageWidth,
+    logistics.packageHeight,
+  ].map(Number);
+  if (dimensions.some((dimension) => !Number.isFinite(dimension) || dimension <= 0)) return 0;
+
+  const unit = String(logistics.dimensionUnit || 'cm').trim().toLowerCase();
+  const toMeters = unit === 'm' ? 1 : unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : 0;
+  return toMeters
+    ? dimensions.reduce((volume, dimension) => volume * dimension * toMeters, 1)
+    : 0;
 }
 
 function classifyBasket(lines, config) {

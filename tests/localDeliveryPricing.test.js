@@ -66,6 +66,45 @@ test('classifies the whole basket from stored weight and volume without dimensio
   assert.equal(quote.fee, 1500);
 });
 
+test('converts stored product weight units and cubic-metre volume', () => {
+  const quote = calculateLocalDeliveryQuote({
+    lines: [{
+      quantity: 1,
+      product: { name: 'Produit léger', logistics: { weight: 500, weightUnit: 'g', volumeM3: 0.02 } },
+    }],
+    ...destination,
+    config,
+  });
+
+  assert.equal(quote.category, 'S');
+  assert.equal(quote.fee, 1000);
+});
+
+test('derives volume from imported package dimensions when stored volume is absent', () => {
+  const quote = calculateLocalDeliveryQuote({
+    lines: [{
+      quantity: 1,
+      product: {
+        name: 'Organisateur auto',
+        logistics: {
+          weight: 0.2,
+          weightUnit: 'kg',
+          packageLength: 42,
+          packageWidth: 35,
+          packageHeight: 5,
+          dimensionUnit: 'cm',
+        },
+      },
+    }],
+    ...destination,
+    config,
+  });
+
+  assert.equal(quote.category, 'S');
+  assert.equal(quote.fee, 1000);
+  assert.equal(quote.internalMeasurements.totalVolumeM3, 0.00735);
+});
+
 test('adds the configured fragile handling charge once per basket', () => {
   const quote = calculateLocalDeliveryQuote({
     lines: [
