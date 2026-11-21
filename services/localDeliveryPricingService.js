@@ -2,6 +2,7 @@ const LocalDeliveryConfig = require('../Models/LocalDeliveryConfig');
 const { parseWeightToKg } = require('../utils/importPricing');
 
 const CATEGORIES = ['S', 'M', 'L', 'XL'];
+const COUNTRY_NAMES = { BJ: 'Bénin', TG: 'Togo' };
 const DEFAULT_LOCAL_DELIVERY_CONFIG = {
   revision: 1,
   classification: {
@@ -13,6 +14,10 @@ const DEFAULT_LOCAL_DELIVERY_CONFIG = {
     largeMaxVolumeM3: 0.3,
   },
   surcharges: { fragile: 300, extraParcel: 300 },
+  countryRates: {
+    BJ: { S: 1000, M: 1500, L: 3000, XL: null },
+    TG: { S: 1000, M: 1500, L: 3000, XL: null },
+  },
   zones: [
     { id: 'bj-cotonou-centre', countryCode: 'BJ', name: 'Cotonou centre', aliases: ['cotonou centre', 'centre-ville'], rates: { S: 1000, M: 1500, L: 3000, XL: null } },
     { id: 'bj-cotonou-peripherie', countryCode: 'BJ', name: 'Cotonou périphérie', aliases: ['cotonou peripherie'], rates: { S: 1500, M: 2000, L: 3500, XL: null } },
@@ -36,13 +41,6 @@ function validationError(message) {
   const error = new Error(message);
   error.status = 400;
   return error;
-}
-
-function normalizeText(value) {
-  return String(value || '').trim().toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
 }
 
 function positiveNumber(value, label, { min = 0, allowNull = false } = {}) {
@@ -108,6 +106,18 @@ function normalizeConfig(input = {}) {
       rates,
     };
   });
+  base.countryRates = Object.fromEntries(Object.keys(COUNTRY_NAMES).map((countryCode) => {
+    const rates = source.countryRates?.[countryCode]
+      || base.zones.find((zone) => zone.countryCode === countryCode)?.rates
+      || base.countryRates[countryCode];
+    const normalizedRates = {};
+    for (const category of CATEGORIES) {
+      normalizedRates[category] = category === 'XL'
+        ? positiveNumber(rates?.[category], `Tarif ${COUNTRY_NAMES[countryCode]} / XL`, { min: 0.01, allowNull: true })
+        : positiveNumber(rates?.[category], `Tarif ${COUNTRY_NAMES[countryCode]} / ${category}`, { min: 0.01 });
+    }
+    return [countryCode, normalizedRates];
+  }));
   return base;
 }
 
@@ -235,35 +245,20 @@ function classifyBasket(lines, config) {
   };
 }
 
-function resolveLocalZone(countryCode, city, district, config) {
-  const destination = normalizeText(`${city} ${district}`);
-  const districtText = normalizeText(district);
-  return config.zones.find((zone) => {
-    if (zone.countryCode !== countryCode) return false;
-    return zone.aliases.some((alias) => {
-      const normalizedAlias = normalizeText(alias);
-      return normalizedAlias && (
-        normalizedAlias === districtText
-        || normalizedAlias === normalizeText(city)
-        || destination.includes(normalizedAlias)
-      );
-    });
-  }) || null;
-}
-
-function calculateLocalDeliveryQuote({ lines = [], countryCode, city, district, config }) {
+function calculateLocalDeliveryQuote({ lines = [], countryCode, config }) {
   const activeConfig = normalizeConfig(config);
-  const zone = resolveLocalZone(String(countryCode || '').toUpperCase(), city, district, activeConfig);
-  if (!zone) {
-    const error = new Error('Cette destination est hors grille tarifaire. Contactez Dango pour obtenir un devis de livraison locale.');
+  const normalizedCountryCode = String(countryCode || '').trim().toUpperCase();
+  const rates = activeConfig.countryRates[normalizedCountryCode];
+  if (!rates) {
+    const error = new Error('Le pays sélectionné n’est pas pris en charge pour la livraison locale.');
     error.status = 422;
-    error.code = 'LOCAL_DELIVERY_QUOTE_REQUIRED';
+    error.code = 'LOCAL_DELIVERY_COUNTRY_UNSUPPORTED';
     throw error;
   }
   const classified = classifyBasket(lines, activeConfig);
-  const baseFee = zone.rates[classified.category];
+  const baseFee = rates[classified.category];
   if (baseFee === null || baseFee === undefined) {
-    const error = new Error(`La livraison locale pour la catégorie ${classified.category} vers ${zone.name} est sur devis. Contactez Dango avant le paiement.`);
+    const error = new Error(`La livraison locale pour la catégorie ${classified.category} vers le ${COUNTRY_NAMES[normalizedCountryCode]} est sur devis. Contactez Dango avant le paiement.`);
     error.status = 422;
     error.code = 'LOCAL_DELIVERY_QUOTE_REQUIRED';
     throw error;
@@ -279,9 +274,9 @@ function calculateLocalDeliveryQuote({ lines = [], countryCode, city, district, 
     : 0;
   const extraParcelSurcharge = additionalParcelCount * activeConfig.surcharges.extraParcel;
   return {
-    countryCode: zone.countryCode,
-    zoneId: zone.id,
-    zoneName: zone.name,
+    countryCode: normalizedCountryCode,
+    zoneId: `country-${normalizedCountryCode}`,
+    zoneName: `Tarif national ${COUNTRY_NAMES[normalizedCountryCode]}`,
     category: classified.category,
     baseFee,
     fragileSurcharge,

@@ -9,16 +9,44 @@ const {
 const config = normalizeLocalDeliveryConfig(DEFAULT_LOCAL_DELIVERY_CONFIG);
 const destination = { countryCode: 'BJ', city: 'Cotonou', district: 'centre-ville' };
 
-test('calculates the local rate for a configured zone and explicit parcel profile', () => {
+test('uses the country rate for any city or district with an explicit parcel profile', () => {
   const quote = calculateLocalDeliveryQuote({
     lines: [{ quantity: 1, product: { name: 'Produit S', logistics: { localDeliveryProfile: 'S' } } }],
-    ...destination,
+    countryCode: 'BJ',
+    city: 'Ville hors grille',
+    district: 'Quartier hors grille',
     config,
   });
 
-  assert.equal(quote.zoneName, 'Cotonou centre');
+  assert.equal(quote.zoneName, 'Tarif national Bénin');
   assert.equal(quote.category, 'S');
   assert.equal(quote.fee, 1000);
+});
+
+test('uses admin-configured country rates and rejects unsupported countries', () => {
+  const customConfig = normalizeLocalDeliveryConfig({
+    ...config,
+    countryRates: {
+      ...config.countryRates,
+      BJ: { ...config.countryRates.BJ, S: 1750 },
+    },
+  });
+  const quote = calculateLocalDeliveryQuote({
+    lines: [{ product: { logistics: { localDeliveryProfile: 'S' } } }],
+    countryCode: 'BJ',
+    city: 'Toute ville',
+    district: 'Tout quartier',
+    config: customConfig,
+  });
+  assert.equal(quote.fee, 1750);
+  assert.throws(
+    () => calculateLocalDeliveryQuote({
+      lines: [{ product: { logistics: { localDeliveryProfile: 'S' } } }],
+      countryCode: 'XX',
+      config: customConfig,
+    }),
+    (error) => error.code === 'LOCAL_DELIVERY_COUNTRY_UNSUPPORTED',
+  );
 });
 
 test('classifies the whole measured basket from weight and dimensions', () => {
@@ -49,20 +77,11 @@ test('adds the configured fragile handling charge once per basket', () => {
   assert.equal(quote.fee, 1300);
 });
 
-test('requires a quote when a destination or parcel category has no configured tariff', () => {
+test('requires a quote when the parcel category has no country tariff', () => {
   assert.throws(
     () => calculateLocalDeliveryQuote({
-      lines: [{ product: { logistics: { localDeliveryProfile: 'S' } } }],
       ...destination,
-      district: 'destination hors grille',
-      config,
-    }),
-    (error) => error.code === 'LOCAL_DELIVERY_QUOTE_REQUIRED',
-  );
-  assert.throws(
-    () => calculateLocalDeliveryQuote({
       lines: [{ product: { logistics: { localDeliveryProfile: 'XL' } } }],
-      ...destination,
       config,
     }),
     (error) => error.code === 'LOCAL_DELIVERY_QUOTE_REQUIRED',
