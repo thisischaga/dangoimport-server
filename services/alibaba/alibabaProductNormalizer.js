@@ -259,6 +259,9 @@ function normalizeAlibabaProductSnapshot(rawPayload = {}, mapped = {}) {
     pricing: {
       ...productPricing,
       sourcePrice: productPricing.sourcePrice ?? parsePriceNumber(mapped?.pricing?.supplierPrice ?? null),
+      marginPercentOverride: mapped?.pricing?.marginPercentOverride ?? null,
+      manualSalePrice: mapped?.pricing?.manualSalePrice ?? null,
+      calculation: mapped?.pricing?.calculation || {},
     },
     inventory: inventoryData,
     sourceInventory,

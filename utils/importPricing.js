@@ -1,8 +1,16 @@
 const { DEFAULT_IMPORT_PRICING, SHIPPING_CATEGORIES, cloneImportPricingDefaults } = require('../config/importPricing');
 const { toNumber, applyProductMarkup } = require('./dropshippingCalculations');
 const { cjConfig } = require('../config/cj');
-const { alibabaConfig } = require('../config/alibaba');
 const { groupDropshippingLinesByOrigin } = require('./importShipmentGroups');
+
+function isAlibabaManagedProduct(product = {}) {
+  return product.isAlibaba === true
+    || String(product.source || '').toUpperCase() === 'ALIBABA'
+    || product.importSourceType === 'ALIBABA_API'
+    || String(product.fulfillmentPlatform || '').toLowerCase() === 'alibaba'
+    || String(product.supplier?.platform || '').toLowerCase() === 'alibaba'
+    || /^alibaba:/i.test(String(product.externalSourceKey || ''));
+}
 
 function mergeImportPricingConfig(overrides = {}) {
   const base = cloneImportPricingDefaults();
@@ -141,8 +149,14 @@ function inferShippingCategory(product = {}) {
 
 function convertSupplierPriceFcfa(product = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
-  const stored = toNumber(safeProduct.convertedSupplierPriceFCFA ?? safeProduct.supplier?.convertedSupplierPriceFCFA, 0);
+  const stored = toNumber(
+    safeProduct.convertedSupplierPriceFCFA
+      ?? safeProduct.supplier?.convertedSupplierPriceFCFA
+      ?? safeProduct.pricing?.calculation?.convertedSupplierPrice,
+    0,
+  );
   if (stored > 0) return Math.round(stored);
+  if (isAlibabaManagedProduct(safeProduct)) return 0;
 
   const directPrice = toNumber(safeProduct.salePrice || safeProduct.price || safeProduct.unitPrice || 0);
 
@@ -173,9 +187,6 @@ function convertSupplierPriceFcfa(product = {}) {
 
   if (currency === 'USD') {
     return Math.max(0, Math.round(supplierPrice * toNumber(cjConfig?.usdToXofRate || 620, 620)));
-  }
-  if (currency === 'CNY') {
-    return Math.max(0, Math.round(supplierPrice * toNumber(alibabaConfig?.cnyToXofRate || 85, 85)));
   }
   return Math.round(supplierPrice || directPrice);
 }
@@ -272,10 +283,16 @@ function assertValidOrderQuantity(product, quantity, config) {
   throw err;
 }
 
-function calculateImportPricing(product = {}, { quantity = 1, config, includeShippingMarkup = false } = {}) {
+function calculateImportPricing(product = {}, {
+  quantity = 1,
+  config,
+  includeShippingMarkup = false,
+  unitPriceOverride,
+} = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
   const cfg = mergeImportPricingConfig(config || {});
   const qty = Math.max(1, Math.round(toNumber(quantity, 1)));
+  const isAlibaba = isAlibabaManagedProduct(safeProduct);
   const multiplier = Math.max(
     1,
     toNumber(safeProduct.productMarkupMultiplier, cfg.productMarkupMultiplier),
@@ -285,7 +302,20 @@ function calculateImportPricing(product = {}, { quantity = 1, config, includeShi
     Math.round(toNumber(safeProduct.minimumProductPrice, 0)),
   );
   const convertedSupplierPriceFCFA = convertSupplierPriceFcfa(safeProduct);
-  const unitPrice = applyProductMarkup(convertedSupplierPriceFCFA, multiplier, minUnitPrice);
+  const hasUnitPriceOverride = unitPriceOverride !== undefined && unitPriceOverride !== null;
+  const alibabaSalePrice = hasUnitPriceOverride
+    ? toNumber(unitPriceOverride, 0)
+    : toNumber(safeProduct.price, 0) || toNumber(safeProduct.pricing?.calculation?.salePrice, 0);
+  if (isAlibaba && (!Number.isFinite(alibabaSalePrice) || alibabaSalePrice <= 0)) {
+    const error = new Error('Prix de vente Alibaba absent : le prix doit être recalculé par le service central avant la commande.');
+    error.status = 422;
+    throw error;
+  }
+  const unitPrice = isAlibaba
+    ? Math.max(0, Math.round(alibabaSalePrice))
+    : hasUnitPriceOverride
+    ? Math.max(0, Math.round(toNumber(unitPriceOverride, 0)))
+    : applyProductMarkup(convertedSupplierPriceFCFA, multiplier, minUnitPrice);
   const moq = resolveMoqRules(safeProduct, cfg);
   const packSize = moq.soldAsLot ? moq.minimumOrderQuantity : 1;
   const packPrice = unitPrice * packSize;
@@ -351,10 +381,12 @@ function calculateImportOrderPricing(lines = [], config) {
     const product = line.product || line;
     const quantity = line.quantity != null ? line.quantity : 1;
     assertValidOrderQuantity(product, quantity, cfg);
+    const isAlibaba = isAlibabaManagedProduct(product);
     return calculateImportPricing(product, {
       quantity,
       config: cfg,
       includeShippingMarkup: false,
+      unitPriceOverride: isAlibaba ? product.price : undefined,
     });
   });
   const itemsTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
@@ -409,4 +441,5 @@ module.exports = {
   calculateImportQuote,
   calculateImportOrderPricing,
   calculateChinaDomesticShipping,
+  isAlibabaManagedProduct,
 };

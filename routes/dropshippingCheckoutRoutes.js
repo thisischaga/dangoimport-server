@@ -9,11 +9,11 @@ const router = express.Router();
 
 router.post('/shipping-options', verifyToken, async (req, res) => {
   try {
-    const { items, destination } = req.body || {};
+    const { items, destination, transportMode } = req.body || {};
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
     }
-    const data = await getCjShippingOptions({ items, destination });
+    const data = await getCjShippingOptions({ items, destination, transportMode });
     return res.json({ success: true, data });
   } catch (error) {
     const status = error.status || 500;
@@ -31,6 +31,7 @@ router.post('/validate', verifyToken, async (req, res) => {
       destination,
       shippingOptionId,
       shippingAddress,
+      transportMode,
     } = req.body || {};
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
@@ -40,6 +41,7 @@ router.post('/validate', verifyToken, async (req, res) => {
       destination,
       shippingOptionId,
       shippingAddress,
+      transportMode,
     });
     return res.json({
       success: true,
@@ -67,7 +69,7 @@ router.post('/validate', verifyToken, async (req, res) => {
 /** @deprecated Préférer POST /shipping-options */
 router.post('/quote', verifyToken, async (req, res) => {
   try {
-    const { items, destinationCountry, destinationCity } = req.body || {};
+    const { items, destinationCountry, destinationCity, transportMode } = req.body || {};
     if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
     }
@@ -77,6 +79,7 @@ router.post('/quote', verifyToken, async (req, res) => {
         country: destinationCountry,
         city: destinationCity,
       },
+      transportMode,
     });
     return res.json({ success: true, data });
   } catch (error) {

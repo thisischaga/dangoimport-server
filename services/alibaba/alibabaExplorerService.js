@@ -1,14 +1,13 @@
 const AlibabaProduct = require('../../Models/AlibabaProduct');
-const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
+const { alibabaConfig } = require('../../config/alibaba');
 const { searchAlibabaProducts, getAlibabaProductDetail, getAlibabaRawProduct } = require('./alibabaProductService');
 const { calculateImportPricing } = require('../../utils/importPricing');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
-const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
+const { getAlibabaConfig, calculateAlibabaPrice } = require('./alibabaPricingService');
 const { findExistingAlibabaProduct, upsertAlibabaProduct } = require('./alibabaImportService');
 const {
   buildExternalSourceKey,
   mapAlibabaCategoryToDangoStore,
-  convertUsdPriceToXof,
   extractPriceTiers,
   extractPackageDimensions,
   detectSuspiciousStock,
@@ -43,46 +42,70 @@ async function mapImportedStatus(ids = []) {
 }
 
 // Convertit un montant vers USD selon sa devise (USD par défaut sur Alibaba.com).
-function toUsd(amount, currency) {
-  const code = String(currency || 'USD').toUpperCase();
-  if (code === 'CNY') return convertCnyToUsd(amount);
+async function toUsd(amount, currency) {
+  const config = await getAlibabaConfig();
+  const code = String(currency || config.sourceCurrency).toUpperCase();
+  if (code === 'CNY') {
+    return Number((toNumber(amount) / config.cnyToUsdRate).toFixed(4));
+  }
   return toNumber(amount);
 }
 
-function buildPricingPreview({ supplierPriceCny, supplierPriceUsd, weight, name, category }) {
-  const usd = supplierPriceUsd != null
-    ? toNumber(supplierPriceUsd)
-    : convertCnyToUsd(supplierPriceCny);
-  const convertedSupplierPriceFCFA = convertUsdPriceToXof(usd);
+async function buildPricingPreview({
+  supplierPrice,
+  supplierPriceCny,
+  supplierPriceUsd,
+  currency,
+  weight,
+  name,
+  category,
+}) {
+  const config = await getAlibabaConfig();
+  const sourcePrice = supplierPriceCny != null
+    ? toNumber(supplierPriceCny)
+    : supplierPrice != null
+      ? toNumber(supplierPrice)
+      : toNumber(supplierPriceUsd);
+  const sourceCurrency = supplierPriceCny != null ? 'CNY' : String(currency || config.sourceCurrency).toUpperCase();
+  const unitPricing = calculateAlibabaPrice({
+    sourcePrice,
+    currency: sourceCurrency,
+    category,
+    config,
+  });
+  const convertedSupplierPriceFCFA = unitPricing.convertedSupplierPrice;
   const product = {
     name,
     category,
     weight,
-    supplier: { supplierPrice: usd, supplierCurrency: 'USD', convertedSupplierPriceFCFA },
+    supplier: { supplierPrice: unitPricing.supplierPriceUsd, supplierCurrency: 'USD', convertedSupplierPriceFCFA },
     convertedSupplierPriceFCFA,
-    productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
+    productMarkupMultiplier: 1,
   };
-  const pricing = calculateImportPricing(product);
+  const shippingQuote = calculateImportPricing(product);
   const margin = calculateMargin({
-    sellingPrice: pricing.productPrice || pricing.unitPrice,
+    sellingPrice: unitPricing.salePrice,
     supplierPrice: convertedSupplierPriceFCFA,
     supplierShippingCost: 0,
     otherCosts: 0,
   });
   return {
-    supplierPriceCny: toNumber(supplierPriceCny),
-    supplierPriceUsd: usd,
+    supplierPriceCny: sourceCurrency === 'CNY' ? sourcePrice : null,
+    supplierPriceUsd: unitPricing.supplierPriceUsd,
     convertedSupplierPriceFCFA,
-    productMarkupMultiplier: pricing.productMarkupMultiplier,
-    sellingPriceXof: pricing.unitPrice,
-    packSize: pricing.packSize,
-    packPriceXof: pricing.packPrice,
-    minimumOrderQuantity: pricing.minimumOrderQuantity,
-    weightKg: pricing.weight,
-    shippingCategory: pricing.shippingCategory,
-    checkoutShippingXof: pricing.shippingCost,
-    estimatedDays: pricing.estimatedDays,
-    ratePerKg: pricing.shipping?.ratePerKg,
+    exchangeRate: unitPricing.exchangeRate,
+    marginPercent: unitPricing.marginPercent,
+    marginSource: unitPricing.marginSource,
+    additionalFeesXof: unitPricing.additionalFeesXof,
+    sellingPriceXof: unitPricing.salePrice,
+    packSize: shippingQuote.packSize,
+    packPriceXof: unitPricing.salePrice * shippingQuote.packSize,
+    minimumOrderQuantity: shippingQuote.minimumOrderQuantity,
+    weightKg: shippingQuote.weight,
+    shippingCategory: shippingQuote.shippingCategory,
+    checkoutShippingXof: shippingQuote.shippingCost,
+    estimatedDays: shippingQuote.estimatedDays,
+    ratePerKg: shippingQuote.shipping?.ratePerKg,
     estimatedProfitXof: margin.estimatedProfit,
   };
 }
@@ -90,14 +113,16 @@ function buildPricingPreview({ supplierPriceCny, supplierPriceUsd, weight, name,
 async function searchAlibabaForAdmin(params = {}) {
   const result = await searchAlibabaProducts(params);
   const imported = await mapImportedStatus((result.products || []).map((p) => p.externalProductId));
+  const products = await Promise.all((result.products || []).map(async ({ raw, skuInfos, ...p }) => ({
+    ...p,
+    supplierPriceUsd: await toUsd(p.supplierPrice, p.currency),
+    stock: p.stockKnown === true ? p.stock : null,
+    stockKnown: p.stockKnown === true,
+    sourceMinimumOrderQuantity: p.sourceMinimumOrderQuantity ?? null,
+    imported: imported[p.externalProductId] || null,
+  })));
   return {
-    products: (result.products || []).map(({ raw, skuInfos, ...p }) => ({
-      ...p,
-      supplierPriceUsd: toUsd(p.supplierPrice, p.currency),
-      // Si l'API search ne renvoie pas de stock unitaire explicite, laisser null (affiché 'Sur commande')
-      stock: (p.stock && p.stock > 0) ? p.stock : null,
-      imported: imported[p.externalProductId] || null,
-    })),
+    products,
     pagination: result.pagination,
   };
 }
@@ -105,37 +130,42 @@ async function searchAlibabaForAdmin(params = {}) {
 async function getAlibabaProductForAdmin(pid) {
   const detail = await getAlibabaProductDetail(pid);
   const existing = await findExistingAlibabaProduct(detail.externalProductId);
-  const currency = String(detail.currency || 'USD').toUpperCase();
+  const pricingConfig = await getAlibabaConfig();
+  const currency = String(detail.currency || pricingConfig.sourceCurrency).toUpperCase();
 
-  // Alibaba = fabrication sur commande : les stocks SKU ne sont pas des inventaires unitaires réels
-  // On les garde s'ils existent réellement (> 0 et pas le fallback fictif), sinon null = sur commande
-  const totalStock = (detail.stock && detail.stock !== alibabaConfig.defaultPublicStock) ? detail.stock : null;
-  const skuList = detail.skuInfos || [];
-  const hasPerSkuStock = skuList.some((s) => toNumber(s.stock, 0) > 0 && s.stock !== alibabaConfig.defaultPublicStock);
-  // Pour l'aperçu admin on garde un stock estimé uniquement si l'API en renvoie un vrai
-  const perVariantStock = hasPerSkuStock && totalStock
-    ? Math.max(1, Math.floor(totalStock / (skuList.length || 1)))
+  // Ne pas répartir le stock produit entre les SKU ni remplacer une valeur absente par un stock estimé.
+  const totalStock = detail.stockKnown === true && detail.stock !== alibabaConfig.defaultPublicStock
+    ? detail.stock
     : null;
+  const skuList = detail.skuInfos || [];
 
   const variants = skuList.map((sku, index) => {
     const variantCurrency = String(sku.currency || currency).toUpperCase();
     const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
-    const rawStock = toNumber(sku.stock ?? sku.amountOnSale ?? sku.canBookCount, 0);
-    // null = sur commande (pas de stock fixe) ; chiffre réel seulement si fourni par l'API
-    const variantStock = hasPerSkuStock ? (rawStock > 0 ? rawStock : perVariantStock) : null;
+    const rawStockValue = sku.amountOnSale ?? sku.amount_on_sale
+      ?? sku.canBookCount ?? sku.can_book_count
+      ?? sku.availableQuantity ?? sku.available_quantity
+      ?? sku.inventoryQuantity ?? sku.inventory_quantity
+      ?? sku.sku_inventory ?? sku.sku_stock
+      ?? sku.inventory ?? sku.stock ?? sku.quantity;
+    const rawStock = rawStockValue == null || rawStockValue === '' ? null : toNumber(rawStockValue, null);
     return {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
       name: sku.name || sku.skuName || sku.sku_name || `Variante ${index + 1}`,
       sku: sku.skuId || sku.sku_id || '',
       supplierPriceCny: variantCurrency === 'CNY' ? price : null,
-      supplierPriceUsd: toUsd(price, variantCurrency),
-      stock: variantStock,
+      supplierPriceUsd: variantCurrency === 'CNY' ? Number((price / pricingConfig.cnyToUsdRate).toFixed(4)) : price,
+      stock: rawStock,
+      stockKnown: rawStock !== null,
+      availability: rawStock === null ? 'UNKNOWN' : rawStock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+      status: sku.status || null,
+      raw: sku,
       image: sku.skuImageUrl || sku.image || '',
     };
   });
 
   const category = mapAlibabaCategoryToDangoStore(detail.category, detail.name);
-  const supplierPriceUsd = toUsd(detail.supplierPrice, currency);
+  const supplierPriceUsd = await toUsd(detail.supplierPrice, currency);
   const images = (detail.images && detail.images.length)
     ? detail.images
     : (detail.image ? [{ url: detail.image }] : []);
@@ -159,9 +189,11 @@ async function getAlibabaProductForAdmin(pid) {
 
   let pricingPreview = null;
   try {
-    pricingPreview = buildPricingPreview({
+    pricingPreview = await buildPricingPreview({
+      supplierPrice: detail.supplierPrice,
       supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : undefined,
       supplierPriceUsd,
+      currency,
       weight: detail.weight,
       name: detail.name,
       category,
@@ -184,8 +216,9 @@ async function getAlibabaProductForAdmin(pid) {
     supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
     supplierPriceUsd,
     currency,
-    // null = sur commande (Alibaba fabrique à la demande, pas de stock fixe)
+    // null = stock non communiqué ou non vérifié par Alibaba.
     stock: stockAnalysis.isSuspicious ? null : totalStock,
+    stockKnown: totalStock !== null && !stockAnalysis.isSuspicious,
     sourceInventory: {
       rawStock: detail.stock,
       verifiedStock: stockAnalysis.verifiedStock,
@@ -194,6 +227,7 @@ async function getAlibabaProductForAdmin(pid) {
       supplyCapacity,
     },
     minOrderQuantity: declaredMoq,
+    sourceMinimumOrderQuantity: detail.sourceMinimumOrderQuantity ?? null,
     sourcePriceTiers: priceTiers,
     dimensions,
     packageSize: dimensions.formatted || detail.packageSize || '',

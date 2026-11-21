@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../services/alibaba/alibabaMapper');
+const { DEFAULT_ALIBABA_CONFIG } = require('../services/alibaba/alibabaPricingService');
 const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
 const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
 const { buildProductPayload } = require('../utils/productPayload');
@@ -35,7 +36,7 @@ test('mapAlibabaProductToDango extracts attributes when skuName is present or ab
     ],
   };
 
-  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true, config: DEFAULT_ALIBABA_CONFIG });
 
   assert.equal(mapped.isAlibaba, true);
   assert.equal(mapped.fulfillmentPlatform, 'Alibaba');
@@ -123,6 +124,18 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   assert.equal('supplier' in publicDoc, false);
 });
 
+test('public Alibaba serialization preserves explicit unpublished status', () => {
+  const publicDoc = toPublicProduct({
+    isAlibaba: true,
+    isPublished: false,
+    publicationStatus: 'draft',
+    price: 12000,
+  });
+
+  assert.equal(publicDoc.isPublished, false);
+  assert.equal(publicDoc.publicationStatus, 'draft');
+});
+
 test('public catalog visibility blocks unpublished dropshipping products', () => {
   const hidden = {
     sourceType: 'DROPSHIPPING',
@@ -141,7 +154,7 @@ test('public catalog visibility blocks unpublished dropshipping products', () =>
     validationStatus: 'approved',
   };
 
-  const legacyPublished = {
+  const legacyPublishedButExplicitlyHidden = {
     sourceType: 'DROPSHIPPING',
     isDropshippingActive: true,
     isPublished: false,
@@ -152,7 +165,7 @@ test('public catalog visibility blocks unpublished dropshipping products', () =>
 
   assert.equal(isPubliclyVisibleProduct(hidden), false);
   assert.equal(isPubliclyVisibleProduct(visible), true);
-  assert.equal(isPubliclyVisibleProduct(legacyPublished), true);
+  assert.equal(isPubliclyVisibleProduct(legacyPublishedButExplicitlyHidden), false);
 });
 
 test('buildProductPayload ignores stock edits for Alibaba products', () => {
@@ -187,7 +200,7 @@ test('Alibaba product descriptions keep a static HTML structure', async () => {
     skuInfos: [],
   };
 
-  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true, config: DEFAULT_ALIBABA_CONFIG });
 
   assert.ok(/<p>/i.test(mapped.description));
   assert.ok(/<ul>|<li>/i.test(mapped.description));
@@ -204,7 +217,7 @@ test('Alibaba descriptions strip product-detail boilerplate and company sales co
     skuInfos: [],
   };
 
-  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true, config: DEFAULT_ALIBABA_CONFIG });
 
   assert.doesNotMatch(mapped.description, /Product Details/i);
   assert.doesNotMatch(mapped.description, /Our products were selling to 80\+ countries/i);
@@ -263,7 +276,7 @@ test('toPublicProductDetail preserves Alibaba galleryImages coming from gallery 
     pricing: { sourcePrice: 3.3 },
   };
 
-  const detail = await toPublicProductDetail(rawProduct);
+  const detail = await toPublicProductDetail(rawProduct, DEFAULT_ALIBABA_CONFIG);
 
   assert.equal(detail.sourceProductId, '600123');
   assert.equal(detail.sourceUrl, 'https://www.alibaba.com/product-detail/600123.html');
@@ -291,6 +304,35 @@ test('toPublicProductDetail preserves Alibaba galleryImages coming from gallery 
   assert.equal(emptyWeight.weight, '');
 });
 
+test('public Alibaba tier and SKU prices use the configured price service without inventing stock', async () => {
+  const config = {
+    ...DEFAULT_ALIBABA_CONFIG,
+    usdToXofRate: 500,
+    generalMarginPercent: 20,
+    enableMinimumSalePrice: false,
+    enableRounding: false,
+    additionalFeesXof: 0,
+  };
+  const detail = await toPublicProductDetail({
+    name: 'Produit avec SKU',
+    isAlibaba: true,
+    sourceProductId: '600124',
+    price: 6000,
+    sourcePriceTiers: [{ minQty: 1, price: 10, currency: 'USD' }],
+    rawPayload: {
+      result_data: {
+        skus: [{ sku_id: 'sku-1', price: 10, currency: 'USD', sku_attr_list: [] }],
+      },
+    },
+  }, config);
+
+  assert.equal(detail.price, 6000);
+  assert.equal(detail.publicPriceTiers[0].unitPrice, 6000);
+  assert.equal(detail.variants[0].price, 6000);
+  assert.equal(detail.variants[0].stock, null);
+  assert.equal(detail.variants[0].availability, 'UNKNOWN');
+});
+
 test('Alibaba weight is recovered from real nested shipment metadata for logistics', async () => {
   const mockDetail = {
     offerId: '600111222333',
@@ -307,7 +349,7 @@ test('Alibaba weight is recovered from real nested shipment metadata for logisti
     skuInfos: [],
   };
 
-  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true });
+  const mapped = await mapAlibabaProductToDango(mockDetail, mockDetail, { skipTranslation: true, config: DEFAULT_ALIBABA_CONFIG });
 
   assert.equal(mapped.weight, '2.75');
 });

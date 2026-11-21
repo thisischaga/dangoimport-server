@@ -2,53 +2,30 @@ const express = require('express');
 const mongoose = require('mongoose');
 const AlibabaProduct = require('../Models/AlibabaProduct');
 const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
+const verifyToken = require('../Middlewares/verifyTokens');
+const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
 
 const router = express.Router();
-
-// ─────────────────────────────────────────────
-// Migration au démarrage : publier automatiquement TOUS les produits Alibaba
-// qui ne sont pas en erreur (sans bloquer le démarrage du serveur)
-// ─────────────────────────────────────────────
-(async () => {
-  try {
-    const result = await AlibabaProduct.updateMany(
-      {},
-      {
-        $set: {
-          isPublished: true,
-          publicationStatus: 'published',
-        },
-      },
-    );
-    await AlibabaProduct.updateMany(
-      { status: { $in: ['ERROR', 'SYNC_ERROR'] } },
-      { $set: { status: 'SYNCED' } },
-    );
-    if (result.modifiedCount > 0) {
-      console.log(`[productRoutes] Migration: ${result.modifiedCount} produit(s) Alibaba publiés automatiquement.`);
-    }
-  } catch (err) {
-    console.error('[productRoutes] Migration isPublished error:', err.message);
-  }
-})();
 
 function escapeRegExp(string) {
   return String(string || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isPubliclyVisibleProduct(product) {
+  return Boolean(product)
+    && product.isPublished !== false
+    && product.isDropshippingActive !== false;
+}
+
 /**
  * Filtre de base pour les produits publics Alibaba :
- * Par défaut (aucun paramètre), retourne TOUS les produits ({}) pour affichage direct sur la boutique.
+ * La visibilité choisie par l'administration est la source de vérité.
  */
 function getPublicCatalogFilter(query = {}) {
-  const conditions = [];
-
-  // Exclure seulement les produits explicitement dépubliés si demandé
-  if (query.published === 'false') {
-    conditions.push({ isPublished: false });
-  } else if (query.published === 'true') {
-    conditions.push({ isPublished: true });
-  }
+  const conditions = [
+    { isPublished: { $ne: false } },
+    { isDropshippingActive: { $ne: false } },
+  ];
 
   // Filtre par catégorie
   if (query.category && String(query.category).trim() !== '' && query.category !== 'all') {
@@ -140,12 +117,6 @@ router.get('/', async (req, res) => {
         .lean(),
     ]);
 
-    // Auto-publication continue : s'assurer que les produits Alibaba sont visibles
-    AlibabaProduct.updateMany(
-      { isPublished: { $ne: true } },
-      { $set: { isPublished: true, publicationStatus: 'published' } }
-    ).catch(() => {});
-
     const products = rawProducts.map((doc) => {
       try {
         const pub = toPublicProduct(doc);
@@ -154,7 +125,7 @@ router.get('/', async (req, res) => {
         console.error('[productRoutes] Error formatting doc:', err);
         return doc;
       }
-    }).filter(Boolean);
+    }).filter(isPubliclyVisibleProduct);
     return res.json({
       success: true,
       count: products.length,
@@ -188,7 +159,7 @@ router.get('/featured', async (req, res) => {
       .limit(limit)
       .lean();
 
-    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(Boolean);
+    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,
@@ -255,6 +226,8 @@ router.get('/similar/:id', async (req, res) => {
       _id: { $ne: target._id },
       category: category ? new RegExp(`^${escapeRegExp(category)}$`, 'i') : { $exists: true },
       status: { $ne: 'ERROR' },
+      isPublished: { $ne: false },
+      isDropshippingActive: { $ne: false },
     };
 
     const rawSimilar = await AlibabaProduct.find(filter)
@@ -262,7 +235,7 @@ router.get('/similar/:id', async (req, res) => {
       .limit(8)
       .lean();
 
-    const similar = rawSimilar.map((doc) => toPublicProduct(doc)).filter(Boolean);
+    const similar = rawSimilar.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,
@@ -294,6 +267,8 @@ router.get('/vendor/:vendorName', async (req, res) => {
         { 'pricing.raw.supplier': regex },
       ],
       status: { $ne: 'ERROR' },
+      isPublished: { $ne: false },
+      isDropshippingActive: { $ne: false },
     };
 
     const rawProducts = await AlibabaProduct.find(filter)
@@ -301,7 +276,7 @@ router.get('/vendor/:vendorName', async (req, res) => {
       .limit(50)
       .lean();
 
-    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(Boolean);
+    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,
@@ -324,6 +299,8 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const slug = String(req.params.slug || '').trim();
     const product = await AlibabaProduct.findOne({
+      isPublished: { $ne: false },
+      isDropshippingActive: { $ne: false },
       $or: [
         { slug },
         { 'normalized.slug': slug },
@@ -332,7 +309,7 @@ router.get('/slug/:slug', async (req, res) => {
       ],
     }).lean();
 
-    if (!product) {
+    if (!isPubliclyVisibleProduct(product)) {
       return res.status(404).json({
         success: false,
         message: 'Produit introuvable.',
@@ -374,7 +351,7 @@ router.get('/:id/reviews', async (req, res) => {
 // ─────────────────────────────────────────────
 // 8. PATCH /api/products/:id/visibility : Gestion publication et visibilité
 // ─────────────────────────────────────────────
-router.patch('/:id/visibility', async (req, res) => {
+router.patch('/:id/visibility', verifyToken, requireAdminFromDb, async (req, res) => {
   try {
     const rawId = String(req.params.id || '').trim();
     const query = mongoose.Types.ObjectId.isValid(rawId)
@@ -383,14 +360,36 @@ router.patch('/:id/visibility', async (req, res) => {
 
     const update = {};
     if (req.body.isPublished !== undefined) {
+      if (typeof req.body.isPublished !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'isPublished doit être un booléen.' });
+      }
       update.isPublished = Boolean(req.body.isPublished);
       update.publicationStatus = req.body.isPublished ? 'published' : 'draft';
+    }
+    if (req.body.isActive !== undefined) {
+      if (typeof req.body.isActive !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'isActive doit être un booléen.' });
+      }
+      update.isDropshippingActive = req.body.isActive;
     }
     if (req.body.status !== undefined) {
       update.status = String(req.body.status).toUpperCase();
     }
 
-    const updated = await AlibabaProduct.findOneAndUpdate(query, { $set: update }, { new: true }).lean();
+    const updated = await AlibabaProduct.findOneAndUpdate(query, {
+      $set: update,
+      $push: {
+        adminHistory: {
+          $each: [{
+            changedAt: new Date(),
+            changedBy: req.admin?.adminName || req.user?.userEmail || 'admin',
+            changedFields: Object.keys(update),
+            action: 'visibility',
+          }],
+          $slice: -100,
+        },
+      },
+    }, { new: true }).lean();
     if (!updated) {
       return res.status(404).json({ success: false, message: 'Produit Alibaba introuvable.' });
     }
@@ -432,7 +431,7 @@ router.get('/:id', async (req, res) => {
     }
 
     // 2. Recherche par tous les identifiants possibles (sourceProductId, externalProductId, slug, etc.)
-    if (!product) {
+    if (!product || product.isPublished === false || product.isDropshippingActive === false) {
       const orConditions = [
         { sourceProductId: rawId },
         { sourceProductId: cleanId },
@@ -457,7 +456,7 @@ router.get('/:id', async (req, res) => {
       product = await AlibabaProduct.findOne({ $or: orConditions }).lean();
     }
 
-    if (!product) {
+    if (!isPubliclyVisibleProduct(product)) {
       console.warn(`[productRoutes] GET /api/products/${rawId} : Produit introuvable.`);
       return res.status(404).json({
         success: false,
@@ -489,3 +488,4 @@ router.get('/:id', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.isPubliclyVisibleProduct = isPubliclyVisibleProduct;

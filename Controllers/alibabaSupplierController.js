@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const AlibabaProduct = require('../Models/AlibabaProduct');
+const AlibabaConfig = require('../Models/AlibabaConfig');
 const { alibabaConfig } = require('../config/alibaba');
 const { testConnection, alibabaCall } = require('../services/alibaba/alibabaClient');
 const {
@@ -18,6 +19,17 @@ const {
   buildPricingPreview,
 } = require('../services/alibaba/alibabaExplorerService');
 const { getAlibabaRawProduct } = require('../services/alibaba/alibabaProductService');
+const {
+  getAlibabaConfig,
+  updateAlibabaConfig,
+  repriceAlibabaCatalog,
+  calculateAlibabaPrice,
+  calculateAlibabaVolumeCm3,
+} = require('../services/alibaba/alibabaPricingService');
+const {
+  getAlibabaFreightConfig,
+  updateAlibabaFreightConfig,
+} = require('../services/alibaba/alibabaFreightService');
 const {
   upsertAlibabaProduct,
   validateProductQualityForPublication,
@@ -95,8 +107,8 @@ function mapAlibabaProductForAdmin(doc) {
     product.normalized?.pricing?.sellingPrice
     ?? product.normalized?.pricing?.price
     ?? product.normalized?.price
+    ?? product.pricing?.calculation?.salePrice
     ?? product.price
-    ?? product.pricing?.sourcePrice
     ?? 0,
   );
 
@@ -121,7 +133,7 @@ function mapAlibabaProductForAdmin(doc) {
     shortDescription: product.shortDescription || String(rawDescription || '').slice(0, 220),
     category: product.category || product.normalized?.category || '',
     brand: product.brand || product.normalized?.brand || '',
-    price: sellingPrice > 0 ? sellingPrice : Number(product.pricing?.sourcePrice || 0),
+    price: sellingPrice > 0 ? sellingPrice : Number(product.price || 0),
     image: primaryImage,
     images: galleryImages,
     specifications,
@@ -134,14 +146,83 @@ function mapAlibabaProductForAdmin(doc) {
     },
     importStatus: product.status === 'ERROR' ? 'SYNC_ERROR' : product.status || 'IMPORTED',
     isPublished: Boolean(product.isPublished),
+    isDropshippingActive: product.isDropshippingActive !== false,
     importWarnings: Array.isArray(product.importWarnings) ? product.importWarnings : [],
     importErrors: Array.isArray(product.importErrors) ? product.importErrors : [],
     sourcePriceTiers,
+    priceBreakdown: product.pricing?.calculation || null,
     rawAlibabaData: rawPayload,
     externalSourceKey: `alibaba:${product.sourceProductId || product.externalProductId || product._id}`,
     lastSyncedAt: product.lastSyncedAt || product.updatedAt || new Date(),
   };
 }
+
+exports.getConfig = async (_req, res) => {
+  try {
+    const config = await getAlibabaConfig({ forceRefresh: true });
+    const history = await AlibabaConfig.findOne({ key: 'default' }).select('updatedBy updatedAt changeHistory').lean();
+    return res.json({
+      success: true,
+      config: {
+        ...config,
+        updatedBy: history?.updatedBy || '',
+        updatedAt: history?.updatedAt || null,
+        changeHistory: history?.changeHistory || [],
+      },
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.updateConfig = async (req, res) => {
+  try {
+    const result = await updateAlibabaConfig(req.body?.config || req.body || {}, adminId(req));
+    let repricing;
+    try {
+      repricing = await repriceAlibabaCatalog(result.config, adminId(req));
+    } catch (error) {
+      console.error('[alibaba] catalog repricing failed after config update:', error.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Configuration enregistrée, mais le recalcul du catalogue a échoué. Contactez le support avant de republier les produits.',
+      });
+    }
+    return res.json({
+      success: true,
+      message: 'Configuration Alibaba enregistrée.',
+      config: result.config,
+      changedFields: result.changedFields,
+      repricedProducts: repricing.updated,
+      skippedProducts: repricing.skipped,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.getFreightConfig = async (_req, res) => {
+  try {
+    const config = await getAlibabaFreightConfig({ forceRefresh: true });
+    return res.json({ success: true, config });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.updateFreightConfig = async (req, res) => {
+  try {
+    const result = await updateAlibabaFreightConfig(req.body?.config || req.body || {}, adminId(req));
+    return res.json({
+      success: true,
+      message: 'Paramètres de transport InterCargo enregistrés.',
+      config: result.config,
+      changedFields: result.changedFields,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
 
 exports.status = async (_req, res) => {
   try {
@@ -283,9 +364,11 @@ exports.getProductImportStatus = async (req, res) => {
 
 exports.previewProductPricing = async (req, res) => {
   try {
-    const data = buildPricingPreview({
-      supplierPriceCny: req.body?.supplierPriceCny ?? req.body?.supplierPrice,
+    const data = await buildPricingPreview({
+      supplierPrice: req.body?.supplierPrice,
+      supplierPriceCny: req.body?.supplierPriceCny,
       supplierPriceUsd: req.body?.supplierPriceUsd,
+      currency: req.body?.currency,
       weight: req.body?.weight,
       name: req.body?.name,
       category: req.body?.category,
@@ -362,35 +445,36 @@ exports.getImportedProducts = async (req, res) => {
     const status = String(req.query.status || 'all').toLowerCase();
     const sort = String(req.query.sort || 'recent');
 
-    const baseFilter = {
+    const sourceFilter = {
       $or: [
         { source: 'ALIBABA' },
         { source: 'alibaba' },
         { isAlibaba: true },
-        { sourceProductId: { $exists: true } },
       ],
     };
+    const filters = [sourceFilter];
 
     if (search) {
-      baseFilter.$or = [
+      filters.push({ $or: [
         { name: { $regex: search, $options: 'i' } },
         { sourceProductId: { $regex: search, $options: 'i' } },
         { category: { $regex: search, $options: 'i' } },
         { brand: { $regex: search, $options: 'i' } },
-      ];
+      ] });
     }
 
     if (status === 'published') {
-      baseFilter.isPublished = true;
+      filters.push({ isPublished: true });
     } else if (status === 'draft') {
-      baseFilter.isPublished = false;
+      filters.push({ isPublished: false });
     } else if (status === 'to_verify') {
-      baseFilter.status = 'IMPORTED';
+      filters.push({ status: 'IMPORTED' });
     } else if (status === 'ready_to_publish') {
-      baseFilter.status = 'IMPORTED';
+      filters.push({ status: 'IMPORTED' });
     } else if (status === 'sync_error') {
-      baseFilter.status = 'ERROR';
+      filters.push({ status: 'ERROR' });
     }
+    const baseFilter = { $and: filters };
 
     let sortOptions = { updatedAt: -1 };
     if (sort === 'oldest') sortOptions = { createdAt: 1 };
@@ -408,12 +492,7 @@ exports.getImportedProducts = async (req, res) => {
       AlibabaProduct.aggregate([
         {
           $match: {
-            $or: [
-              { source: 'ALIBABA' },
-              { source: 'alibaba' },
-              { isAlibaba: true },
-              { sourceProductId: { $exists: true } },
-            ],
+            ...sourceFilter,
           },
         },
         {
@@ -464,7 +543,7 @@ exports.getImportedProductById = async (req, res) => {
         ],
       }).lean();
     }
-    if (!product) {
+    if (!product || !(product.isAlibaba || String(product.source || '').toUpperCase() === 'ALIBABA')) {
       return res.status(404).json({ success: false, message: 'Produit Alibaba importé introuvable.' });
     }
 
@@ -528,33 +607,97 @@ exports.updateCommercialData = async (req, res) => {
     const id = req.params.id;
     const product = await AlibabaProduct.findById(id);
 
-    if (!product) {
+    if (!product || !(product.isAlibaba || String(product.source || '').toUpperCase() === 'ALIBABA')) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
 
-    const allowed = ['name', 'description', 'shortDescription', 'category', 'subCategory', 'price', 'marginPercent', 'shippingInfo', 'brand', 'weight', 'minimumOrderQuantity', 'quantityIncrement'];
+    const changedFields = [];
+    const allowed = ['name', 'description', 'shortDescription', 'category', 'subCategory', 'shippingInfo', 'brand', 'weight', 'minimumOrderQuantity', 'quantityIncrement'];
     allowed.forEach((field) => {
       if (req.body[field] !== undefined) {
         product[field] = req.body[field];
+        changedFields.push(field);
       }
     });
 
-    if (req.body.name !== undefined) product.name = req.body.name;
-    if (req.body.description !== undefined) product.description = req.body.description;
-    if (req.body.category !== undefined) product.category = req.body.category;
-    if (req.body.brand !== undefined) product.brand = req.body.brand;
     if (req.body.price !== undefined) {
-      product.normalized = {
-        ...(product.normalized || {}),
-        pricing: {
-          ...(product.normalized?.pricing || {}),
-          sellingPrice: Number(req.body.price),
-        },
-      };
+      const price = Number(req.body.price);
+      if (!Number.isFinite(price) || price <= 0) {
+        return res.status(400).json({ success: false, message: 'Le prix manuel doit être supérieur à zéro.' });
+      }
+      product.pricing.manualSalePrice = price;
+      changedFields.push('price');
+    }
+    if (req.body.clearManualPrice === true) {
+      product.pricing.manualSalePrice = null;
+      changedFields.push('price');
+    }
+    if (req.body.marginPercent !== undefined) {
+      const margin = req.body.marginPercent === null || req.body.marginPercent === ''
+        ? null
+        : Number(req.body.marginPercent);
+      if (margin !== null && (!Number.isFinite(margin) || margin < 0 || margin > 500)) {
+        return res.status(400).json({ success: false, message: 'La marge produit doit être comprise entre 0 et 500 %.' });
+      }
+      product.pricing.marginPercentOverride = margin;
+      changedFields.push('marginPercent');
+    }
+
+    const logisticsFields = [
+      'weight', 'weightUnit', 'netWeight', 'grossWeight',
+      'packageLength', 'packageWidth', 'packageHeight', 'dimensionUnit',
+      'airCategory', 'seaCategory', 'localDeliveryProfile', 'fragile',
+      'hollowOrBulky', 'allowedTransportModes', 'volumeCm3', 'volumetricEnabled',
+    ];
+    if (req.body.logistics && typeof req.body.logistics === 'object') {
+      product.logistics = product.logistics || {};
+      for (const field of logisticsFields) {
+        if (req.body.logistics[field] === undefined) continue;
+        const value = req.body.logistics[field];
+        if (['weight', 'netWeight', 'grossWeight', 'packageLength', 'packageWidth', 'packageHeight', 'volumeCm3'].includes(field)
+          && value !== null && value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+          return res.status(400).json({ success: false, message: `Valeur logistique invalide : ${field}.` });
+        }
+        if (field === 'allowedTransportModes'
+          && (!Array.isArray(value) || value.some((mode) => !['air', 'sea'].includes(mode)))) {
+          return res.status(400).json({ success: false, message: 'Modes de transport invalides.' });
+        }
+        if (['fragile', 'hollowOrBulky'].includes(field) && typeof value !== 'boolean') {
+          return res.status(400).json({ success: false, message: `${field} doit être un booléen.` });
+        }
+        if (field === 'volumetricEnabled' && value !== null && value !== '' && typeof value !== 'boolean') {
+          return res.status(400).json({ success: false, message: 'volumetricEnabled doit être vrai, faux ou hérité.' });
+        }
+        product.logistics[field] = value === '' ? null : value;
+        changedFields.push(`logistics.${field}`);
+      }
+      const dims = product.logistics;
+      if (['packageLength', 'packageWidth', 'packageHeight', 'dimensionUnit'].some((key) => req.body.logistics[key] !== undefined)) {
+        dims.volumeCm3 = dims.packageLength > 0 && dims.packageWidth > 0 && dims.packageHeight > 0 && dims.dimensionUnit
+          ? calculateAlibabaVolumeCm3({
+            length: dims.packageLength,
+            width: dims.packageWidth,
+            height: dims.packageHeight,
+            unit: dims.dimensionUnit,
+          })
+          : null;
+        if (!changedFields.includes('logistics.volumeCm3')) changedFields.push('logistics.volumeCm3');
+      }
     }
     if (req.body.isPublished !== undefined) {
+      if (typeof req.body.isPublished !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'isPublished doit être un booléen.' });
+      }
       product.isPublished = Boolean(req.body.isPublished);
-      product.status = req.body.isPublished ? 'IMPORTED' : 'RAW';
+      product.publicationStatus = req.body.isPublished ? 'published' : 'draft';
+      changedFields.push('isPublished');
+    }
+    if (req.body.isActive !== undefined) {
+      if (typeof req.body.isActive !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'isActive doit être un booléen.' });
+      }
+      product.isDropshippingActive = req.body.isActive;
+      changedFields.push('isActive');
     }
 
     if (req.body.isPublished !== undefined) {
@@ -569,13 +712,59 @@ exports.updateCommercialData = async (req, res) => {
           });
         }
         product.isPublished = true;
-        product.status = 'IMPORTED';
+        product.publicationStatus = 'published';
       } else {
         product.isPublished = false;
-        product.status = 'RAW';
+        product.publicationStatus = 'draft';
       }
     }
 
+    const sourcePrice = product.pricing?.sourcePrice
+      ?? product.supplier?.supplierPrice
+      ?? product.normalized?.pricing?.sourcePrice;
+    if (sourcePrice != null && Number(sourcePrice) > 0) {
+      const pricing = calculateAlibabaPrice({
+        sourcePrice,
+        currency: product.pricing?.currency || product.supplier?.supplierCurrency || 'USD',
+        category: product.category,
+        productMarginPercent: product.pricing?.marginPercentOverride,
+        manualSalePrice: product.pricing?.manualSalePrice,
+        config: await getAlibabaConfig(),
+      });
+      product.price = pricing.salePrice;
+      product.costPrice = pricing.convertedSupplierPrice;
+      product.convertedSupplierPriceFCFA = pricing.convertedSupplierPrice;
+      product.marginPercent = pricing.marginPercent;
+      product.pricing.calculation = {
+        exchangeRate: pricing.exchangeRate,
+        convertedSupplierPrice: pricing.convertedSupplierPrice,
+        marginPercent: pricing.marginPercent,
+        marginSource: pricing.marginSource,
+        additionalFeesXof: pricing.additionalFeesXof,
+        salePrice: pricing.salePrice,
+        saleCurrency: pricing.saleCurrency,
+        calculatedAt: new Date(),
+      };
+      product.normalized = {
+        ...(product.normalized || {}),
+        pricing: {
+          ...(product.normalized?.pricing || {}),
+          sellingPrice: pricing.salePrice,
+          calculation: product.pricing.calculation,
+        },
+      };
+    } else if (req.body.price !== undefined) {
+      return res.status(422).json({ success: false, message: 'Prix fournisseur Alibaba absent : le prix de vente ne peut pas être recalculé.' });
+    }
+
+    if (changedFields.length) {
+      product.adminHistory = [...(product.adminHistory || []), {
+        changedAt: new Date(),
+        changedBy: adminId(req),
+        changedFields: [...new Set(changedFields)],
+        action: 'update',
+      }].slice(-100);
+    }
     product.updatedAt = new Date();
     await product.save();
     const responseProduct = product && typeof product.toObject === 'function' ? product.toObject() : product;
@@ -593,7 +782,7 @@ exports.syncImportedProduct = async (req, res) => {
   try {
     const id = req.params.id;
     const product = await AlibabaProduct.findById(id);
-    if (!product) {
+    if (!product || !(product.isAlibaba || String(product.source || '').toUpperCase() === 'ALIBABA')) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
     const pid = product.sourceProductId || product.externalProductId || product.supplier?.productId;

@@ -320,6 +320,14 @@ function assertBuyerResult(payload) {
   throw applyAlibabaError(err);
 }
 
+function hasKnownStockValue(value) {
+  return value !== null
+    && value !== undefined
+    && value !== ''
+    && Number.isFinite(Number(value))
+    && Number(value) >= 0;
+}
+
 function flattenBuyerProduct(item = {}, fallbackId = '') {
   if (!item || typeof item !== 'object') return { productId: fallbackId };
   // /eco/buyer/product/description place les données dans result_data directement
@@ -339,6 +347,11 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
   const firstSkuLadderPrice = rdSkus.length && Array.isArray(rdSkus[0].ladder_price) ? rdSkus[0].ladder_price : null;
   const priceRaw = trade.price || wholesaleTrade?.price || wholesaleTrade?.unit_price
     || rd.price || rd.unit_price || firstSkuLadderPrice || item.price || item.unit_price;
+  const stockRaw = rd.amount_on_sale ?? rd.amountOnSale ?? rd.can_book_count ?? rd.canBookCount
+    ?? rd.available_quantity ?? rd.availableQuantity ?? rd.inventory ?? rd.stock
+    ?? trade.amount_on_sale ?? trade.can_book_count ?? trade.stock ?? trade.inventory
+    ?? wholesaleTrade?.amount_on_sale ?? wholesaleTrade?.can_book_count ?? wholesaleTrade?.available_quantity ?? wholesaleTrade?.stock ?? wholesaleTrade?.inventory
+    ?? item.amount_on_sale ?? item.amountOnSale ?? item.can_book_count ?? item.canBookCount ?? item.stock ?? item.inventory;
   // MOQ : min_order_quantity de result_data ou wholesale_trade
   const moq = trade.moq || trade.min_order_quantity
     || rd.min_order_quantity || wholesaleTrade?.moq || wholesaleTrade?.min_order_quantity
@@ -358,14 +371,9 @@ function flattenBuyerProduct(item = {}, fallbackId = '') {
     price: pickPrice(priceRaw) || pickPrice(item.price) || pickPrice(item.unit_price),
     currency: pickCurrency({ ...item, ...rd, price: trade.price || rd.price || item.price }),
     minOrderQuantity: moq,
-    stock: toNumber(
-      rd.amount_on_sale ?? rd.amountOnSale ?? rd.can_book_count ?? rd.canBookCount
-      ?? rd.available_quantity ?? rd.availableQuantity ?? rd.inventory ?? rd.stock
-      ?? trade.amount_on_sale ?? trade.can_book_count ?? trade.stock ?? trade.inventory
-      ?? wholesaleTrade?.amount_on_sale ?? wholesaleTrade?.can_book_count ?? wholesaleTrade?.available_quantity ?? wholesaleTrade?.stock ?? wholesaleTrade?.inventory
-      ?? item.amount_on_sale ?? item.amountOnSale ?? item.can_book_count ?? item.canBookCount ?? item.stock ?? item.inventory,
-      0,
-    ),
+    sourceMinimumOrderQuantity: moq ?? null,
+    stock: toNumber(stockRaw, 0),
+    stockKnown: hasKnownStockValue(stockRaw),
     description: rd.description || basic.description || rd.subject || rd.title
       || item.description || item.subject || item.title,
     productUrl: rd.detail_url || rd.permalink || rd.detailUrl || rd.productUrl
@@ -405,6 +413,12 @@ function mapSearchItem(item = {}) {
     || item.name
     || basic.product_name
     || (id ? `Produit Alibaba ${id}` : 'Produit Alibaba');
+  const stockRaw = item.amountOnSale ?? item.quantity ?? item.stock ?? item.inventory
+    ?? item.available_quantity ?? trade.stock ?? item.product_info?.trade_info?.stock;
+  const sourceMinimumOrderQuantity = item.minOrderQuantity
+    ?? item.moq_and_price?.min_order_quantity
+    ?? item.quantityBegin
+    ?? null;
   return {
     externalProductId: id,
     name: title,
@@ -419,12 +433,10 @@ function mapSearchItem(item = {}) {
       || pickPrice(item.unit_price)
       || pickPrice(item.price),
     currency: pickCurrency({ ...item, price: priceNode }),
-    stock: toNumber(
-      item.amountOnSale ?? item.quantity ?? item.stock ?? item.inventory
-      ?? item.available_quantity ?? trade.stock ?? item.product_info?.trade_info?.stock,
-      0,
-    ),
+    stock: toNumber(stockRaw, 0),
+    stockKnown: hasKnownStockValue(stockRaw),
     minOrderQuantity: toNumber(item.minOrderQuantity ?? item.moq_and_price?.min_order_quantity ?? item.quantityBegin, 1),
+    sourceMinimumOrderQuantity,
     category: item.leaf_category_name || item.top_category_name || item.categoryName || item.categoryId || '',
     productUrl: item.permalink || item.detail_url || item.detailUrl || item.productUrl || (id ? `https://www.alibaba.com/product-detail/${id}.html` : ''),
     raw: item,
@@ -724,9 +736,16 @@ function mergeCatalogProduct(primary, secondary) {
     images,
     supplierPrice,
     currency: primaryPrice ? primary.currency : (secondary.currency || primary.currency),
-    // Alibaba = sur commande, pas de stock fixe : 0 si aucune API ne retourne de stock réel
-    stock: toNumber(primary.stock, 0) || toNumber(secondary.stock, 0) || 0,
+    stock: primary.stockKnown === true
+      ? primary.stock
+      : secondary.stockKnown === true
+        ? secondary.stock
+        : 0,
+    stockKnown: primary.stockKnown === true || secondary.stockKnown === true,
     minOrderQuantity: toNumber(primary.minOrderQuantity, 0) || toNumber(secondary.minOrderQuantity, 1) || 1,
+    sourceMinimumOrderQuantity: primary.sourceMinimumOrderQuantity
+      ?? secondary.sourceMinimumOrderQuantity
+      ?? null,
     description: (!primary.description || primary.description === primary.name)
       ? (secondary.description || primary.description || '')
       : primary.description,
@@ -1110,29 +1129,31 @@ async function getAlibabaProductDetail(productId) {
   const baseFromCheckAndGet = mergeCatalogProduct(fromCheck, fromGet);
 
   // Unpack inventory data & SKU variants
-  const invStock = toNumber(
-    inv?.amount_on_sale ?? inv?.amountOnSale ?? inv?.can_book_count ?? inv?.canBookCount
-    ?? inv?.available_quantity ?? inv?.inventory ?? inv?.stock ?? inv?.total_stock ?? inv?.total_inventory,
-    0,
-  );
+  const invStockValue = inv?.amount_on_sale ?? inv?.amountOnSale ?? inv?.can_book_count ?? inv?.canBookCount
+    ?? inv?.available_quantity ?? inv?.inventory ?? inv?.stock ?? inv?.total_stock ?? inv?.total_inventory;
+  const invStockKnown = hasKnownStockValue(invStockValue);
+  const invStock = toNumber(invStockValue, 0);
   const invSkus = parseJsonValue(inv?.sku_list ?? inv?.sku_inventory ?? inv?.sku_infos ?? inv?.skus ?? inv?.productSkuInfos);
   const rawSkuList = Array.isArray(invSkus) ? invSkus : (fromGet?.skuInfos || []);
 
-  const extractSkuStock = (s) => toNumber(
-    s?.amount_on_sale ?? s?.amountOnSale ?? s?.can_book_count ?? s?.canBookCount
-    ?? s?.available_quantity ?? s?.availableQuantity ?? s?.inventory_quantity
-    ?? s?.stock ?? s?.inventory ?? s?.quantity,
-    0,
-  );
+  const extractSkuStock = (s) => {
+    const stockValue = s?.amount_on_sale ?? s?.amountOnSale ?? s?.can_book_count ?? s?.canBookCount
+      ?? s?.available_quantity ?? s?.availableQuantity ?? s?.inventory_quantity
+      ?? s?.stock ?? s?.inventory ?? s?.quantity;
+    return stockValue == null || stockValue === '' ? null : toNumber(stockValue, null);
+  };
 
-  const productTotalStock = toNumber(
-    invStock || fromGet?.stock || fromSearch?.stock,
-    0,
-  );
-  const hasIndividualStock = rawSkuList.some((s) => extractSkuStock(s) > 0);
-  // Alibaba = sur commande : 0 si aucun stock réel fourni par l'API (ne pas inventer 50)
-  const targetStock = productTotalStock > 0 ? productTotalStock : 0;
-  const fallbackPerSku = targetStock > 0 ? Math.max(1, Math.floor(targetStock / (rawSkuList.length || 1))) : 0;
+  const fromGetStockKnown = fromGet?.stockKnown === true;
+  const fromSearchStockKnown = fromSearch?.stockKnown === true;
+  const hasProductStock = invStockKnown || fromGetStockKnown || fromSearchStockKnown;
+  const productTotalStock = invStockKnown
+    ? invStock
+    : fromGetStockKnown
+      ? toNumber(fromGet.stock, 0)
+      : fromSearchStockKnown
+        ? toNumber(fromSearch.stock, 0)
+        : 0;
+  const hasIndividualStock = rawSkuList.some((sku) => extractSkuStock(sku) !== null);
 
   const skuInfos = rawSkuList.map((sku, index) => {
     // Nom du SKU : construit depuis sku_attr_list (format result_data.skus) ou nom direct
@@ -1166,14 +1187,12 @@ async function getAlibabaProductDetail(productId) {
     // Devise : depuis ladder_price[0].currency ou sku.currency
     const skuCurrency = (ladderPrice?.[0]?.currency) || sku.currency || 'USD';
     const rawStock = extractSkuStock(sku);
-    const skuStock = hasIndividualStock
-      ? (rawStock > 0 ? rawStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
-      : 0;
     return {
       skuId: String(sku.skuId || sku.sku_id || sku.specId || sku.id || index),
       name: skuName,
       price: skuPrice,
-      stock: skuStock,
+      stock: rawStock,
+      stockKnown: rawStock !== null,
       image: asImageUrl(sku.skuImageUrl || sku.imageUrl || sku.image || sku.pic_url || ''),
       currency: skuCurrency,
       // Préserver les données originales pour le mapper de variantes en aval
@@ -1184,9 +1203,12 @@ async function getAlibabaProductDetail(productId) {
     };
   });
 
-  const finalStock = hasIndividualStock
-    ? skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0)
-    : productTotalStock;
+  const finalStock = hasProductStock
+    ? productTotalStock
+    : hasIndividualStock
+      ? skuInfos.reduce((acc, s) => acc + (s.stock || 0), 0)
+      : 0;
+  const finalStockKnown = hasProductStock || hasIndividualStock;
 
   // Key attributes
   const keyTitle = keyAttrs?.title || keyAttrs?.subject || keyAttrs?.product_name || keyAttrs?.product_title;
@@ -1267,7 +1289,11 @@ async function getAlibabaProductDetail(productId) {
     supplierPrice: price,
     currency: fromSearch?.currency || fromGet?.currency || 'USD',
     stock: finalStock,
+    stockKnown: finalStockKnown,
     minOrderQuantity: fromSearch?.minOrderQuantity || fromGet?.minOrderQuantity || 1,
+    sourceMinimumOrderQuantity: fromSearch?.sourceMinimumOrderQuantity
+      ?? fromGet?.sourceMinimumOrderQuantity
+      ?? null,
     skuInfos,
     specifications,
     productUrl: fromSearch?.productUrl || fromGet?.productUrl || `https://www.alibaba.com/product-detail/${id}.html`,

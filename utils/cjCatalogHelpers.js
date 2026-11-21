@@ -516,18 +516,31 @@ function resolveDropshipSellableStock(product = {}) {
   const supplier = product.supplier || {};
   const isAlibaba = Boolean(
     product.isAlibaba === true ||
+    String(product.source || '').toUpperCase() === 'ALIBABA' ||
     product.importSourceType === 'ALIBABA_API' ||
     supplier.platform === 'alibaba' ||
     /^alibaba:/i.test(String(product.externalSourceKey || ''))
   );
   if (isAlibaba) {
-    const rawStock = toNumber(
-      product.stock
-      ?? product.inventory?.quantityRaw
-      ?? product.inventory?.raw?.[0]?.inventory_list?.[0]?.inventory_count,
-      9999
-    );
-    return rawStock > 0 ? rawStock : 9999;
+    const knownVariantStocks = Array.isArray(product.variants)
+      ? product.variants
+        .filter((variant) => (
+          variant.stockKnown === true
+          || variant.sourceStockVerified === true
+          || toNumber(variant.stock, 0) > 0
+        ))
+        .map((variant) => toNumber(variant.sourceStock ?? variant.stock, 0))
+      : [];
+    if (knownVariantStocks.length > 0) {
+      return Math.max(0, Math.round(knownVariantStocks.reduce((sum, stock) => sum + stock, 0)));
+    }
+
+    const rawStock = product.inventory?.quantityRaw
+      ?? product.inventory?.raw?.[0]?.inventory_list?.[0]?.inventory_count
+      ?? product.stock;
+    return rawStock == null || rawStock === ''
+      ? 0
+      : Math.max(0, Math.round(toNumber(rawStock, 0)));
   }
 
   let stock = toNumber(product.stock, 0);
@@ -661,7 +674,15 @@ function prepareDropshippingProductForPublic(product = {}) {
   doc = attachPublicFulfillmentFields(doc, product);
   doc.stock = resolveDropshipSellableStock({ ...product, variants: doc.variants ?? product.variants });
   if (Array.isArray(doc.variants) && doc.variants.length) {
-    doc.variants = sanitizePublicVariants(normalizePublicVariantStocks(doc.variants, doc.stock));
+    const isAlibaba = Boolean(
+      product.isAlibaba === true ||
+      String(product.source || '').toUpperCase() === 'ALIBABA' ||
+      product.importSourceType === 'ALIBABA_API' ||
+      product.supplier?.platform === 'alibaba' ||
+      /^alibaba:/i.test(String(product.externalSourceKey || ''))
+    );
+    const variants = isAlibaba ? doc.variants : normalizePublicVariantStocks(doc.variants, doc.stock);
+    doc.variants = sanitizePublicVariants(variants);
   }
   doc.name = pickBestStoredProductName(doc);
   if (!String(doc.name || '').trim() || isInvalidTranslationText(doc.name) || isGenericProductPlaceholder(doc.name)) {

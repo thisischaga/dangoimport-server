@@ -1,15 +1,18 @@
 const slugify = require('slugify');
-const { alibabaConfig, convertCnyToUsd } = require('../../config/alibaba');
-const { calculateMargin, toNumber, applyProductMarkup } = require('../../utils/dropshippingCalculations');
-const { DEFAULT_IMPORT_PRICING } = require('../../config/importPricing');
+const { alibabaConfig } = require('../../config/alibaba');
+const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
 const { inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
+const { getAlibabaConfig, calculateAlibabaPrice } = require('./alibabaPricingService');
 const { translateCatalogTextForImport } = require('../cj/cjLocalization');
 const { extractImages, extractAlibabaSpecifications } = require('./alibabaProductService');
 
-function convertUsdPriceToXof(amountUsd) {
-  const usd = Number(amountUsd) || 0;
-  if (usd <= 0) return 0;
-  return Math.round(usd * 655);
+async function convertUsdPriceToXof(amountUsd) {
+  const config = await getAlibabaConfig();
+  return calculateAlibabaPrice({
+    sourcePrice: Number(amountUsd) || 0,
+    currency: 'USD',
+    config,
+  }).convertedSupplierPrice;
 }
 
 function isInvalidTranslationText(text) {
@@ -475,16 +478,16 @@ function extractBrand(source = {}) {
   return source.supplierName || source.manufacturerName || '';
 }
 
-async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, productTotalStock = 0 } = {}) {
+async function mapAlibabaVariants(skuInfos = [], {
+  skipTranslation = false,
+  productTotalStock = 0,
+  category = '',
+  productMarginPercent,
+  config,
+} = {}) {
   const list = Array.isArray(skuInfos) ? skuInfos : [];
   if (!list.length) return [];
-
-  const hasIndividualStock = list.some((sku) => {
-    const stock = extractSkuInventory(sku);
-    return stock > 0 && stock < 2147483647;
-  });
-  const baseTotalStock = productTotalStock > 0 && productTotalStock < 2147483647 ? productTotalStock : 0;
-  const fallbackPerSku = baseTotalStock > 0 ? Math.max(1, Math.floor(baseTotalStock / list.length)) : 0;
+  const pricingConfig = config || await getAlibabaConfig();
 
   const results = [];
   for (let index = 0; index < list.length; index++) {
@@ -493,13 +496,16 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
     const ladderMinPrice = ladderPriceArr.length
       ? Math.min(...ladderPriceArr.map((t) => Number(t.price) || 0).filter((p) => p > 0))
       : 0;
-    const ladderCurrency = ladderPriceArr[0]?.currency || 'USD';
+    const ladderCurrency = ladderPriceArr[0]?.currency || pricingConfig.sourceCurrency;
     const rawPriceValue = Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price || 0) || ladderMinPrice;
-    const rawCurrency = sku.currency || ladderCurrency;
-    const supplierUsd = String(rawCurrency).toUpperCase() === 'CNY'
-      ? convertCnyToUsd(rawPriceValue)
-      : rawPriceValue;
-    const priceXof = applyProductMarkup(convertUsdPriceToXof(supplierUsd), DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
+    const rawCurrency = sku.currency || ladderCurrency || pricingConfig.sourceCurrency;
+    const variantPricing = calculateAlibabaPrice({
+      sourcePrice: rawPriceValue,
+      currency: rawCurrency,
+      category,
+      productMarginPercent,
+      config: pricingConfig,
+    });
 
     const variantAttrs = {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || ''),
@@ -560,52 +566,94 @@ async function mapAlibabaVariants(skuInfos = [], { skipTranslation = false, prod
       } catch (_e) { /* fallback original */ }
     }
 
-    const rawStock = extractSkuInventory(sku);
+    const rawStockValue = sku.amountOnSale ?? sku.amount_on_sale
+      ?? sku.canBookCount ?? sku.can_book_count
+      ?? sku.availableQuantity ?? sku.available_quantity
+      ?? sku.inventoryQuantity ?? sku.inventory_quantity
+      ?? sku.sku_inventory ?? sku.sku_stock
+      ?? sku.inventory ?? sku.stock
+      ?? sku.quantity ?? sku.free_inventory ?? sku.total_inventory;
+    const rawStock = rawStockValue == null || rawStockValue === '' ? null : toNumber(rawStockValue, null);
     const isStockSuspicious = rawStock >= 2147483647;
-    const safeStock = isStockSuspicious ? 0 : rawStock;
-    const stock = hasIndividualStock
-      ? (safeStock > 0 ? safeStock : (String(sku.status || 'NORMAL').toUpperCase() === 'NORMAL' ? fallbackPerSku : 0))
-      : 0;
+    const stock = rawStock == null || isStockSuspicious ? 0 : Math.max(0, rawStock);
 
     results.push({
       name: skuName,
       sku: String(sku.skuId || sku.sku_id || sku.specId || ''),
       sourceSkuId: String(sku.skuId || sku.sku_id || sku.specId || sku.seller_sku_id || ''),
-      price: priceXof,
+      price: variantPricing.salePrice,
       stock,
-      sourcePrice: supplierUsd,
+      sourcePrice: variantPricing.supplierPriceUsd,
+      sourcePriceRaw: rawPriceValue,
+      sourceCurrency: String(rawCurrency).toUpperCase(),
       sourceStock: rawStock,
-      sourceStockVerified: !isStockSuspicious && rawStock > 0,
-      status: sku.status || 'NORMAL',
+      stockKnown: rawStock != null && !isStockSuspicious,
+      sourceStockVerified: !isStockSuspicious && rawStock != null && rawStock > 0,
+      availability: isStockSuspicious || rawStock == null
+        ? 'UNKNOWN'
+        : rawStock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+      status: sku.status || null,
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: variantAttrs,
-      supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : 0,
-      supplierPriceUsd: supplierUsd,
+      supplierPriceCny: String(rawCurrency).toUpperCase() === 'CNY' ? rawPriceValue : null,
+      supplierPriceUsd: variantPricing.supplierPriceUsd,
+      pricingCalculation: variantPricing,
+      pricing: ladderPriceArr.map((tier) => ({
+        minQuantity: Number(tier.min_quantity ?? tier.minQuantity ?? tier.min_order_quantity ?? 1),
+        maxQuantity: tier.max_quantity ?? tier.maxQuantity ?? null,
+        price: Number(tier.price) || 0,
+        currency: tier.currency || rawCurrency,
+      })),
+      raw: sku,
       isDefault: index === 0,
     });
   }
   return results;
 }
 
-async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTranslation = false } = {}) {
+async function mapAlibabaProductToDango(listItem = {}, detail = null, {
+  skipTranslation = false,
+  productMarginPercent,
+  manualSalePrice,
+  config,
+} = {}) {
   const source = detail || listItem;
+  const pricingConfig = config || await getAlibabaConfig();
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
-  const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || 'USD').toUpperCase();
+  const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || pricingConfig.sourceCurrency).toUpperCase();
   const rawPrice = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price?.amount ?? source.raw?.price);
 
   const skuLadderMin = (() => {
     const skus = source.skuInfos || source.raw?.skuInfos || [];
     const prices = (Array.isArray(skus) ? skus : []).flatMap((sku) => {
-      if (Array.isArray(sku.ladder_price)) return sku.ladder_price.map((t) => Number(t.price) || 0);
-      return [Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price) || 0];
-    }).filter((p) => p > 0);
-    return prices.length ? Math.min(...prices) : 0;
+      if (Array.isArray(sku.ladder_price)) {
+        return sku.ladder_price.map((tier) => ({
+          price: Number(tier.price) || 0,
+          currency: tier.currency || sku.currency || rawCurrency,
+        }));
+      }
+      return [{
+        price: Number(sku.price || sku.consignPrice || sku.retailPrice || sku.unit_price) || 0,
+        currency: sku.currency || rawCurrency,
+      }];
+    }).filter((entry) => entry.price > 0);
+    return prices.sort((a, b) => a.price - b.price)[0] || null;
   })();
-  const effectiveRawPrice = rawPrice || skuLadderMin;
-  const supplierUsd = rawCurrency === 'CNY' ? convertCnyToUsd(effectiveRawPrice) : effectiveRawPrice;
-  const priceCny = rawCurrency === 'CNY' ? effectiveRawPrice : 0;
-  const costPriceXof = convertUsdPriceToXof(supplierUsd);
-  const sellingPrice = applyProductMarkup(costPriceXof, DEFAULT_IMPORT_PRICING.productMarkupMultiplier);
+  const effectiveRawPrice = rawPrice || skuLadderMin?.price || 0;
+  const effectiveCurrency = rawPrice ? rawCurrency : String(skuLadderMin?.currency || rawCurrency).toUpperCase();
+  const commercialCategory = mapAlibabaCategoryToDangoStore(source.category || 'Général', source.name || source.subject || '');
+  const unitPricing = calculateAlibabaPrice({
+    sourcePrice: effectiveRawPrice,
+    currency: effectiveCurrency,
+    category: commercialCategory,
+    productMarginPercent,
+    manualSalePrice,
+    config: pricingConfig,
+  });
+  const supplierUsd = unitPricing.supplierPriceUsd;
+  const priceCny = effectiveCurrency === 'CNY' ? effectiveRawPrice : 0;
+  const costPriceXof = unitPricing.convertedSupplierPrice;
+  const sellingPrice = unitPricing.salePrice;
   const margin = calculateMargin({
     sellingPrice,
     supplierPrice: costPriceXof,
@@ -645,6 +693,10 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   const variants = await mapAlibabaVariants(source.skuInfos || source.raw?.skuInfos, {
     skipTranslation,
     productTotalStock: stockAnalysis.verifiedStock,
+    category: commercialCategory,
+    productMarginPercent,
+    config: pricingConfig,
+    config: pricingConfig,
   });
   const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
   const stock = stockFromVariants || stockAnalysis.verifiedStock || 0;
@@ -720,7 +772,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
   });
   const weightKg = parseWeightToKg(firstWeight || source.weight || source.raw?.productShippingInfo?.weight || source.wholesaleTrade?.weight);
   const weightRaw = weightKg > 0 ? String(weightKg) : '';
-  const category = mapAlibabaCategoryToDangoStore(source.category || 'Général', name);
+  const category = commercialCategory;
 
   const productColors = [...new Set(variants.map((v) => v.attributes?.color || v.attributes?.Couleur).filter(Boolean))];
   const productSizes = [...new Set(variants.map((v) => v.attributes?.size || v.attributes?.Taille).filter(Boolean))];
@@ -753,7 +805,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
     brand,
     shippingInfo: 'Frais d\'importation calculés au checkout',
     convertedSupplierPriceFCFA: costPriceXof,
-    productMarkupMultiplier: DEFAULT_IMPORT_PRICING.productMarkupMultiplier,
+    productMarkupMultiplier: 1 + unitPricing.marginPercent / 100,
     minimumOrderQuantity: declaredMoq,
     quantityIncrement: 1,
     shippingCategory: inferShippingCategory({ name, category, weight: weightRaw }),
@@ -797,12 +849,26 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, { skipTran
       shipFromCountryName: originInfo.origin || 'Chine',
     },
     pricing: {
-      supplierPrice: supplierUsd,
+      supplierPrice: effectiveRawPrice,
       supplierPriceCny: priceCny,
+      sourcePrice: effectiveRawPrice,
+      sourceCurrency: effectiveCurrency,
+      marginPercentOverride: productMarginPercent ?? null,
+      manualSalePrice: manualSalePrice ?? null,
       sellingPrice,
-      currency: 'XOF',
+      currency: unitPricing.saleCurrency,
       marginPercent: margin.marginPercent,
       estimatedProfit: margin.estimatedProfit,
+      calculation: {
+        exchangeRate: unitPricing.exchangeRate,
+        convertedSupplierPrice: unitPricing.convertedSupplierPrice,
+        marginPercent: unitPricing.marginPercent,
+        marginSource: unitPricing.marginSource,
+        additionalFeesXof: unitPricing.additionalFeesXof,
+        salePrice: unitPricing.salePrice,
+        saleCurrency: unitPricing.saleCurrency,
+        calculatedAt: new Date(),
+      },
     },
     stock,
     importSourceType: 'ALIBABA_API',

@@ -77,6 +77,27 @@ test('produit < 1 kg mais ≥ 2000 F : pas de MOQ auto', () => {
   assert.equal(pricing.packSize, 1);
 });
 
+test('Alibaba checkout uses the backend sale price without applying the generic markup again', () => {
+  const pricing = calculateImportPricing({
+    source: 'ALIBABA',
+    isAlibaba: true,
+    price: 5000,
+    convertedSupplierPriceFCFA: 3000,
+    productMarkupMultiplier: 1.3,
+    supplier: { platform: 'alibaba', supplierPrice: 10, supplierCurrency: 'USD' },
+  });
+
+  assert.equal(pricing.productPrice, 5000);
+  assert.equal(pricing.convertedSupplierPriceFCFA, 3000);
+});
+
+test('Alibaba checkout rejects products without a server-calculated sale price', () => {
+  assert.throws(
+    () => calculateImportPricing({ source: 'ALIBABA', isAlibaba: true, pricing: { sourcePrice: 10 } }),
+    /Prix de vente Alibaba absent/,
+  );
+});
+
 test('checkout MOQ 5 : 7800 + 1.25 kg × 13500', () => {
   const quote = calculateImportOrderPricing([
     {

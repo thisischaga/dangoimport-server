@@ -7,10 +7,10 @@ const {
   normalizeDropshippingInput,
   validateDropshippingPayload,
   updateDropshippingProduct,
-  stampOfficialImportPricing,
 } = require('../dropshippingService');
 const { resolveSkuForCreate } = require('../../utils/productIdentifiers');
 const { toNumber } = require('../../utils/dropshippingCalculations');
+const { getAlibabaConfig } = require('./alibabaPricingService');
 
 async function findExistingAlibabaProduct(externalProductId) {
   const idStr = String(externalProductId || '').trim();
@@ -124,9 +124,26 @@ async function upsertAlibabaProduct(externalProductId, {
   }
 
   const detail = await getAlibabaProductDetail(id);
-  const mapped = await mapAlibabaProductToDango(detail, detail);
+  const pricingConfig = await getAlibabaConfig();
+  const mapped = await mapAlibabaProductToDango(detail, detail, {
+    productMarginPercent: existing?.pricing?.marginPercentOverride,
+    manualSalePrice: existing?.pricing?.manualSalePrice,
+    config: pricingConfig,
+  });
   const rawSource = detail?.raw || detail?.rawAlibabaData || detail || {};
   const alibabaSnapshot = buildAlibabaProductRecord(rawSource, mapped);
+  if (existing && !overwriteCommercial) {
+    alibabaSnapshot.pricing = {
+      ...(alibabaSnapshot.pricing || {}),
+      marginPercentOverride: existing.pricing?.marginPercentOverride ?? null,
+      manualSalePrice: existing.pricing?.manualSalePrice ?? null,
+    };
+    alibabaSnapshot.logistics = {
+      ...(alibabaSnapshot.logistics || {}),
+      ...(existing.logistics?.toObject ? existing.logistics.toObject() : existing.logistics || {}),
+    };
+    alibabaSnapshot.adminHistory = existing.adminHistory || [];
+  }
   const alibabaProduct = await AlibabaProduct.findOneAndUpdate(
     { source: 'ALIBABA', sourceProductId: alibabaSnapshot.sourceProductId },
     { $set: alibabaSnapshot },
@@ -232,7 +249,12 @@ async function upsertAlibabaProduct(externalProductId, {
       ? 'TO_VERIFY'
       : (payload.isPublished ? 'PUBLISHED' : 'IMPORTED');
 
-  const stamped = await stampOfficialImportPricing(normalizeDropshippingInput(payload));
+  const stamped = normalizeDropshippingInput(payload);
+  stamped.price = payload.price;
+  stamped.costPrice = payload.convertedSupplierPriceFCFA;
+  stamped.convertedSupplierPriceFCFA = payload.convertedSupplierPriceFCFA;
+  stamped.productMarkupMultiplier = payload.productMarkupMultiplier;
+  stamped.shippingCategory = payload.shippingCategory;
   const errors = validateDropshippingPayload(stamped);
   if (errors.length) {
     const err = new Error(errors.join(' '));

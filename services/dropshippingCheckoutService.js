@@ -6,8 +6,17 @@ const {
 } = require('../utils/dropshippingCalculations');
 const { resolveDropshipSellableStock } = require('../utils/cjCatalogHelpers');
 const { assertProductPurchasable, buildShopOrderItem } = require('../utils/orderItemBuilder');
-const { calculateImportPricing, calculateImportQuote, assertValidOrderQuantity } = require('../utils/importPricing');
+const {
+  calculateImportPricing,
+  calculateImportQuote,
+  assertValidOrderQuantity,
+  isAlibabaManagedProduct,
+} = require('../utils/importPricing');
 const { getImportPricingConfig } = require('./importPricingService');
+const {
+  getAlibabaFreightConfig,
+  calculateAlibabaFreightQuote,
+} = require('./alibaba/alibabaFreightService');
 
 const SUPPORTED_COUNTRIES = new Set(['TG', 'BJ', 'TOGO', 'BÉNIN', 'BENIN']);
 const DANGO_TRANSIT_OPTION_ID = 'dango-import:transit';
@@ -51,14 +60,16 @@ function mapTransitOption(quote) {
   return {
     id: DANGO_TRANSIT_OPTION_ID,
     provider: 'Dango Import',
-    logisticName: 'Importation / livraison',
-    label: 'Importation / livraison',
+    logisticName: quote.transport?.transportLabel || 'Importation / livraison',
+    label: quote.transport?.transportLabel || 'Importation / livraison',
     cost: quote.shippingCost,
     currency: 'XOF',
     estimatedDelivery: quote.estimatedDeliveryLabel,
-    estimatedDeliveryMin: quote.estimatedDays.min,
-    estimatedDeliveryMax: quote.estimatedDays.max,
-    billedWeight: quote.billedWeight,
+    estimatedDeliveryMin: quote.estimatedDays?.min ?? null,
+    estimatedDeliveryMax: quote.estimatedDays?.max ?? null,
+    transportMode: quote.transport?.transportMode || null,
+    billedWeight: quote.transport?.billableWeightKg ?? quote.billedWeight,
+    billedVolumeM3: quote.transport?.totalVolumeM3 ?? null,
     ratePerKg: quote.ratePerKg,
     shippingRatePerKg: quote.shippingRatePerKg || quote.ratePerKg,
     shippingBaseCost: quote.shippingBaseCost,
@@ -81,6 +92,7 @@ function publicImportBreakdown(quote) {
     estimatedDays: quote.estimatedDays,
     estimatedDelivery: quote.estimatedDelivery,
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+    transport: quote.transport || null,
     chinaDomesticShipping: quote.chinaDomesticShipping,
     chinaDomesticShippingUsd: quote.chinaDomesticShippingUsd,
     chinaDomesticShippingFcfa: quote.chinaDomesticShippingFcfa,
@@ -104,7 +116,7 @@ function publicImportBreakdown(quote) {
   };
 }
 
-async function getImportShippingQuote({ items = [], destination = {} } = {}) {
+async function getImportShippingQuote({ items = [], destination = {}, transportMode } = {}) {
   const countryCode = normalizeCountryCode(destination.country || destination.countryCode);
   const city = String(destination.city || '').trim();
   if (!SUPPORTED_COUNTRIES.has(countryCode) && !['TG', 'BJ'].includes(countryCode)) {
@@ -121,6 +133,29 @@ async function getImportShippingQuote({ items = [], destination = {} } = {}) {
   const lines = await loadCheckoutProducts(items);
   const config = await getImportPricingConfig();
   const quote = calculateImportQuote(lines, config);
+  const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
+  if (alibabaLines.length > 0) {
+    const freightConfig = await getAlibabaFreightConfig();
+    const freight = calculateAlibabaFreightQuote(alibabaLines, countryCode, transportMode, freightConfig);
+    const standardShipping = quote.items.reduce((sum, itemQuote, index) => (
+      isAlibabaManagedProduct(lines[index]?.product)
+        ? sum
+        : sum + Number(itemQuote.shippingBaseCost || 0)
+    ), 0);
+    const localDeliveryFee = Number(config.localDeliveryFee || 0);
+    quote.transport = freight;
+    quote.shippingBaseCost = freight.cost + standardShipping;
+    quote.shippingCost = quote.shippingBaseCost + localDeliveryFee;
+    quote.localDeliveryFee = localDeliveryFee;
+    quote.shippingRatePerKg = null;
+    quote.ratePerKg = null;
+    quote.billedWeight = freight.billableWeightKg;
+    quote.totalWeightKg = freight.billableWeightKg;
+    quote.estimatedDays = null;
+    quote.estimatedDelivery = null;
+    quote.estimatedDeliveryLabel = 'Délai d’acheminement non confirmé';
+    quote.total = Math.round(quote.productTotal + quote.shippingCost);
+  }
   const option = mapTransitOption(quote);
 
   return {
@@ -133,6 +168,7 @@ async function getImportShippingQuote({ items = [], destination = {} } = {}) {
     total: quote.total,
     estimatedDays: quote.estimatedDays,
     estimatedDeliveryLabel: quote.estimatedDeliveryLabel,
+    transport: quote.transport || null,
     options: [option],
     supplierName: PLATFORM_VENDOR_NAME,
     importBreakdown: publicImportBreakdown(quote),
@@ -152,6 +188,7 @@ async function validateDropshippingCheckoutPayload({
   destinationCountry = 'TG',
   destination = {},
   shippingAddress = {},
+  transportMode,
 }) {
   const countryCode = normalizeCountryCode(
     destination.country || destination.countryCode || destinationCountry,
@@ -168,6 +205,7 @@ async function validateDropshippingCheckoutPayload({
   const quoteResult = await getImportShippingQuote({
     items,
     destination: { country: countryCode, city },
+    transportMode,
   });
   const providedShipping = toNumber(shippingCost, 0);
   if (providedShipping > 0 && Math.abs(quoteResult.shippingCost - providedShipping) > 1) {
@@ -272,6 +310,7 @@ async function validateDropshippingCheckoutPayload({
     shippingMethod: DANGO_TRANSIT_OPTION_ID,
     shippingOptionId: DANGO_TRANSIT_OPTION_ID,
     estimatedDeliveryLabel: quoteResult.estimatedDeliveryLabel,
+    transportMode: quoteResult.transport?.transportMode || null,
     importShipping,
     cjShipping: undefined,
     quote: quoteResult,
@@ -281,6 +320,7 @@ async function validateDropshippingCheckoutPayload({
 async function getDropshippingShippingQuote(params) {
   return getImportShippingQuote({
     items: params.items,
+    transportMode: params.transportMode,
     destination: {
       country: params.destinationCountry,
       city: params.destinationCity,

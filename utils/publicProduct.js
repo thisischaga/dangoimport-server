@@ -2,10 +2,15 @@ const { isDropshippingProduct, PLATFORM_VENDOR_NAME } = require('./dropshippingC
 const { calculateImportPricing } = require('./importPricing');
 const { getImportPricingConfigSync } = require('../services/importPricingService');
 const {
+  getAlibabaConfig,
+  calculateAlibabaPrice,
+} = require('../services/alibaba/alibabaPricingService');
+const {
   prepareDropshippingProductForPublic,
   isCjDropshippingProduct,
   isInvalidTranslationText,
   pickBestStoredProductName,
+  resolveDropshipSellableStock,
   sanitizePublicVariants,
 } = require('./cjCatalogHelpers');
 
@@ -36,37 +41,33 @@ const INTERNAL_FIELDS = [
   'importWarnings',
 ];
 
-function computePublicPriceTiers(doc = {}) {
+function computePublicPriceTiers(doc = {}, config) {
   const tiers = Array.isArray(doc.sourcePriceTiers) && doc.sourcePriceTiers.length > 0
     ? doc.sourcePriceTiers
     : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices : []);
 
-  if (!tiers.length) return [];
-
-  const multiplier = Math.max(1, Number(doc.productMarkupMultiplier) || 1.3);
-  const minUnitPrice = Math.max(0, Math.round(Number(doc.minimumProductPrice) || 0));
+  if (!tiers.length || !config) return [];
 
   return tiers.map((tier) => {
     const rawTierPrice = Number(tier.price) || 0;
-    const currency = String(tier.currency || doc.currency || 'USD').toUpperCase();
-    let priceXof = 0;
-    if (currency === 'USD') {
-      priceXof = Math.round(rawTierPrice * 620);
-    } else if (currency === 'CNY') {
-      priceXof = Math.round(rawTierPrice * 85);
-    } else {
-      priceXof = Math.round(rawTierPrice);
-    }
-    const publicUnitPrice = Math.max(minUnitPrice, Math.round(priceXof * multiplier));
+    if (rawTierPrice <= 0) return null;
+    const currency = String(tier.currency || doc.pricing?.currency || doc.normalized?.pricing?.currency || config.sourceCurrency).toUpperCase();
+    const price = calculateAlibabaPrice({
+      sourcePrice: rawTierPrice,
+      currency,
+      category: doc.category || doc.normalized?.category,
+      productMarginPercent: doc.pricing?.marginPercentOverride,
+      config,
+    });
     return {
       minQuantity: Math.max(1, Math.round(Number(tier.minQty ?? tier.minQuantity ?? tier.min_quantity) || 1)),
       maxQuantity: (tier.maxQty || tier.maxQuantity || tier.max_quantity)
         ? Math.round(Number(tier.maxQty || tier.maxQuantity || tier.max_quantity))
         : null,
-      unitPrice: publicUnitPrice,
-      currency: 'XOF',
+      unitPrice: price.salePrice,
+      currency: price.saleCurrency,
     };
-  }).filter((t) => t.unitPrice > 0).sort((a, b) => a.minQuantity - b.minQuantity);
+  }).filter((tier) => tier && tier.unitPrice > 0).sort((a, b) => a.minQuantity - b.minQuantity);
 }
 
 function sanitizePublicVariantList(variants = []) {
@@ -127,8 +128,13 @@ function toPublicProduct(product) {
     const publicDoc = { ...doc };
     publicDoc.source = 'ALIBABA';
     publicDoc.isAlibaba = true;
-    publicDoc.isPublished = true;
-    publicDoc.publicationStatus = 'published';
+    if (doc.isPublished !== false) {
+      publicDoc.isPublished = true;
+      publicDoc.publicationStatus = 'published';
+    } else {
+      publicDoc.isPublished = false;
+      publicDoc.publicationStatus = doc.publicationStatus || 'draft';
+    }
     if (publicDoc.status === 'ERROR') {
       publicDoc.status = 'SYNCED';
     }
@@ -136,7 +142,10 @@ function toPublicProduct(product) {
     // Supprimer les champs artificiels indésirables imposés auparavant
     delete publicDoc.vendorName;
     delete publicDoc.originLabel;
-    delete publicDoc.fulfillmentPlatform;
+    publicDoc.fulfillmentPlatform = 'Alibaba';
+    delete publicDoc.sourceType;
+    delete publicDoc.externalSourceKey;
+    delete publicDoc.supplier;
 
     if (!publicDoc.name && publicDoc.title) publicDoc.name = publicDoc.title;
     if (!publicDoc.title && publicDoc.name) publicDoc.title = publicDoc.name;
@@ -161,42 +170,15 @@ function toPublicProduct(product) {
     publicDoc.image = publicDoc.mainImage;
     publicDoc.images = galleryUrls.length > 0 ? galleryUrls : (publicDoc.mainImage ? [publicDoc.mainImage] : []);
 
-    // Calculer un prix d'affichage en FCFA (1 USD = 620 FCFA × markup 1.3)
-    if (!publicDoc.price || Number(publicDoc.price) <= 0) {
-      const directPrice = Number(
-        doc.price
-        || doc.normalized?.price
-        || doc.normalized?.pricing?.sellingPrice
-        || doc.normalized?.variants?.[0]?.price
-        || 0
-      );
-      if (directPrice > 0) {
-        publicDoc.price = directPrice;
-      } else {
-        const rawUsd = Number(
-          doc.pricing?.sourcePrice
-          || doc.pricing?.tiers?.[0]?.price
-          || doc.variants?.[0]?.pricing?.[0]?.price
-          || doc.normalized?.variants?.[0]?.sourcePrice
-          || doc.normalized?.variants?.[0]?.supplierPriceUsd
-          || doc.rawPayload?.result_data?.skus?.[0]?.ladder_price?.[0]?.price
-          || doc.rawPayload?.result_data?.wholesale_trade?.price
-          || doc.rawPayload?.skus?.[0]?.ladder_price?.[0]?.price
-          || doc.rawPayload?.result_data?.price
-          || doc.rawAlibabaData?.result_data?.skus?.[0]?.ladder_price?.[0]?.price
-          || doc.rawAlibabaData?.skus?.[0]?.ladder_price?.[0]?.price
-          || doc.rawAlibabaData?.result_data?.skus?.[0]?.price
-          || doc.sourcePriceTiers?.[0]?.price
-          || 0,
-        );
-        if (rawUsd > 0) {
-          publicDoc.price = Math.round(rawUsd * 620 * 1.3);
-        }
-      }
+    const storedSalePrice = doc.price
+      ?? doc.pricing?.calculation?.salePrice
+      ?? doc.normalized?.pricing?.sellingPrice;
+    if (Number.isFinite(Number(storedSalePrice)) && Number(storedSalePrice) > 0) {
+      publicDoc.price = Number(storedSalePrice);
+    } else {
+      delete publicDoc.price;
     }
-
-    // S'assurer que le stock est positif
-    publicDoc.stock = Number(publicDoc.stock) > 0 ? Number(publicDoc.stock) : 999;
+    publicDoc.stock = resolveDropshipSellableStock(doc);
 
     // Résoudre le poids
     const resolvedWeight = resolveAlibabaWeightValue(doc);
@@ -486,7 +468,7 @@ function resolveAlibabaWeightValue(doc = {}) {
   return '';
 }
 
-function buildAlibabaPublicDetail(doc = {}) {
+function buildAlibabaPublicDetail(doc = {}, pricingConfig) {
   const normalized = doc.normalized || {};
   const sourceProductId = doc.sourceProductId || normalized.sourceProductId || doc.externalProductId || normalized.externalProductId || String(doc.externalSourceKey || '').replace(/^alibaba:/i, '') || null;
   const sourceUrl = doc.sourceUrl || normalized.sourceUrl || doc.rawAlibabaData?.detail_url || doc.rawPayload?.detail_url || doc.rawSections?.product?.detail_url || doc.detail_url || null;
@@ -539,14 +521,14 @@ function buildAlibabaPublicDetail(doc = {}) {
       shippingOrigin: normalized.shippingOrigin || doc.shippingOrigin || null,
       weight: weightValue,
       weightUnit: doc.normalized?.logistics?.weightUnit || doc.rawAlibabaData?.logistics?.weightUnit || doc.rawPayload?.logistics?.weightUnit || 'kg',
-      priceTiers: computePublicPriceTiers(doc),
+      priceTiers: computePublicPriceTiers(doc, pricingConfig),
       pricing: normalized.pricing || doc.pricing || null,
       variantCount: Array.isArray(doc.variants) ? doc.variants.length : Array.isArray(normalized.variants) ? normalized.variants.length : 0,
     },
   };
 }
 
-async function toPublicProductDetail(product) {
+async function toPublicProductDetail(product, pricingConfig) {
   let doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
   const publicDoc = toPublicProduct(doc);
   if (!publicDoc) return null;
@@ -561,8 +543,20 @@ async function toPublicProductDetail(product) {
     /^alibaba:/i.test(String(doc.externalSourceKey || ''))
   );
 
-  // 1. Paliers de prix publics en FCFA
-  const priceTiers = computePublicPriceTiers(doc);
+  const rawSkus = doc.rawPayload?.result_data?.skus
+    || doc.rawAlibabaData?.result_data?.skus
+    || doc.rawPayload?.skus
+    || doc.variants
+    || [];
+  const hasSourceTiers = (Array.isArray(doc.sourcePriceTiers) && doc.sourcePriceTiers.length > 0)
+    || (Array.isArray(doc.rawAlibabaData?.ladderPrices) && doc.rawAlibabaData.ladderPrices.length > 0);
+  const hasRawSkuPrices = !Array.isArray(doc.variants) || doc.variants.length === 0
+    ? rawSkus.some((sku) => Number(sku.price ?? sku.ladder_price?.[0]?.price) > 0)
+    : false;
+  const activePricingConfig = pricingConfig || ((hasSourceTiers || hasRawSkuPrices) ? await getAlibabaConfig() : null);
+
+  // 1. Paliers de prix en devise Dango, calculés avec la configuration du serveur.
+  const priceTiers = computePublicPriceTiers(doc, activePricingConfig);
   if (priceTiers.length > 0) {
     publicDoc.publicPriceTiers = priceTiers;
   }
@@ -635,7 +629,7 @@ async function toPublicProductDetail(product) {
   publicDoc.specifications = Array.from(specMap.entries()).map(([key, value]) => ({ key, value }));
 
   if (isAlibaba) {
-    const alibabaDetails = buildAlibabaPublicDetail(doc);
+    const alibabaDetails = buildAlibabaPublicDetail(doc, activePricingConfig);
     const resolvedWeight = resolvePublicWeight(alibabaDetails.weight, publicDoc.weight, doc.weight, wt.weight);
     publicDoc.sourceProductId = alibabaDetails.sourceProductId;
     publicDoc.sourceUrl = alibabaDetails.sourceUrl;
@@ -647,8 +641,13 @@ async function toPublicProductDetail(product) {
     publicDoc.image = publicDoc.mainImage;
     publicDoc.supplierSummary = alibabaDetails.supplierSummary;
     publicDoc.alibaba = alibabaDetails.alibaba;
-    publicDoc.isPublished = true;
-    publicDoc.publicationStatus = 'published';
+    if (doc.isPublished !== false) {
+      publicDoc.isPublished = true;
+      publicDoc.publicationStatus = 'published';
+    } else {
+      publicDoc.isPublished = false;
+      publicDoc.publicationStatus = doc.publicationStatus || 'draft';
+    }
 
     // Description enrichie (HTML et prose)
     const rawDesc = doc.rawPayload?.result_data?.description
@@ -670,28 +669,48 @@ async function toPublicProductDetail(product) {
       || '';
 
     // Variantes et SKUs
-    const rawSkus = doc.rawPayload?.result_data?.skus
-      || doc.rawAlibabaData?.result_data?.skus
-      || doc.rawPayload?.skus
-      || doc.variants
-      || [];
     publicDoc.alibabaSKUs = rawSkus;
     if (Array.isArray(doc.variants) && doc.variants.length > 0) {
       publicDoc.variants = doc.variants;
     } else if (Array.isArray(rawSkus) && rawSkus.length > 0) {
-      publicDoc.variants = rawSkus.map((sku, idx) => ({
-        skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
-        name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
-        price: Number(sku.ladder_price?.[0]?.price ? Math.round(Number(sku.ladder_price[0].price) * 620 * 1.3) : publicDoc.price),
-        image: sku.image || (sku.sku_attr_list || []).find((a) => a.attr_value_image)?.attr_value_image || publicDoc.mainImage,
-        stock: 999,
-        attributes: (sku.sku_attr_list || []).map((a) => ({
+      publicDoc.variants = rawSkus.map((sku, idx) => {
+        const tier = sku.ladder_price?.[0];
+        const sourcePrice = Number(sku.price ?? tier?.price);
+        const sourceCurrency = sku.currency || tier?.currency || doc.pricing?.currency || activePricingConfig?.sourceCurrency;
+        const variantPrice = sourcePrice > 0 && activePricingConfig
+          ? calculateAlibabaPrice({
+            sourcePrice,
+            currency: sourceCurrency,
+            category: doc.category || doc.normalized?.category,
+            productMarginPercent: doc.pricing?.marginPercentOverride,
+            config: activePricingConfig,
+          }).salePrice
+          : null;
+        const stockValue = sku.inventory?.quantityRaw
+          ?? sku.inventory?.quantity
+          ?? sku.inventory_count
+          ?? sku.inventoryCount
+          ?? sku.stock
+          ?? null;
+        const knownStock = stockValue !== null && stockValue !== '' && Number.isFinite(Number(stockValue));
+        const stock = knownStock ? Math.max(0, Number(stockValue)) : null;
+        return {
+          skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
+          name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
+          price: variantPrice,
+          sourcePrice: sourcePrice > 0 ? sourcePrice : null,
+          sourceCurrency: sourceCurrency || null,
+          image: sku.image || (sku.sku_attr_list || []).find((a) => a.attr_value_image)?.attr_value_image || publicDoc.mainImage,
+          stock,
+          availability: !knownStock ? 'UNKNOWN' : stock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+          attributes: (sku.sku_attr_list || []).map((a) => ({
           name: a.attr_name_desc || a.attr_name || a.name || 'Option',
           value: a.attr_value_desc || a.attr_value || a.value || '',
           image: a.attr_value_image || a.image || '',
         })),
         sku_attr_list: sku.sku_attr_list || [],
-      }));
+        };
+      });
     }
 
     // Attributs clés et fiche technique
@@ -721,7 +740,9 @@ async function toPublicProductDetail(product) {
 
     delete publicDoc.vendorName;
     delete publicDoc.originLabel;
-    delete publicDoc.fulfillmentPlatform;
+    delete publicDoc.supplier;
+    delete publicDoc.sourceType;
+    delete publicDoc.externalSourceKey;
 
     return publicDoc;
   }
