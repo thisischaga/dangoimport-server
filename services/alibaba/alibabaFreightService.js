@@ -395,7 +395,9 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
       : config.volumetric.method === 'volumetric_only'
         ? volumetricWeightKg
         : Math.max(actualWeightKg, volumetricWeightKg);
-    const billableWeightKg = roundBillableWeight(rawBillableWeight, config.volumetric);
+    const billableWeightKg = useVolumetric
+      ? roundBillableWeight(rawBillableWeight, config.volumetric)
+      : Math.round(actualWeightKg * 1000) / 1000;
     const lineCost = Math.round(billableWeightKg * quantity * category.rate);
     cost += lineCost;
     totalBillableWeightKg += billableWeightKg * quantity;
