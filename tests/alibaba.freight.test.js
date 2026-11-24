@@ -132,6 +132,23 @@ test('Togo maritime freight rejects missing dimensions instead of estimating vol
   assert.equal(measuredQuote.cost, 176);
 });
 
+test('freight reads explicit product volume and kilogram fields', () => {
+  const resolved = config();
+  const seaQuote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: { name: 'Produit dimensionné', volumeM3: 0.002 },
+  }], 'TG', 'sea', resolved);
+  const airQuote = calculateAlibabaFreightQuote([{
+    quantity: 1,
+    product: { name: 'Produit lourd', weightKg: 35 },
+  }], 'BJ', 'air', resolved);
+
+  assert.equal(seaQuote.totalVolumeM3, 0.002);
+  assert.equal(seaQuote.cost, 353);
+  assert.equal(airQuote.billableWeightKg, 35);
+  assert.equal(airQuote.cost, 308700);
+});
+
 test('air volumetric billing remains opt-in and applies the configured method and rounding', () => {
   const resolved = config({
     volumetric: { enabled: true, coefficient: 167, method: 'max', roundingMode: 'ceil', roundingIncrementKg: 1 },

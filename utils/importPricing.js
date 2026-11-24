@@ -111,11 +111,11 @@ function parseProductWeightKg(product = {}) {
   const logisticsWeight = logistics.grossWeight
     ?? logistics.netWeight
     ?? logistics.weight;
-  const storedWeight = safeProduct.weightKg
-    ?? (typeof logisticsWeight === 'number' && logistics.weightUnit
+  const storedWeight = safeProduct.weightKg != null && safeProduct.weightKg !== ''
+    ? `${safeProduct.weightKg} kg`
+    : (typeof logisticsWeight === 'number' && logistics.weightUnit
       ? `${logisticsWeight} ${logistics.weightUnit}`
-      : logisticsWeight)
-    ?? safeProduct.weight;
+      : logisticsWeight) ?? safeProduct.weight;
   const storedKg = parseWeightToKg(storedWeight);
   const specKg = parseWeightToKg(weightFromSpecifications(safeProduct));
   const supplierKg = parseWeightToKg(
@@ -328,7 +328,7 @@ function calculateImportPricing(product = {}, {
   const packPrice = unitPrice * packSize;
   const category = inferShippingCategory(safeProduct);
   const rate = cfg.shippingRates[category] || cfg.shippingRates.normal;
-  const ratePerKg = toNumber(cfg.shippingRatePerKg, rate.ratePerKg);
+  const ratePerKg = toNumber(rate.ratePerKg, cfg.shippingRatePerKg);
   const unitWeight = parseProductWeightKg(safeProduct);
   const billedWeight = roundKg(unitWeight * qty);
   const shippingBaseCost = Math.round(ratePerKg * billedWeight);
@@ -336,8 +336,8 @@ function calculateImportPricing(product = {}, {
   const shippingCost = shippingBaseCost + shippingMarkup;
   const productLineTotal = unitPrice * qty;
   const estimatedDays = {
-    min: toNumber(cfg.estimatedImportDays?.min, rate.minDays || 20),
-    max: toNumber(cfg.estimatedImportDays?.max, rate.maxDays || 30),
+    min: toNumber(rate.minDays, cfg.estimatedImportDays?.min || 20),
+    max: toNumber(rate.maxDays, cfg.estimatedImportDays?.max || 30),
   };
 
   return {

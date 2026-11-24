@@ -200,6 +200,7 @@ test('poids CJ en grammes et spec Poids', () => {
     specifications: [{ key: 'Poids', value: '80 g' }],
   }), 0.08);
   assert.equal(parseProductWeightKg({ weight: '1.2 kg' }), 1.2);
+  assert.equal(parseProductWeightKg({ weightKg: 35 }), 35);
   assert.equal(parseProductWeightKg({ logistics: { grossWeight: 1.2, weightUnit: 'kg' } }), 1.2);
 });
 

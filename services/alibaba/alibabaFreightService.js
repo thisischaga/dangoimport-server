@@ -292,7 +292,9 @@ function inferFreightCategory(product = {}, mode, categories) {
 
 function productVolumeM3(product = {}) {
   const logistics = product.logistics || {};
-  const storedCm3 = Number(logistics.volumeCm3);
+  const storedVolumeM3 = Number(logistics.volumeM3 ?? product.volumeM3);
+  if (Number.isFinite(storedVolumeM3) && storedVolumeM3 > 0) return storedVolumeM3;
+  const storedCm3 = Number(logistics.volumeCm3 ?? product.volumeCm3);
   if (Number.isFinite(storedCm3) && storedCm3 > 0) return storedCm3 / 1_000_000;
   const dims = [logistics.packageLength, logistics.packageWidth, logistics.packageHeight].map(Number);
   if (dims.some((value) => !Number.isFinite(value) || value <= 0)) return 0;
@@ -377,10 +379,22 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
       continue;
     }
 
-    const weightProduct = {
-      ...product,
-      weight: logistics.grossWeight ?? logistics.weight ?? product.weight,
-    };
+    const rawWeight = logistics.grossWeight
+      ?? logistics.netWeight
+      ?? logistics.weight
+      ?? product.weightKg
+      ?? product.weight;
+    const storedUnit = logistics.weightUnit || product.weightUnit;
+    const hasKgField = logistics.grossWeight != null
+      || logistics.netWeight != null
+      || product.weightKg != null;
+    const hasExplicitUnit = typeof rawWeight === 'string' && /\b(?:kg|kgs|g|gr|lbs?)\b/i.test(rawWeight);
+    const hasMeasuredWeightUnit = typeof rawWeight === 'number' && (storedUnit || hasKgField)
+      || (hasKgField && !hasExplicitUnit);
+    const measuredWeight = hasMeasuredWeightUnit
+      ? `${rawWeight} ${storedUnit || 'kg'}`
+      : rawWeight;
+    const weightProduct = { ...product, weight: measuredWeight };
     const actualWeightKg = parseProductWeightKg(weightProduct);
     if (!(actualWeightKg > 0)) {
       const error = new Error(`Poids manquant pour calculer le tarif aérien de « ${product.name || 'un produit Alibaba'} ».`);
