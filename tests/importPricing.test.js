@@ -202,6 +202,15 @@ test('poids CJ en grammes et spec Poids', () => {
   assert.equal(parseProductWeightKg({ weight: '1.2 kg' }), 1.2);
   assert.equal(parseProductWeightKg({ weightKg: 35 }), 35);
   assert.equal(parseProductWeightKg({ logistics: { grossWeight: 1.2, weightUnit: 'kg' } }), 1.2);
+  assert.equal(parseProductWeightKg({
+    rawSections: {
+      keyAttributes: {
+        attributes: [{
+          attributes: [{ name: 'Single gross weight', values: [{ value: '0.042 KG' }] }],
+        }],
+      },
+    },
+  }), 0.042);
 });
 
 test('checkout refuses to estimate a missing product weight', () => {

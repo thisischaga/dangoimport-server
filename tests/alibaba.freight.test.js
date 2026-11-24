@@ -149,6 +149,30 @@ test('freight reads explicit product volume and kilogram fields', () => {
   assert.equal(airQuote.cost, 308700);
 });
 
+test('freight reads Alibaba gross weight and package size from nested key attributes', () => {
+  const resolved = config();
+  const product = {
+    name: 'Produit Alibaba avec attributs',
+    rawSections: {
+      keyAttributes: {
+        attributes: [{
+          attributes: [
+            { name: 'Single gross weight', values: [{ value: '0.042 KG' }] },
+            { name: 'Single package size', values: [{ value: '5 x 5 x 5 cm' }] },
+          ],
+        }],
+      },
+    },
+  };
+  const seaQuote = calculateAlibabaFreightQuote([{ product, quantity: 1 }], 'BJ', 'sea', resolved);
+  const airQuote = calculateAlibabaFreightQuote([{ product, quantity: 1 }], 'BJ', 'air', resolved);
+
+  assert.equal(seaQuote.totalVolumeM3, 0.000125);
+  assert.equal(seaQuote.cost, 31);
+  assert.equal(airQuote.items[0].actualWeightKg, 0.042);
+  assert.equal(airQuote.billableWeightKg, 1);
+});
+
 test('air volumetric billing remains opt-in and applies the configured method and rounding', () => {
   const resolved = config({
     volumetric: { enabled: true, coefficient: 167, method: 'max', roundingMode: 'ceil', roundingIncrementKg: 1 },

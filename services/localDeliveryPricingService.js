@@ -163,6 +163,9 @@ function readProductWeightKg(product) {
   if (packageWeightKg !== null && packageWeightKg !== undefined && packageWeightKg !== '') {
     return parseWeightToKg(`${packageWeightKg} kg`);
   }
+  if (product.weightKg !== null && product.weightKg !== undefined && product.weightKg !== '') {
+    return parseWeightToKg(`${product.weightKg} kg`);
+  }
   const candidate = logistics.weight ?? product.weightKg ?? product.weight;
   const unit = logistics.weightUnit || product.weightUnit;
   if (typeof candidate === 'number' && unit) {
@@ -348,4 +351,6 @@ module.exports = {
   getLocalDeliveryConfig,
   updateLocalDeliveryConfig,
   calculateLocalDeliveryQuote,
+  readProductWeightKg,
+  readProductVolumeM3,
 };

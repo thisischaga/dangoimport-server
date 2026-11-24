@@ -1,5 +1,9 @@
 const AlibabaFreightConfig = require('../../Models/AlibabaFreightConfig');
-const { parseProductWeightKg, isAlibabaManagedProduct } = require('../../utils/importPricing');
+const { isAlibabaManagedProduct } = require('../../utils/importPricing');
+const {
+  readProductWeightKg,
+  readProductVolumeM3,
+} = require('../localDeliveryPricingService');
 
 const AIR_CATEGORIES = {
   normal: { label: 'Marchandises normales', initialRate: 9000, discountPercent: 2, storageDays: 21, volumetricEnabled: false },
@@ -290,19 +294,6 @@ function inferFreightCategory(product = {}, mode, categories) {
   return 'normal';
 }
 
-function productVolumeM3(product = {}) {
-  const logistics = product.logistics || {};
-  const storedVolumeM3 = Number(logistics.volumeM3 ?? product.volumeM3);
-  if (Number.isFinite(storedVolumeM3) && storedVolumeM3 > 0) return storedVolumeM3;
-  const storedCm3 = Number(logistics.volumeCm3 ?? product.volumeCm3);
-  if (Number.isFinite(storedCm3) && storedCm3 > 0) return storedCm3 / 1_000_000;
-  const dims = [logistics.packageLength, logistics.packageWidth, logistics.packageHeight].map(Number);
-  if (dims.some((value) => !Number.isFinite(value) || value <= 0)) return 0;
-  const unit = String(logistics.dimensionUnit || 'cm').toLowerCase();
-  const toMeters = unit === 'm' ? 1 : unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : 0;
-  return toMeters ? dims.reduce((volume, dimension) => volume * dimension * toMeters, 1) : 0;
-}
-
 function roundBillableWeight(weight, settings) {
   const increment = settings.roundingIncrementKg;
   if (settings.roundingMode === 'none') return Math.round(weight * 1000) / 1000;
@@ -353,7 +344,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
     const category = mode.categories[categoryKey];
 
     if (modeKey === 'sea') {
-      const actualVolumeM3 = productVolumeM3(product);
+      const actualVolumeM3 = readProductVolumeM3(product);
       const volumeM3 = actualVolumeM3;
       if (!(volumeM3 > 0)) {
         const error = new Error(`Dimensions manquantes pour calculer le tarif maritime de « ${product.name || 'un produit Alibaba'} ».`);
@@ -379,23 +370,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
       continue;
     }
 
-    const rawWeight = logistics.grossWeight
-      ?? logistics.netWeight
-      ?? logistics.weight
-      ?? product.weightKg
-      ?? product.weight;
-    const storedUnit = logistics.weightUnit || product.weightUnit;
-    const hasKgField = logistics.grossWeight != null
-      || logistics.netWeight != null
-      || product.weightKg != null;
-    const hasExplicitUnit = typeof rawWeight === 'string' && /\b(?:kg|kgs|g|gr|lbs?)\b/i.test(rawWeight);
-    const hasMeasuredWeightUnit = typeof rawWeight === 'number' && (storedUnit || hasKgField)
-      || (hasKgField && !hasExplicitUnit);
-    const measuredWeight = hasMeasuredWeightUnit
-      ? `${rawWeight} ${storedUnit || 'kg'}`
-      : rawWeight;
-    const weightProduct = { ...product, weight: measuredWeight };
-    const actualWeightKg = parseProductWeightKg(weightProduct);
+    const actualWeightKg = readProductWeightKg(product);
     if (!(actualWeightKg > 0)) {
       const error = new Error(`Poids manquant pour calculer le tarif aérien de « ${product.name || 'un produit Alibaba'} ».`);
       error.status = 422;
@@ -407,7 +382,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
       && (productVolumetricSetting === null || productVolumetricSetting === undefined
         ? category.volumetricEnabled === true
         : productVolumetricSetting === true);
-    const volumeM3 = useVolumetric ? productVolumeM3(product) : 0;
+    const volumeM3 = useVolumetric ? readProductVolumeM3(product) : 0;
     if (useVolumetric && !(volumeM3 > 0)) {
       const error = new Error(`Dimensions manquantes pour le calcul volumétrique de « ${product.name || 'un produit Alibaba'} ».`);
       error.status = 422;

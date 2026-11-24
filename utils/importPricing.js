@@ -100,9 +100,44 @@ function parseWeightToKg(raw) {
 
 function weightFromSpecifications(product = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
-  const rows = Array.isArray(safeProduct.specifications) ? safeProduct.specifications : [];
-  const row = rows.find((entry) => /poids|weight|masse/i.test(String(entry?.key || '')));
-  return row?.value;
+  let weight;
+  const visit = (value, depth = 0) => {
+    if (weight != null || depth > 8 || value == null) return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, depth + 1));
+      return;
+    }
+    if (typeof value !== 'object') return;
+
+    const key = String(value.key || value.name || value.attr_name_desc || value.attr_name
+      || value.attributeName || value.prop_name || value.property_name || '');
+    const directValue = value.value ?? value.val ?? value.attr_value_desc ?? value.attr_value
+      ?? value.attributeValue ?? value.prop_value ?? value.property_value;
+    if (/poids|weight|masse/i.test(key) && directValue != null) {
+      weight = directValue;
+      return;
+    }
+    if (/poids|weight|masse/i.test(key) && Array.isArray(value.values)) {
+      const entry = value.values.find((item) => item != null);
+      if (entry != null) {
+        weight = typeof entry === 'object'
+          ? entry.value ?? entry.val ?? entry.attr_value_desc ?? entry.attr_value
+          : entry;
+        if (weight != null) return;
+      }
+    }
+    for (const field of ['specifications', 'attributes', 'attribute_list', 'attr_list', 'product_attributes']) {
+      if (value[field]) visit(value[field], depth + 1);
+    }
+  };
+
+  visit(safeProduct.specifications);
+  visit(safeProduct.attributes);
+  visit(safeProduct.rawSections?.keyAttributes);
+  visit(safeProduct.rawPayload?.keyAttributes);
+  visit(safeProduct.rawPayload?.result_data?.keyAttributes);
+  visit(safeProduct.rawPayload?.raw?.keyAttributes);
+  return weight;
 }
 
 function parseProductWeightKg(product = {}) {
