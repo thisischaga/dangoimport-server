@@ -26,7 +26,7 @@ const DEFAULT_ALIBABA_FREIGHT_CONFIG = Object.freeze({
       label: 'Bénin',
       defaultMode: 'air',
       air: { enabled: true, categories: AIR_CATEGORIES },
-      sea: { enabled: true, fallbackVolumeM3: 0, categories: SEA_CATEGORIES },
+      sea: { enabled: true, categories: SEA_CATEGORIES },
     },
     TG: {
       label: 'Togo',
@@ -34,7 +34,6 @@ const DEFAULT_ALIBABA_FREIGHT_CONFIG = Object.freeze({
       air: { enabled: false, categories: TOGO_AIR_CATEGORIES },
       sea: {
         enabled: true,
-        fallbackVolumeM3: 0.01,
         categories: {
           normal: { ...SEA_CATEGORIES.normal, initialRate: 180000 },
           fragile: { ...SEA_CATEGORIES.fragile, initialRate: 210000 },
@@ -174,15 +173,6 @@ function normalizeMode(input = {}, defaults, label) {
   }
   return {
     enabled,
-    ...(Object.prototype.hasOwnProperty.call(defaults, 'fallbackVolumeM3')
-      ? {
-          fallbackVolumeM3: positiveNumber(
-            input.fallbackVolumeM3 ?? defaults.fallbackVolumeM3,
-            `Volume forfaitaire ${label}`,
-            { min: 0, max: 1 },
-          ),
-        }
-      : {}),
     categories,
   };
 }
@@ -223,9 +213,6 @@ async function updateAlibabaFreightConfig(payload = {}, changedBy = 'admin') {
       const before = current.destinations[destinationCode][mode];
       const after = destination[mode];
       if (before.enabled !== after.enabled) changedFields.push(`destinations.${destinationCode}.${mode}.enabled`);
-      if (before.fallbackVolumeM3 !== after.fallbackVolumeM3) {
-        changedFields.push(`destinations.${destinationCode}.${mode}.fallbackVolumeM3`);
-      }
       for (const [categoryKey, category] of Object.entries(after.categories)) {
         const oldCategory = before.categories[categoryKey];
         for (const field of ['initialRate', 'discountPercent', 'rate', 'storageDays', 'volumetricEnabled']) {
@@ -365,15 +352,11 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
 
     if (modeKey === 'sea') {
       const actualVolumeM3 = productVolumeM3(product);
-      const volumeEstimated = !(actualVolumeM3 > 0) && mode.fallbackVolumeM3 > 0;
-      const volumeM3 = actualVolumeM3 > 0
-        ? actualVolumeM3
-        : volumeEstimated
-          ? mode.fallbackVolumeM3
-          : 0;
+      const volumeM3 = actualVolumeM3;
       if (!(volumeM3 > 0)) {
         const error = new Error(`Dimensions manquantes pour calculer le tarif maritime de « ${product.name || 'un produit Alibaba'} ».`);
         error.status = 422;
+        error.code = 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED';
         throw error;
       }
       const lineVolume = volumeM3 * quantity;
@@ -387,7 +370,6 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
         rate: category.rate,
         quantity,
         volumeM3,
-        volumeEstimated,
         billableVolumeM3: lineVolume,
         storageDays: category.storageDays,
         cost: lineCost,
@@ -403,6 +385,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
     if (!(actualWeightKg > 0)) {
       const error = new Error(`Poids manquant pour calculer le tarif aérien de « ${product.name || 'un produit Alibaba'} ».`);
       error.status = 422;
+      error.code = 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED';
       throw error;
     }
     const productVolumetricSetting = logistics.volumetricEnabled;
@@ -414,6 +397,7 @@ function calculateAlibabaFreightQuote(lines, countryCode, requestedMode, config)
     if (useVolumetric && !(volumeM3 > 0)) {
       const error = new Error(`Dimensions manquantes pour le calcul volumétrique de « ${product.name || 'un produit Alibaba'} ».`);
       error.status = 422;
+      error.code = 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED';
       throw error;
     }
     const volumetricWeightKg = useVolumetric ? volumeM3 * config.volumetric.coefficient : 0;

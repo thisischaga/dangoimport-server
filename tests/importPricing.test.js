@@ -200,6 +200,40 @@ test('poids CJ en grammes et spec Poids', () => {
     specifications: [{ key: 'Poids', value: '80 g' }],
   }), 0.08);
   assert.equal(parseProductWeightKg({ weight: '1.2 kg' }), 1.2);
+  assert.equal(parseProductWeightKg({ logistics: { grossWeight: 1.2, weightUnit: 'kg' } }), 1.2);
+});
+
+test('checkout refuses to estimate a missing product weight', () => {
+  assert.equal(parseProductWeightKg({}), 0);
+  assert.throws(
+    () => calculateImportQuote([{ quantity: 1, product: { name: 'Produit sans poids' } }]),
+    (error) => error.code === 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED',
+  );
+});
+
+test('checkout applies configured transit rates per product category', () => {
+  const quote = calculateImportQuote([
+    {
+      quantity: 1,
+      product: { name: 'Produit normal', convertedSupplierPriceFCFA: 1000, weight: 1, shippingCategory: 'normal' },
+    },
+    {
+      quantity: 1,
+      product: { name: 'Produit fragile', convertedSupplierPriceFCFA: 1000, weight: 1, shippingCategory: 'fragile' },
+    },
+  ], {
+    shippingRatePerKg: 5000,
+    localDeliveryFee: 0,
+    shippingRates: {
+      normal: { ratePerKg: 5000, minDays: 20, maxDays: 30 },
+      fragile: { ratePerKg: 20000, minDays: 20, maxDays: 30 },
+    },
+  });
+
+  assert.equal(quote.items[0].shipping.ratePerKg, 5000);
+  assert.equal(quote.items[1].shipping.ratePerKg, 20000);
+  assert.equal(quote.shippingCost, 25000);
+  assert.equal(quote.shippingRatePerKg, null);
 });
 
 test('panier groupé : somme des kg × 13500, sans majoration 1.30', () => {

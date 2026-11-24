@@ -18,6 +18,7 @@ const { getImportPricingConfig } = require('./importPricingService');
 const {
   getAlibabaFreightConfig,
   calculateAlibabaFreightQuote,
+  inferFreightCategory,
 } = require('./alibaba/alibabaFreightService');
 const {
   getLocalDeliveryConfig,
@@ -121,6 +122,12 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
   const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
   let freightConfig = null;
   if (alibabaLines.length > 0) {
+    if (!transportMode) {
+      const error = new Error('Choisissez un mode de transport avant de calculer les frais.');
+      error.status = 400;
+      error.code = 'TRANSPORT_MODE_REQUIRED';
+      throw error;
+    }
     freightConfig = await getAlibabaFreightConfig();
     const freight = calculateAlibabaFreightQuote(alibabaLines, countryCode, transportMode, freightConfig);
     const standardShipping = quote.items.reduce((sum, itemQuote, index) => (
@@ -187,6 +194,49 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
       localDeliveryConfig: localConfig,
     },
   };
+}
+
+async function getAvailableTransportOptions({ items = [], countryCode } = {}) {
+  const normalizedCountryCode = normalizeCountryCode(countryCode);
+  const lines = await loadCheckoutProducts(items);
+  const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
+  if (!alibabaLines.length) {
+    return { requiresSelection: false, options: [] };
+  }
+
+  const config = await getAlibabaFreightConfig();
+  const destination = config.destinations[normalizedCountryCode];
+  if (!destination) {
+    const error = new Error('Destination non configurée pour le transport InterCargo.');
+    error.status = 422;
+    error.code = 'IMPORT_TRANSPORT_UNAVAILABLE';
+    throw error;
+  }
+
+  const options = ['air', 'sea']
+    .filter((modeKey) => {
+      const mode = destination[modeKey];
+      return mode.enabled && alibabaLines.every((line) => {
+        const product = line.product;
+        const allowedModes = product.logistics?.allowedTransportModes || [];
+        if (allowedModes.length && !allowedModes.includes(modeKey)) return false;
+        const categoryKey = inferFreightCategory(product, modeKey, mode.categories);
+        return Number.isFinite(Number(mode.categories[categoryKey]?.rate))
+          && Number(mode.categories[categoryKey].rate) > 0;
+      });
+    })
+    .map((id) => ({
+      id,
+      label: id === 'air' ? 'Transport aérien' : 'Transport maritime',
+    }));
+
+  if (!options.length) {
+    const error = new Error('Aucun mode de transport disponible pour ce panier et ce pays.');
+    error.status = 422;
+    error.code = 'IMPORT_TRANSPORT_UNAVAILABLE';
+    throw error;
+  }
+  return { requiresSelection: true, countryCode: normalizedCountryCode, options };
 }
 
 function stableStringify(value) {
@@ -451,6 +501,7 @@ function cartIsDropshippingOnly(items = []) {
 module.exports = {
   DANGO_TRANSIT_OPTION_ID,
   getImportShippingQuote,
+  getAvailableTransportOptions,
   createCheckoutQuote,
   loadCheckoutQuote,
   getCjShippingOptions,

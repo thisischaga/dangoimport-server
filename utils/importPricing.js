@@ -107,7 +107,15 @@ function weightFromSpecifications(product = {}) {
 
 function parseProductWeightKg(product = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
-  const storedWeight = safeProduct.weightKg ?? safeProduct.weight;
+  const logistics = safeProduct.logistics || {};
+  const logisticsWeight = logistics.grossWeight
+    ?? logistics.netWeight
+    ?? logistics.weight;
+  const storedWeight = safeProduct.weightKg
+    ?? (typeof logisticsWeight === 'number' && logistics.weightUnit
+      ? `${logisticsWeight} ${logistics.weightUnit}`
+      : logisticsWeight)
+    ?? safeProduct.weight;
   const storedKg = parseWeightToKg(storedWeight);
   const specKg = parseWeightToKg(weightFromSpecifications(safeProduct));
   const supplierKg = parseWeightToKg(
@@ -125,8 +133,7 @@ function parseProductWeightKg(product = {}) {
   if (specKg > 0) return specKg;
   if (supplierKg > 0) return supplierKg;
   if (storedKg > 0) return storedKg;
-  // Poids inconnu → on utilise 0.5 kg par défaut pour éviter des frais nuls
-  return 0.5;
+  return 0;
 }
 
 function inferShippingCategory(product = {}) {
@@ -382,6 +389,12 @@ function calculateImportOrderPricing(lines = [], config) {
     const quantity = line.quantity != null ? line.quantity : 1;
     assertValidOrderQuantity(product, quantity, cfg);
     const isAlibaba = isAlibabaManagedProduct(product);
+    if (!isAlibaba && !(parseProductWeightKg(product) > 0)) {
+      const error = new Error(`Poids manquant pour « ${product.name || product.title || 'un produit'} ».`);
+      error.status = 422;
+      error.code = 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED';
+      throw error;
+    }
     return calculateImportPricing(product, {
       quantity,
       config: cfg,
@@ -391,8 +404,9 @@ function calculateImportOrderPricing(lines = [], config) {
   });
   const itemsTotal = itemQuotes.reduce((sum, row) => sum + row.productLineTotal, 0);
   const totalWeightKg = roundKg(itemQuotes.reduce((sum, row) => sum + row.shipping.billedWeight, 0));
-  const ratePerKg = toNumber(cfg.shippingRatePerKg, 10000);
-  const shippingTransitCost = Math.round(ratePerKg * totalWeightKg);
+  const ratesPerKg = [...new Set(itemQuotes.map((row) => row.shipping.ratePerKg))];
+  const ratePerKg = ratesPerKg.length === 1 ? ratesPerKg[0] : null;
+  const shippingTransitCost = itemQuotes.reduce((sum, row) => sum + row.shippingBaseCost, 0);
   const localDeliveryFee = toNumber(cfg.localDeliveryFee, 2000);
   const shippingCost = shippingTransitCost + localDeliveryFee;
   const days = itemQuotes.map((row) => row.estimatedDays);

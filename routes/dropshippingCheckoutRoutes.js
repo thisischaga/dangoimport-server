@@ -2,10 +2,37 @@ const express = require('express');
 const verifyToken = require('../Middlewares/verifyTokens');
 const {
   createCheckoutQuote,
+  getAvailableTransportOptions,
   validateDropshippingCheckoutPayload,
 } = require('../services/dropshippingCheckoutService');
 
 const router = express.Router();
+
+function checkoutErrorMessage(error, fallback) {
+  if ([
+    'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED',
+    'LOCAL_DELIVERY_MEASUREMENTS_REQUIRED',
+  ].includes(error.code)) {
+    return 'Une erreur est survenue.';
+  }
+  return error.message || fallback;
+}
+
+router.post('/transport-options', verifyToken, async (req, res) => {
+  try {
+    const { items, countryCode } = req.body || {};
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ success: false, message: 'Panier dropshipping vide.' });
+    }
+    const data = await getAvailableTransportOptions({ items, countryCode });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      success: false,
+      message: checkoutErrorMessage(error, 'Impossible de charger les modes de transport.'),
+    });
+  }
+});
 
 router.post('/shipping-options', verifyToken, async (req, res) => {
   try {
@@ -24,7 +51,7 @@ router.post('/shipping-options', verifyToken, async (req, res) => {
     const status = error.status || 500;
     return res.status(status).json({
       success: false,
-      message: error.message || 'Impossible de calculer la livraison.',
+      message: checkoutErrorMessage(error, 'Impossible de calculer la livraison.'),
     });
   }
 });
@@ -75,7 +102,7 @@ router.post('/validate', verifyToken, async (req, res) => {
     const status = error.status || 500;
     return res.status(status).json({
       success: false,
-      message: error.message || 'Validation checkout impossible.',
+      message: checkoutErrorMessage(error, 'Validation checkout impossible.'),
     });
   }
 });
@@ -102,7 +129,7 @@ router.post('/quote', verifyToken, async (req, res) => {
     const status = error.status || 500;
     return res.status(status).json({
       success: false,
-      message: error.message || 'Impossible de calculer la livraison.',
+      message: checkoutErrorMessage(error, 'Impossible de calculer la livraison.'),
     });
   }
 });

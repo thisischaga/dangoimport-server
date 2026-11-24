@@ -100,20 +100,20 @@ test('automatically classifies common Alibaba product categories when no overrid
   assert.equal(inferFreightCategory({ name: 'Ordinary storage basket', logistics: {} }, 'sea', resolved.destinations.BJ.sea.categories), 'normal');
 });
 
-test('Togo maritime freight estimates volume only when product dimensions are missing', () => {
+test('Togo maritime freight rejects missing dimensions instead of estimating volume', () => {
   const resolved = config();
-  const quote = calculateAlibabaFreightQuote([{
-    quantity: 1,
-    product: {
-      _id: 'item-without-dimensions',
-      name: 'Organisateur auto',
-      logistics: {},
-    },
-  }], 'TG', undefined, resolved);
-
-  assert.equal(quote.cost, 1764);
-  assert.equal(quote.totalVolumeM3, 0.01);
-  assert.equal(quote.items[0].volumeEstimated, true);
+  resolved.destinations.TG.sea.fallbackVolumeM3 = 0.01;
+  assert.throws(
+    () => calculateAlibabaFreightQuote([{
+      quantity: 1,
+      product: {
+        _id: 'item-without-dimensions',
+        name: 'Organisateur auto',
+        logistics: {},
+      },
+    }], 'TG', undefined, resolved),
+    (error) => error.code === 'IMPORT_PRODUCT_MEASUREMENTS_REQUIRED',
+  );
 
   const measuredQuote = calculateAlibabaFreightQuote([{
     quantity: 1,
@@ -129,7 +129,7 @@ test('Togo maritime freight estimates volume only when product dimensions are mi
   }], 'TG', undefined, resolved);
 
   assert.equal(measuredQuote.totalVolumeM3, 0.001);
-  assert.equal(measuredQuote.items[0].volumeEstimated, false);
+  assert.equal(measuredQuote.cost, 176);
 });
 
 test('air volumetric billing remains opt-in and applies the configured method and rounding', () => {
