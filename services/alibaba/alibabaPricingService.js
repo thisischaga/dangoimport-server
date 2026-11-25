@@ -156,16 +156,38 @@ async function repriceAlibabaCatalog(config = cachedConfig, changedBy = 'admin')
   const skipped = [];
   const cursor = AlibabaProduct.find({
     $or: [{ source: 'ALIBABA' }, { isAlibaba: true }],
-  }).select('_id category pricing supplier normalized adminHistory').lean().cursor();
+  }).select('_id category pricing supplier normalized minimumOrderQuantity sourcePriceTiers adminHistory').lean().cursor();
 
   for await (const product of cursor) {
-    const sourcePrice = product.pricing?.sourcePrice ?? product.supplier?.supplierPrice;
+    const moq = product.minimumOrderQuantity
+      ?? product.normalized?.minimumOrderQuantity
+      ?? product.pricing?.minOrderQuantity
+      ?? product.normalized?.pricing?.minOrderQuantity
+      ?? 1;
+    const sourceTiers = product.sourcePriceTiers
+      || product.normalized?.sourcePriceTiers
+      || product.pricing?.tiers
+      || product.normalized?.pricing?.tiers
+      || [];
+    const priceTier = selectAlibabaPriceTier(sourceTiers, moq);
+    if (sourceTiers.length && !priceTier) {
+      skipped.push({
+        productId: String(product._id),
+        reason: `Aucun palier fournisseur ne couvre le MOQ de ${moq} unités.`,
+      });
+      continue;
+    }
+    const sourcePrice = priceTier?.price ?? product.pricing?.sourcePrice ?? product.supplier?.supplierPrice;
     if (sourcePrice == null || Number(sourcePrice) <= 0) continue;
+    const sourceCurrency = priceTier?.currency
+      || product.pricing?.currency
+      || product.supplier?.supplierCurrency
+      || config.sourceCurrency;
     let pricing;
     try {
       pricing = calculateAlibabaPrice({
         sourcePrice,
-        currency: product.pricing?.currency || product.supplier?.supplierCurrency || config.sourceCurrency,
+        currency: sourceCurrency,
         category: product.category,
         productMarginPercent: product.pricing?.marginPercentOverride,
         manualSalePrice: product.pricing?.manualSalePrice,
@@ -195,7 +217,11 @@ async function repriceAlibabaCatalog(config = cachedConfig, changedBy = 'admin')
             convertedSupplierPriceFCFA: pricing.convertedSupplierPrice,
             marginPercent: pricing.marginPercent,
             'pricing.calculation': calculation,
+            'pricing.sourcePrice': sourcePrice,
+            'pricing.currency': sourceCurrency,
             'normalized.pricing.sellingPrice': pricing.salePrice,
+            'normalized.pricing.sourcePrice': sourcePrice,
+            'normalized.pricing.currency': sourceCurrency,
             'normalized.pricing.calculation': calculation,
           },
           $push: {
@@ -231,6 +257,22 @@ function roundSalePrice(value, mode, increment) {
   if (mode === 'up') return Math.ceil(ratio) * step;
   if (mode === 'down') return Math.floor(ratio) * step;
   return Math.round(ratio) * step;
+}
+
+function selectAlibabaPriceTier(tiers = [], quantity = 1) {
+  const qty = Math.max(1, Number(quantity) || 1);
+  const candidates = (Array.isArray(tiers) ? tiers : [])
+    .map((tier) => ({
+      tier,
+      minQuantity: Math.max(1, Number(tier.minQty ?? tier.minQuantity ?? tier.min_quantity) || 1),
+      maxQuantity: Number(tier.maxQty ?? tier.maxQuantity ?? tier.max_quantity) || null,
+    }))
+    .filter(({ tier }) => Number(tier.price) > 0)
+    .sort((a, b) => a.minQuantity - b.minQuantity);
+  const applicable = candidates.filter(({ minQuantity, maxQuantity }) => (
+    minQuantity <= qty && (maxQuantity === null || maxQuantity >= qty)
+  ));
+  return applicable.length ? applicable[applicable.length - 1].tier : null;
 }
 
 function calculateAlibabaPrice({
@@ -299,6 +341,7 @@ module.exports = {
   getAlibabaConfig,
   updateAlibabaConfig,
   repriceAlibabaCatalog,
+  selectAlibabaPriceTier,
   calculateAlibabaPrice,
   calculateAlibabaVolumeCm3,
 };

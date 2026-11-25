@@ -130,6 +130,20 @@ async function upsertAlibabaProduct(externalProductId, {
     manualSalePrice: existing?.pricing?.manualSalePrice,
     config: pricingConfig,
   });
+  const unavailableMoqTier = mapped?.importErrors?.find((error) => error.code === 'MOQ_PRICE_TIER_UNAVAILABLE');
+  if (unavailableMoqTier) {
+    const err = new Error(unavailableMoqTier.message);
+    err.status = 422;
+    err.code = unavailableMoqTier.code;
+    throw err;
+  }
+  if (!(mapped?.pricing?.supplierPrice > 0)) {
+    const err = new Error('Prix fournisseur introuvable : import refusé.');
+    err.status = 422;
+    err.code = 'SUPPLIER_PRICE_REQUIRED';
+    throw err;
+  }
+
   const rawSource = detail?.raw || detail?.rawAlibabaData || detail || {};
   const alibabaSnapshot = buildAlibabaProductRecord(rawSource, mapped);
   if (existing && !overwriteCommercial) {
@@ -150,13 +164,6 @@ async function upsertAlibabaProduct(externalProductId, {
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 
-  if (!(mapped?.pricing?.supplierPrice > 0)) {
-    const err = new Error('Prix fournisseur introuvable : import refusé.');
-    err.status = 422;
-    err.code = 'SUPPLIER_PRICE_REQUIRED';
-    throw err;
-  }
-
   if (Array.isArray(variantIds) && variantIds.length) {
     const allowed = new Set(variantIds.map((v) => String(v).trim()));
     mapped.variants = (mapped.variants || []).filter((v) => allowed.has(String(v.attributes?.externalVariantId || v.sku || '')));
@@ -173,7 +180,6 @@ async function upsertAlibabaProduct(externalProductId, {
       payload.description = existing.description || payload.description;
       payload.shortDescription = existing.shortDescription || payload.shortDescription;
       payload.category = existing.category || payload.category;
-      payload.price = existing.price || payload.price;
       payload.marginPercent = existing.marginPercent ?? payload.marginPercent;
       payload.isPublished = existing.isPublished;
       payload.publicationStatus = existing.publicationStatus || (existing.isPublished ? 'published' : 'draft');

@@ -2,7 +2,11 @@ const slugify = require('slugify');
 const { alibabaConfig } = require('../../config/alibaba');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
 const { inferShippingCategory, parseWeightToKg } = require('../../utils/importPricing');
-const { getAlibabaConfig, calculateAlibabaPrice } = require('./alibabaPricingService');
+const {
+  getAlibabaConfig,
+  calculateAlibabaPrice,
+  selectAlibabaPriceTier,
+} = require('./alibabaPricingService');
 const { translateCatalogTextForImport } = require('../cj/cjLocalization');
 const { extractImages, extractAlibabaSpecifications } = require('./alibabaProductService');
 
@@ -622,6 +626,15 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, {
   const externalProductId = String(source.externalProductId || source.offerId || listItem.externalProductId || '').trim();
   const rawCurrency = String(source.currency || source.raw?.price?.currency || source.raw?.currency || pricingConfig.sourceCurrency).toUpperCase();
   const rawPrice = parseCnyPrice(source.supplierPrice ?? source.price ?? source.raw?.price?.amount ?? source.raw?.price);
+  const priceTiers = extractPriceTiers(source);
+  const declaredMoq = Math.max(1, toNumber(
+    source.minOrderQuantity
+      ?? source.minimumOrderQuantity
+      ?? source.wholesaleTrade?.min_order_quantity
+      ?? source.raw?.wholesale_trade?.min_order_quantity,
+    1,
+  ));
+  const moqPriceTier = selectAlibabaPriceTier(priceTiers, declaredMoq);
 
   const skuLadderMin = (() => {
     const skus = source.skuInfos || source.raw?.skuInfos || [];
@@ -639,8 +652,12 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, {
     }).filter((entry) => entry.price > 0);
     return prices.sort((a, b) => a.price - b.price)[0] || null;
   })();
-  const effectiveRawPrice = rawPrice || skuLadderMin?.price || 0;
-  const effectiveCurrency = rawPrice ? rawCurrency : String(skuLadderMin?.currency || rawCurrency).toUpperCase();
+  const effectiveRawPrice = priceTiers.length
+    ? Number(moqPriceTier?.price) || 0
+    : rawPrice || skuLadderMin?.price || 0;
+  const effectiveCurrency = String(
+    moqPriceTier?.currency || (rawPrice ? rawCurrency : skuLadderMin?.currency || rawCurrency),
+  ).toUpperCase();
   const commercialCategory = mapAlibabaCategoryToDangoStore(source.category || 'Général', source.name || source.subject || '');
   const unitPricing = calculateAlibabaPrice({
     sourcePrice: effectiveRawPrice,
@@ -666,6 +683,14 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, {
   const warnings = [];
   const errors = [];
 
+  if (priceTiers.length > 0 && !moqPriceTier) {
+    errors.push({
+      code: 'MOQ_PRICE_TIER_UNAVAILABLE',
+      message: `Aucun palier de prix fournisseur ne couvre le minimum de commande de ${declaredMoq} unités.`,
+      field: 'minimumOrderQuantity',
+    });
+  }
+
   if (stockAnalysis.isSuspicious) {
     warnings.push({
       code: 'SUSPICIOUS_STOCK_MAX_INT',
@@ -674,8 +699,6 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, {
     });
   }
 
-  const priceTiers = extractPriceTiers(source);
-  const declaredMoq = Math.max(1, toNumber(source.minOrderQuantity || source.wholesaleTrade?.min_order_quantity, 1));
   const moqConflict = detectMoqConflict(declaredMoq, priceTiers);
   if (moqConflict.hasConflict) {
     warnings.push({

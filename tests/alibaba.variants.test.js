@@ -124,6 +124,61 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   assert.equal('supplier' in publicDoc, false);
 });
 
+test('Alibaba catalog price uses the configured tier applicable to the MOQ', async () => {
+  const config = {
+    ...DEFAULT_ALIBABA_CONFIG,
+    usdToXofRate: 1000,
+    generalMarginPercent: 30,
+    enableMinimumSalePrice: false,
+    enableRounding: false,
+    additionalFeesXof: 0,
+  };
+  const source = {
+    offerId: '600123456790',
+    subject: 'Hachoir manuel',
+    supplierPrice: 0.384,
+    currency: 'USD',
+    minOrderQuantity: 16,
+    ladderPrices: [
+      { min_quantity: 16, max_quantity: 199, price: 0.755, currency: 'USD' },
+      { min_quantity: 200, max_quantity: 1999, price: 0.692, currency: 'USD' },
+      { min_quantity: 2000, price: 0.384, currency: 'USD' },
+    ],
+  };
+
+  const mapped = await mapAlibabaProductToDango(source, source, {
+    skipTranslation: true,
+    config,
+  });
+  const record = buildAlibabaProductRecord(source, mapped);
+  const publicDoc = toPublicProduct({
+    ...record,
+    isAlibaba: true,
+    price: 499,
+  }, config);
+
+  assert.equal(mapped.pricing.sourcePrice, 0.755);
+  assert.equal(mapped.pricing.sellingPrice, 982);
+  assert.equal(record.pricing.sourcePrice, 0.755);
+  assert.equal(record.pricing.currency, 'USD');
+  assert.equal(publicDoc.price, 982);
+
+  const unavailableTier = toPublicProduct({
+    isAlibaba: true,
+    price: 499,
+    minimumOrderQuantity: 16,
+    sourcePriceTiers: [{ minQty: 20, price: 0.384, currency: 'USD' }],
+  }, config);
+  assert.equal('price' in unavailableTier, false);
+
+  const invalidMapping = await mapAlibabaProductToDango({
+    ...source,
+    ladderPrices: [{ min_quantity: 20, price: 0.384, currency: 'USD' }],
+  }, null, { skipTranslation: true, config });
+  assert.equal(invalidMapping.pricing.supplierPrice, 0);
+  assert.ok(invalidMapping.importErrors.some((error) => error.code === 'MOQ_PRICE_TIER_UNAVAILABLE'));
+});
+
 test('public Alibaba serialization preserves explicit unpublished status', () => {
   const publicDoc = toPublicProduct({
     isAlibaba: true,

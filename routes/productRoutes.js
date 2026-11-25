@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const AlibabaProduct = require('../Models/AlibabaProduct');
 const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
+const { getAlibabaConfig } = require('../services/alibaba/alibabaPricingService');
 const verifyToken = require('../Middlewares/verifyTokens');
 const { requireAdminFromDb } = require('../Middlewares/securityHelpers');
 
@@ -116,10 +117,11 @@ router.get('/', async (req, res) => {
         .limit(limit)
         .lean(),
     ]);
+    const pricingConfig = await getAlibabaConfig();
 
     const products = rawProducts.map((doc) => {
       try {
-        const pub = toPublicProduct(doc);
+        const pub = toPublicProduct(doc, pricingConfig);
         return pub || doc;
       } catch (err) {
         console.error('[productRoutes] Error formatting doc:', err);
@@ -159,7 +161,8 @@ router.get('/featured', async (req, res) => {
       .limit(limit)
       .lean();
 
-    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
+    const pricingConfig = await getAlibabaConfig();
+    const products = rawProducts.map((doc) => toPublicProduct(doc, pricingConfig)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,
@@ -235,7 +238,8 @@ router.get('/similar/:id', async (req, res) => {
       .limit(8)
       .lean();
 
-    const similar = rawSimilar.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
+    const pricingConfig = await getAlibabaConfig();
+    const similar = rawSimilar.map((doc) => toPublicProduct(doc, pricingConfig)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,
@@ -276,7 +280,8 @@ router.get('/vendor/:vendorName', async (req, res) => {
       .limit(50)
       .lean();
 
-    const products = rawProducts.map((doc) => toPublicProduct(doc)).filter(isPubliclyVisibleProduct);
+    const pricingConfig = await getAlibabaConfig();
+    const products = rawProducts.map((doc) => toPublicProduct(doc, pricingConfig)).filter(isPubliclyVisibleProduct);
 
     return res.json({
       success: true,

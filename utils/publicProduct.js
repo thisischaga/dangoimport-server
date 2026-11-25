@@ -44,7 +44,13 @@ const INTERNAL_FIELDS = [
 function computePublicPriceTiers(doc = {}, config) {
   const tiers = Array.isArray(doc.sourcePriceTiers) && doc.sourcePriceTiers.length > 0
     ? doc.sourcePriceTiers
-    : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices : []);
+    : Array.isArray(doc.normalized?.sourcePriceTiers) && doc.normalized.sourcePriceTiers.length > 0
+      ? doc.normalized.sourcePriceTiers
+      : Array.isArray(doc.pricing?.tiers) && doc.pricing.tiers.length > 0
+        ? doc.pricing.tiers
+        : Array.isArray(doc.normalized?.pricing?.tiers) && doc.normalized.pricing.tiers.length > 0
+          ? doc.normalized.pricing.tiers
+          : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices : []);
 
   if (!tiers.length || !config) return [];
 
@@ -68,6 +74,15 @@ function computePublicPriceTiers(doc = {}, config) {
       currency: price.saleCurrency,
     };
   }).filter((tier) => tier && tier.unitPrice > 0).sort((a, b) => a.minQuantity - b.minQuantity);
+}
+
+function selectPublicPriceTier(tiers, quantity) {
+  if (!tiers.length) return null;
+  const qty = Math.max(1, Number(quantity) || 1);
+  const applicable = tiers.filter((tier) => (
+    tier.minQuantity <= qty && (tier.maxQuantity === null || tier.maxQuantity >= qty)
+  ));
+  return applicable.length ? applicable[applicable.length - 1] : null;
 }
 
 function sanitizePublicVariantList(variants = []) {
@@ -108,7 +123,7 @@ function resolveLocalOriginLabel(doc = {}) {
   return '';
 }
 
-function toPublicProduct(product) {
+function toPublicProduct(product, pricingConfig) {
   if (!product) return null;
 
   const doc = typeof product.toObject === 'function' ? product.toObject() : { ...product };
@@ -173,7 +188,18 @@ function toPublicProduct(product) {
     const storedSalePrice = doc.price
       ?? doc.pricing?.calculation?.salePrice
       ?? doc.normalized?.pricing?.sellingPrice;
-    if (Number.isFinite(Number(storedSalePrice)) && Number(storedSalePrice) > 0) {
+    const publicPriceTiers = computePublicPriceTiers(doc, pricingConfig);
+    const moq = doc.minimumOrderQuantity
+      ?? doc.normalized?.minimumOrderQuantity
+      ?? doc.pricing?.minOrderQuantity
+      ?? doc.normalized?.pricing?.minOrderQuantity
+      ?? 1;
+    const moqPriceTier = selectPublicPriceTier(publicPriceTiers, moq);
+    if (publicPriceTiers.length > 0 && !moqPriceTier) {
+      delete publicDoc.price;
+    } else if (moqPriceTier) {
+      publicDoc.price = moqPriceTier.unitPrice;
+    } else if (Number.isFinite(Number(storedSalePrice)) && Number(storedSalePrice) > 0) {
       publicDoc.price = Number(storedSalePrice);
     } else {
       delete publicDoc.price;
@@ -549,6 +575,9 @@ async function toPublicProductDetail(product, pricingConfig) {
     || doc.variants
     || [];
   const hasSourceTiers = (Array.isArray(doc.sourcePriceTiers) && doc.sourcePriceTiers.length > 0)
+    || (Array.isArray(doc.normalized?.sourcePriceTiers) && doc.normalized.sourcePriceTiers.length > 0)
+    || (Array.isArray(doc.pricing?.tiers) && doc.pricing.tiers.length > 0)
+    || (Array.isArray(doc.normalized?.pricing?.tiers) && doc.normalized.pricing.tiers.length > 0)
     || (Array.isArray(doc.rawAlibabaData?.ladderPrices) && doc.rawAlibabaData.ladderPrices.length > 0);
   const hasRawSkuPrices = !Array.isArray(doc.variants) || doc.variants.length === 0
     ? rawSkus.some((sku) => Number(sku.price ?? sku.ladder_price?.[0]?.price) > 0)
@@ -559,6 +588,14 @@ async function toPublicProductDetail(product, pricingConfig) {
   const priceTiers = computePublicPriceTiers(doc, activePricingConfig);
   if (priceTiers.length > 0) {
     publicDoc.publicPriceTiers = priceTiers;
+    const moq = doc.minimumOrderQuantity
+      ?? doc.normalized?.minimumOrderQuantity
+      ?? doc.pricing?.minOrderQuantity
+      ?? doc.normalized?.pricing?.minOrderQuantity
+      ?? 1;
+    const moqPriceTier = selectPublicPriceTier(priceTiers, moq);
+    if (moqPriceTier) publicDoc.price = moqPriceTier.unitPrice;
+    else delete publicDoc.price;
   }
 
   // 2. Conditionnement & Vente en gros
