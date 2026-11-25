@@ -162,6 +162,10 @@ test('Alibaba catalog price uses the configured tier applicable to the MOQ', asy
   assert.equal(record.pricing.sourcePrice, 0.755);
   assert.equal(record.pricing.currency, 'USD');
   assert.equal(publicDoc.price, 982);
+  assert.deepEqual(
+    publicDoc.publicPriceTiers.map((tier) => tier.unitPrice),
+    [982, 900, 499],
+  );
 
   const unavailableTier = toPublicProduct({
     isAlibaba: true,

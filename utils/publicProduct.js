@@ -195,6 +195,8 @@ function toPublicProduct(product, pricingConfig) {
       ?? doc.normalized?.pricing?.minOrderQuantity
       ?? 1;
     const moqPriceTier = selectPublicPriceTier(publicPriceTiers, moq);
+    if (moqPriceTier) publicDoc.publicPriceTiers = publicPriceTiers;
+    else delete publicDoc.publicPriceTiers;
     if (publicPriceTiers.length > 0 && !moqPriceTier) {
       delete publicDoc.price;
     } else if (moqPriceTier) {
