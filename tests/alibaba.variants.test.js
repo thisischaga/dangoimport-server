@@ -439,7 +439,7 @@ test('public Alibaba tier and SKU prices use the configured price service withou
     sourcePriceTiers: [{ minQty: 1, price: 10, currency: 'USD' }],
     rawPayload: {
       result_data: {
-        skus: [{ sku_id: 'sku-1', price: 10, currency: 'USD', sku_attr_list: [] }],
+        skus: [{ sku_id: 'sku-1', price: 10, currency: 'USD', amount_on_sale: 250, sku_attr_list: [] }],
       },
     },
   }, config);
@@ -447,7 +447,8 @@ test('public Alibaba tier and SKU prices use the configured price service withou
   assert.equal(detail.price, 6000);
   assert.equal(detail.publicPriceTiers[0].unitPrice, 6000);
   assert.equal(detail.variants[0].price, 6000);
-  assert.equal(detail.variants[0].stock, null);
+  assert.equal(detail.variants[0].stock, 0);
+  assert.equal(detail.stock, 0);
   assert.equal(detail.variants[0].availability, 'UNKNOWN');
 });
 

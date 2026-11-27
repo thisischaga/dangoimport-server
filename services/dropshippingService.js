@@ -636,7 +636,9 @@ async function syncDropshippingProduct(productId) {
     || String(product.source || '').toUpperCase() === 'ALIBABA'
     || product.importSourceType === 'ALIBABA_API'
     || /^alibaba:/i.test(String(product.externalSourceKey || ''));
-  const platform = String(product.supplier?.platform || (isAlibaba ? 'alibaba' : 'manual')).toLowerCase();
+  const platform = isAlibaba
+    ? 'alibaba'
+    : String(product.supplier?.platform || 'manual').toLowerCase();
 
   if (platform === 'cj' || isCjDropshippingProduct(product.toObject())) {
     const { syncSingleCjProduct } = require('./cj/cjSyncService');

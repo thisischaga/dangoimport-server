@@ -742,12 +742,6 @@ async function toPublicProductDetail(product, pricingConfig) {
             config: activePricingConfig,
           }).salePrice
           : null;
-        const stockValue = sku.inventory?.quantityRaw
-          ?? sku.inventory?.quantity
-          ?? sku.inventory_count
-          ?? sku.inventoryCount
-          ?? sku.stock
-          ?? null;
         return {
           skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
           name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
