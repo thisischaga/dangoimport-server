@@ -99,7 +99,9 @@ function normalizeAttributes(value) {
 }
 
 function normalizeSkuVariant(rawSku = {}, index = 0) {
-  const skuId = toStringSafe(rawSku.skuId || rawSku.sku_id || rawSku.id || rawSku.specId || rawSku.skuID || index, '');
+  const skuId = toStringSafe(
+    rawSku.skuId || rawSku.sku_id || rawSku.id || rawSku.specId || rawSku.skuID || `sku-${index + 1}`,
+  );
   const sellerSkuId = toStringSafe(rawSku.seller_sku_id || rawSku.sellerSkuId || rawSku.seller_sku_id_ || '', '');
   const productId = toStringSafe(rawSku.productId || rawSku.product_id || rawSku.productid || '', '');
 

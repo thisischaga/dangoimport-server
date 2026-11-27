@@ -580,11 +580,13 @@ async function mapAlibabaVariants(skuInfos = [], {
     const rawStock = rawStockValue == null || rawStockValue === '' ? null : toNumber(rawStockValue, null);
     const isStockSuspicious = rawStock >= 2147483647;
     const stock = rawStock == null || isStockSuspicious ? 0 : Math.max(0, rawStock);
+    const skuId = String(sku.skuId || sku.sku_id || sku.specId || sku.seller_sku_id || sku.sellerSkuId || `sku-${index + 1}`);
 
     results.push({
       name: skuName,
-      sku: String(sku.skuId || sku.sku_id || sku.specId || ''),
-      sourceSkuId: String(sku.skuId || sku.sku_id || sku.specId || sku.seller_sku_id || ''),
+      skuId,
+      sku: skuId,
+      sourceSkuId: skuId,
       price: variantPricing.salePrice,
       stock,
       sourcePrice: variantPricing.supplierPriceUsd,

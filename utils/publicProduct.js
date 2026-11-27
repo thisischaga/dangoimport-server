@@ -185,9 +185,11 @@ function toPublicProduct(product, pricingConfig) {
     publicDoc.image = publicDoc.mainImage;
     publicDoc.images = galleryUrls.length > 0 ? galleryUrls : (publicDoc.mainImage ? [publicDoc.mainImage] : []);
 
-    const storedSalePrice = doc.price
-      ?? doc.pricing?.calculation?.salePrice
-      ?? doc.normalized?.pricing?.sellingPrice;
+    const storedSalePrice = [
+      doc.price,
+      doc.pricing?.calculation?.salePrice,
+      doc.normalized?.pricing?.sellingPrice,
+    ].map(Number).find((price) => Number.isFinite(price) && price > 0);
     const publicPriceTiers = computePublicPriceTiers(doc, pricingConfig);
     const moq = doc.minimumOrderQuantity
       ?? doc.normalized?.minimumOrderQuantity

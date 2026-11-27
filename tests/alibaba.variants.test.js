@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mapAlibabaProductToDango, mapToDropshippingPayload } = require('../services/alibaba/alibabaMapper');
+const { normalizeAlibabaProductSnapshot } = require('../services/alibaba/alibabaProductNormalizer');
+const AlibabaProduct = require('../Models/AlibabaProduct');
 const { DEFAULT_ALIBABA_CONFIG } = require('../services/alibaba/alibabaPricingService');
 const { buildAlibabaProductRecord } = require('../services/alibaba/alibabaImportService');
 const { toPublicProduct, toPublicProductDetail } = require('../utils/publicProduct');
@@ -58,6 +60,37 @@ test('mapAlibabaProductToDango extracts attributes when skuName is present or ab
   // Product level color & size arrays
   assert.deepEqual(mapped.color, ['Noir', 'Rouge']);
   assert.deepEqual(mapped.size, ['Large', 'Medium']);
+});
+
+test('Alibaba SKU normalization supplies required IDs when the source omits them', () => {
+  const record = normalizeAlibabaProductSnapshot({
+    product_id: '600123456789',
+    skus: [{ price: '12.5' }, { sku_id: '', price: '13' }],
+  });
+
+  assert.deepEqual(record.variants.map((variant) => variant.skuId), ['sku-1', 'sku-2']);
+
+  const product = new AlibabaProduct({
+    rawPayload: {},
+    logistics: { localAdditionalParcelCount: null },
+    variants: record.variants,
+  });
+  const validationErrors = product.validateSync()?.errors || {};
+  assert.equal(validationErrors['logistics.localAdditionalParcelCount'], undefined);
+  assert.equal(validationErrors['variants.0.skuId'], undefined);
+  assert.equal(validationErrors['variants.1.skuId'], undefined);
+});
+
+test('Alibaba import variants include required SKU IDs even when Alibaba omits them', async () => {
+  const mapped = await mapAlibabaProductToDango({
+    offerId: '600123456790',
+    subject: 'Produit avec SKU sans identifiant source',
+    price: '12.5',
+    skuInfos: [{ price: '12.5' }, { sku_id: '', price: '13' }],
+  }, null, { skipTranslation: true, config: DEFAULT_ALIBABA_CONFIG });
+
+  assert.deepEqual(mapped.variants.map((variant) => variant.skuId), ['sku-1', 'sku-2']);
+  assert.deepEqual(mapped.variants.map((variant) => variant.sku), ['sku-1', 'sku-2']);
 });
 
 test('mapToDropshippingPayload preserves color, size, and isAlibaba', async () => {
@@ -190,9 +223,18 @@ test('public Alibaba serialization preserves explicit unpublished status', () =>
     publicationStatus: 'draft',
     price: 12000,
   });
-
   assert.equal(publicDoc.isPublished, false);
   assert.equal(publicDoc.publicationStatus, 'draft');
+});
+
+test('public Alibaba price falls back to the calculated price when stored price is zero', () => {
+  const publicDoc = toPublicProduct({
+    isAlibaba: true,
+    price: 0,
+    pricing: { calculation: { salePrice: 12500 } },
+  });
+
+  assert.equal(publicDoc.price, 12500);
 });
 
 test('public catalog visibility blocks unpublished dropshipping products', () => {

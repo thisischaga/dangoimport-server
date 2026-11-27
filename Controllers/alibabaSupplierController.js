@@ -709,6 +709,15 @@ exports.updateCommercialData = async (req, res) => {
       changedFields.push('isActive');
     }
 
+    if (Array.isArray(product.variants)) {
+      product.variants.forEach((variant, index) => {
+        if (variant && !String(variant.skuId || '').trim()) {
+          variant.skuId = String(variant.sellerSkuId || variant.sku || `sku-${index + 1}`);
+          changedFields.push(`variants.${index}.skuId`);
+        }
+      });
+    }
+
     if (req.body.isPublished !== undefined) {
       if (req.body.isPublished === true) {
         const quality = validateProductQualityForPublication(mapAlibabaProductForAdmin(product));
