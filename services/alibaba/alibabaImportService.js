@@ -96,6 +96,10 @@ function buildAlibabaProductRecord(rawPayload = {}, mapped = {}) {
   return normalizeAlibabaProductSnapshot(raw, mapped);
 }
 
+function hasCompletedAlibabaImport(product) {
+  return Number(product?.price) > 0 && product?.importSourceType === 'ALIBABA_API';
+}
+
 async function upsertAlibabaProduct(externalProductId, {
   publish = false,
   update = false,
@@ -111,7 +115,8 @@ async function upsertAlibabaProduct(externalProductId, {
   }
 
   const existing = await findExistingAlibabaProduct(id);
-  if (existing && !update) {
+  const existingIsComplete = hasCompletedAlibabaImport(existing);
+  if (existingIsComplete && !update) {
     const existingObj = existing.toObject ? existing.toObject() : existing;
     return {
       success: true,
@@ -158,12 +163,6 @@ async function upsertAlibabaProduct(externalProductId, {
     };
     alibabaSnapshot.adminHistory = existing.adminHistory || [];
   }
-  const alibabaProduct = await AlibabaProduct.findOneAndUpdate(
-    { source: 'ALIBABA', sourceProductId: alibabaSnapshot.sourceProductId },
-    { $set: alibabaSnapshot },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-
   if (Array.isArray(variantIds) && variantIds.length) {
     const allowed = new Set(variantIds.map((v) => String(v).trim()));
     mapped.variants = (mapped.variants || []).filter((v) => allowed.has(String(v.attributes?.externalVariantId || v.sku || '')));
@@ -175,7 +174,7 @@ async function upsertAlibabaProduct(externalProductId, {
   if (existing) {
     // Synchronisation idempotente : mise à jour des données fournisseur tout en préservant
     // strictement les modifications commerciales manuelles de l'administrateur
-    if (!overwriteCommercial) {
+    if (existingIsComplete && !overwriteCommercial) {
       payload.name = existing.name || payload.name;
       payload.description = existing.description || payload.description;
       payload.shortDescription = existing.shortDescription || payload.shortDescription;
@@ -212,6 +211,7 @@ async function upsertAlibabaProduct(externalProductId, {
       existing._id,
       {
         $set: {
+          ...alibabaSnapshot,
           ...payload,
           name: payload.name || existing.name,
           description: payload.description || existing.description,
@@ -228,6 +228,7 @@ async function upsertAlibabaProduct(externalProductId, {
           updatedAt: new Date(),
           normalized: {
             ...(existing.normalized || {}),
+            ...(alibabaSnapshot.normalized || {}),
             ...(payload.normalized || {}),
           },
         },
@@ -306,6 +307,7 @@ async function upsertAlibabaProduct(externalProductId, {
 
 module.exports = {
   buildAlibabaProductRecord,
+  hasCompletedAlibabaImport,
   findExistingAlibabaProduct,
   upsertAlibabaProduct,
   validateProductQualityForPublication,

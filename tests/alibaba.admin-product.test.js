@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   mapAlibabaProductForAdmin,
 } = require('../Controllers/alibabaSupplierController');
+const { hasCompletedAlibabaImport } = require('../services/alibaba/alibabaImportService');
 
 test('mapAlibabaProductForAdmin keeps canonical supplier fields compatible with the admin UI', () => {
   const raw = {
@@ -112,4 +113,18 @@ test('alibaba supplier controller keeps the Alibaba flow on AlibabaProduct only'
   assert.ok(!controllerSource.includes('Product.deleteMany'));
   assert.ok(!controllerSource.includes('const Product = require(\'../Models/Product\');'));
   assert.ok(controllerSource.includes('AlibabaProduct.findByIdAndDelete'));
+});
+
+test('Alibaba import does not upsert a product before creating the full record', () => {
+  const importSource = fs.readFileSync(require.resolve('../services/alibaba/alibabaImportService'), 'utf8');
+  assert.ok(!importSource.includes('AlibabaProduct.findOneAndUpdate('));
+  assert.equal((importSource.match(/AlibabaProduct\.create\(/g) || []).length, 1);
+});
+
+test('Alibaba import retries incomplete records left by a failed duplicate insert', () => {
+  assert.equal(hasCompletedAlibabaImport({ price: 0, status: 'RAW' }), false);
+  assert.equal(hasCompletedAlibabaImport({
+    price: 1000,
+    importSourceType: 'ALIBABA_API',
+  }), true);
 });
