@@ -50,7 +50,14 @@ function computePublicPriceTiers(doc = {}, config) {
         ? doc.pricing.tiers
         : Array.isArray(doc.normalized?.pricing?.tiers) && doc.normalized.pricing.tiers.length > 0
           ? doc.normalized.pricing.tiers
-          : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices : []);
+          : (Array.isArray(doc.rawAlibabaData?.ladderPrices) ? doc.rawAlibabaData.ladderPrices
+            : doc.rawPayload?.result_data?.skus?.[0]?.ladder_price
+              || doc.rawAlibabaData?.result_data?.skus?.[0]?.ladder_price
+              || doc.rawPayload?.skus?.[0]?.ladder_price
+              || doc.rawAlibabaData?.skus?.[0]?.ladder_price
+              || doc.rawPayload?.raw?.result?.result_data?.skus?.[0]?.ladder_price
+              || doc.rawAlibabaData?.raw?.result?.result_data?.skus?.[0]?.ladder_price
+              || []);
 
   if (!tiers.length || !config) return [];
 

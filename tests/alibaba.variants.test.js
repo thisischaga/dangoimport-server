@@ -233,6 +233,35 @@ test('Alibaba catalog price uses the configured tier applicable to the MOQ', asy
   assert.ok(invalidMapping.importErrors.some((error) => error.code === 'MOQ_PRICE_TIER_UNAVAILABLE'));
 });
 
+test('public Alibaba list serialization exposes tiers stored only in raw SKU data', () => {
+  const config = {
+    ...DEFAULT_ALIBABA_CONFIG,
+    usdToXofRate: 1000,
+    generalMarginPercent: 0,
+    enableMinimumSalePrice: false,
+    enableRounding: false,
+    additionalFeesXof: 0,
+  };
+  const publicDoc = toPublicProduct({
+    source: 'ALIBABA',
+    isAlibaba: true,
+    price: 1800,
+    minimumOrderQuantity: 1,
+    rawPayload: {
+      result_data: {
+        skus: [{
+          ladder_price: [
+            { min_quantity: 1, max_quantity: 9, price: 1.8, currency: 'USD' },
+            { min_quantity: 10, price: 1.2, currency: 'USD' },
+          ],
+        }],
+      },
+    },
+  }, config);
+
+  assert.deepEqual(publicDoc.publicPriceTiers.map((tier) => tier.unitPrice), [1800, 1200]);
+});
+
 test('public Alibaba serialization preserves explicit unpublished status', () => {
   const publicDoc = toPublicProduct({
     isAlibaba: true,
