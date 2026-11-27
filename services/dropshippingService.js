@@ -632,7 +632,11 @@ async function syncDropshippingProduct(productId) {
     throw err;
   }
 
-  const platform = String(product.supplier?.platform || 'manual').toLowerCase();
+  const isAlibaba = product.isAlibaba === true
+    || String(product.source || '').toUpperCase() === 'ALIBABA'
+    || product.importSourceType === 'ALIBABA_API'
+    || /^alibaba:/i.test(String(product.externalSourceKey || ''));
+  const platform = String(product.supplier?.platform || (isAlibaba ? 'alibaba' : 'manual')).toLowerCase();
 
   if (platform === 'cj' || isCjDropshippingProduct(product.toObject())) {
     const { syncSingleCjProduct } = require('./cj/cjSyncService');
@@ -642,9 +646,37 @@ async function syncDropshippingProduct(productId) {
   const provider = getSupplierProvider(platform);
 
   try {
-    const supplierProductId = product.supplier?.productId;
+    const supplierProductId = product.supplier?.productId
+      || product.sourceProductId
+      || product.externalProductId
+      || product.rawPayload?.productId
+      || product.rawPayload?.product_id
+      || product.rawPayload?.offerId
+      || product.rawPayload?.offer_id
+      || product.rawPayload?.result_data?.product_id
+      || product.rawPayload?.result_data?.offerId
+      || product.rawPayload?.result_data?.offer_id
+      || product.rawPayload?.result?.result_data?.product_id
+      || product.rawPayload?.result?.result_data?.offerId
+      || product.rawPayload?.result?.result_data?.offer_id
+      || product.rawAlibabaData?.productId
+      || product.rawAlibabaData?.product_id
+      || product.rawAlibabaData?.offerId
+      || product.rawAlibabaData?.offer_id
+      || product.rawAlibabaData?.result_data?.product_id
+      || product.rawAlibabaData?.result_data?.offerId
+      || product.rawAlibabaData?.result_data?.offer_id
+      || product.rawAlibabaData?.result?.result_data?.product_id
+      || product.rawAlibabaData?.result?.result_data?.offerId
+      || product.rawSections?.product?.product_id
+      || product.rawSections?.product?.productId
+      || product.rawSections?.product?.offerId
+      || product.normalized?.sourceProductId;
     if (!supplierProductId) {
       throw new Error('Identifiant produit fournisseur manquant.');
+    }
+    if (!product.supplier?.productId && product.supplier) {
+      product.supplier.productId = String(supplierProductId);
     }
 
     await provider.getProduct(supplierProductId);

@@ -522,25 +522,7 @@ function resolveDropshipSellableStock(product = {}) {
     /^alibaba:/i.test(String(product.externalSourceKey || ''))
   );
   if (isAlibaba) {
-    const knownVariantStocks = Array.isArray(product.variants)
-      ? product.variants
-        .filter((variant) => (
-          variant.stockKnown === true
-          || variant.sourceStockVerified === true
-          || toNumber(variant.stock, 0) > 0
-        ))
-        .map((variant) => toNumber(variant.sourceStock ?? variant.stock, 0))
-      : [];
-    if (knownVariantStocks.length > 0) {
-      return Math.max(0, Math.round(knownVariantStocks.reduce((sum, stock) => sum + stock, 0)));
-    }
-
-    const rawStock = product.inventory?.quantityRaw
-      ?? product.inventory?.raw?.[0]?.inventory_list?.[0]?.inventory_count
-      ?? product.stock;
-    return rawStock == null || rawStock === ''
-      ? 0
-      : Math.max(0, Math.round(toNumber(rawStock, 0)));
+    return 0;
   }
 
   let stock = toNumber(product.stock, 0);

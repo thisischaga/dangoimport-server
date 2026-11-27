@@ -1,5 +1,4 @@
 const AlibabaProduct = require('../../Models/AlibabaProduct');
-const { alibabaConfig } = require('../../config/alibaba');
 const { searchAlibabaProducts, getAlibabaProductDetail, getAlibabaRawProduct } = require('./alibabaProductService');
 const { calculateImportPricing } = require('../../utils/importPricing');
 const { calculateMargin, toNumber } = require('../../utils/dropshippingCalculations');
@@ -116,8 +115,8 @@ async function searchAlibabaForAdmin(params = {}) {
   const products = await Promise.all((result.products || []).map(async ({ raw, skuInfos, ...p }) => ({
     ...p,
     supplierPriceUsd: await toUsd(p.supplierPrice, p.currency),
-    stock: p.stockKnown === true ? p.stock : null,
-    stockKnown: p.stockKnown === true,
+    stock: 0,
+    stockKnown: false,
     sourceMinimumOrderQuantity: p.sourceMinimumOrderQuantity ?? null,
     imported: imported[p.externalProductId] || null,
   })));
@@ -134,30 +133,20 @@ async function getAlibabaProductForAdmin(pid) {
   const currency = String(detail.currency || pricingConfig.sourceCurrency).toUpperCase();
 
   // Ne pas répartir le stock produit entre les SKU ni remplacer une valeur absente par un stock estimé.
-  const totalStock = detail.stockKnown === true && detail.stock !== alibabaConfig.defaultPublicStock
-    ? detail.stock
-    : null;
   const skuList = detail.skuInfos || [];
 
   const variants = skuList.map((sku, index) => {
     const variantCurrency = String(sku.currency || currency).toUpperCase();
     const price = toNumber(sku.price || sku.consignPrice || sku.sale_price || sku.unit_price);
-    const rawStockValue = sku.amountOnSale ?? sku.amount_on_sale
-      ?? sku.canBookCount ?? sku.can_book_count
-      ?? sku.availableQuantity ?? sku.available_quantity
-      ?? sku.inventoryQuantity ?? sku.inventory_quantity
-      ?? sku.sku_inventory ?? sku.sku_stock
-      ?? sku.inventory ?? sku.stock ?? sku.quantity;
-    const rawStock = rawStockValue == null || rawStockValue === '' ? null : toNumber(rawStockValue, null);
     return {
       externalVariantId: String(sku.skuId || sku.sku_id || sku.specId || index),
       name: sku.name || sku.skuName || sku.sku_name || `Variante ${index + 1}`,
       sku: sku.skuId || sku.sku_id || '',
       supplierPriceCny: variantCurrency === 'CNY' ? price : null,
       supplierPriceUsd: variantCurrency === 'CNY' ? Number((price / pricingConfig.cnyToUsdRate).toFixed(4)) : price,
-      stock: rawStock,
-      stockKnown: rawStock !== null,
-      availability: rawStock === null ? 'UNKNOWN' : rawStock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+      stock: 0,
+      stockKnown: false,
+      availability: 'UNKNOWN',
       status: sku.status || null,
       raw: sku,
       image: sku.skuImageUrl || sku.image || '',
@@ -216,9 +205,9 @@ async function getAlibabaProductForAdmin(pid) {
     supplierPriceCny: currency === 'CNY' ? detail.supplierPrice : null,
     supplierPriceUsd,
     currency,
-    // null = stock non communiqué ou non vérifié par Alibaba.
-    stock: stockAnalysis.isSuspicious ? null : totalStock,
-    stockKnown: totalStock !== null && !stockAnalysis.isSuspicious,
+    // Alibaba products are made to order and do not use storefront stock.
+    stock: 0,
+    stockKnown: false,
     sourceInventory: {
       rawStock: detail.stock,
       verifiedStock: stockAnalysis.verifiedStock,

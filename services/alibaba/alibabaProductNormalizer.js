@@ -192,8 +192,12 @@ function normalizeAlibabaProductSnapshot(rawPayload = {}, mapped = {}) {
     mapped?.sourceProductId ||
     payload.productId ||
     payload.product_id ||
+    payload.offerId ||
+    payload.offer_id ||
     productSection?.product_id ||
     productSection?.productId ||
+    productSection?.offerId ||
+    productSection?.offer_id ||
     productSection?.id ||
     '',
   ).trim();

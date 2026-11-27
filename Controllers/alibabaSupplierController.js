@@ -134,6 +134,16 @@ function mapAlibabaProductForAdmin(doc) {
     category: product.category || product.normalized?.category || '',
     brand: product.brand || product.normalized?.brand || '',
     price: sellingPrice > 0 ? sellingPrice : Number(product.price || 0),
+    stock: 0,
+    variants: Array.isArray(product.variants)
+      ? product.variants.map((variant) => ({
+          ...variant,
+          stock: 0,
+          stockKnown: false,
+          sourceStockVerified: false,
+          availability: 'UNKNOWN',
+        }))
+      : [],
     image: primaryImage,
     images: galleryImages,
     specifications,
@@ -141,7 +151,7 @@ function mapAlibabaProductForAdmin(doc) {
     supplier: {
       ...(product.supplier || {}),
       platform: 'alibaba',
-      productId: product.sourceProductId || product.externalProductId || '',
+      productId: product.sourceProductId || product.externalProductId || product.supplier?.productId || '',
       productUrl: product.sourceUrl || product.supplier?.productUrl || '',
     },
     importStatus: product.status === 'ERROR' ? 'SYNC_ERROR' : product.status || 'IMPORTED',
@@ -803,7 +813,30 @@ exports.syncImportedProduct = async (req, res) => {
     if (!product || !(product.isAlibaba || String(product.source || '').toUpperCase() === 'ALIBABA')) {
       return res.status(404).json({ success: false, message: 'Produit introuvable.' });
     }
-    const pid = product.sourceProductId || product.externalProductId || product.supplier?.productId;
+    const pid = product.sourceProductId
+      || product.externalProductId
+      || product.supplier?.productId
+      || product.rawPayload?.product_id
+      || product.rawPayload?.productId
+      || product.rawPayload?.offerId
+      || product.rawPayload?.offer_id
+      || product.rawPayload?.result_data?.product_id
+      || product.rawPayload?.result_data?.offerId
+      || product.rawPayload?.result_data?.offer_id
+      || product.rawPayload?.result?.result_data?.product_id
+      || product.rawAlibabaData?.product_id
+      || product.rawAlibabaData?.productId
+      || product.rawAlibabaData?.offerId
+      || product.rawAlibabaData?.offer_id
+      || product.rawAlibabaData?.result_data?.product_id
+      || product.rawAlibabaData?.result_data?.offerId
+      || product.rawAlibabaData?.result_data?.offer_id
+      || product.rawAlibabaData?.result?.result_data?.product_id
+      || product.rawAlibabaData?.result?.result_data?.offerId
+      || product.rawSections?.product?.product_id
+      || product.rawSections?.product?.productId
+      || product.rawSections?.product?.offerId
+      || product.normalized?.sourceProductId;
     if (!pid) {
       return res.status(400).json({ success: false, message: 'Identifiant fournisseur Alibaba manquant sur ce produit.' });
     }

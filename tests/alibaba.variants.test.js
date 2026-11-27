@@ -43,6 +43,8 @@ test('mapAlibabaProductToDango extracts attributes when skuName is present or ab
   assert.equal(mapped.isAlibaba, true);
   assert.equal(mapped.fulfillmentPlatform, 'Alibaba');
   assert.equal(mapped.variants.length, 2);
+  assert.equal(mapped.stock, 0);
+  assert.deepEqual(mapped.variants.map((variant) => variant.stock), [0, 0]);
 
   // Variant 1: attributes should be extracted EVEN THOUGH skuName was given!
   const v1 = mapped.variants[0];
@@ -64,10 +66,11 @@ test('mapAlibabaProductToDango extracts attributes when skuName is present or ab
 
 test('Alibaba SKU normalization supplies required IDs when the source omits them', () => {
   const record = normalizeAlibabaProductSnapshot({
-    product_id: '600123456789',
+    offer_id: '600123456789',
     skus: [{ price: '12.5' }, { sku_id: '', price: '13' }],
   });
 
+  assert.equal(record.sourceProductId, '600123456789');
   assert.deepEqual(record.variants.map((variant) => variant.skuId), ['sku-1', 'sku-2']);
 
   const product = new AlibabaProduct({
@@ -128,12 +131,12 @@ test('mapToDropshippingPayload preserves color, size, and isAlibaba', async () =
 });
 
 test('resolveDropshipSellableStock returns no default stock for Alibaba products', () => {
-  const alibabaProductZeroStock = {
+  const alibabaProductWithReportedStock = {
     isAlibaba: true,
-    stock: 0,
-    variants: [{ stock: 0 }, { stock: 0 }],
+    stock: 150,
+    variants: [{ stock: 20, stockKnown: true }, { stock: 30, sourceStockVerified: true }],
   };
-  const stock = resolveDropshipSellableStock(alibabaProductZeroStock);
+  const stock = resolveDropshipSellableStock(alibabaProductWithReportedStock);
   assert.equal(stock, 0);
 });
 
@@ -155,6 +158,20 @@ test('toPublicProduct retains isAlibaba and fulfillmentPlatform', () => {
   assert.equal('sourceType' in publicDoc, false);
   assert.equal('externalSourceKey' in publicDoc, false);
   assert.equal('supplier' in publicDoc, false);
+});
+
+test('public Alibaba products never expose supplier inventory as storefront stock', () => {
+  const publicDoc = toPublicProduct({
+    source: 'ALIBABA',
+    isAlibaba: true,
+    stock: 150,
+    variants: [{ skuId: 'sku-1', stock: 40, stockKnown: true }],
+  });
+
+  assert.equal(publicDoc.stock, 0);
+  assert.equal(publicDoc.variants[0].stock, 0);
+  assert.equal(publicDoc.variants[0].stockKnown, false);
+  assert.equal(publicDoc.variants[0].availability, 'UNKNOWN');
 });
 
 test('Alibaba catalog price uses the configured tier applicable to the MOQ', async () => {

@@ -578,8 +578,7 @@ async function mapAlibabaVariants(skuInfos = [], {
       ?? sku.inventory ?? sku.stock
       ?? sku.quantity ?? sku.free_inventory ?? sku.total_inventory;
     const rawStock = rawStockValue == null || rawStockValue === '' ? null : toNumber(rawStockValue, null);
-    const isStockSuspicious = rawStock >= 2147483647;
-    const stock = rawStock == null || isStockSuspicious ? 0 : Math.max(0, rawStock);
+    const stock = 0;
     const skuId = String(sku.skuId || sku.sku_id || sku.specId || sku.seller_sku_id || sku.sellerSkuId || `sku-${index + 1}`);
 
     results.push({
@@ -593,11 +592,9 @@ async function mapAlibabaVariants(skuInfos = [], {
       sourcePriceRaw: rawPriceValue,
       sourceCurrency: String(rawCurrency).toUpperCase(),
       sourceStock: rawStock,
-      stockKnown: rawStock != null && !isStockSuspicious,
-      sourceStockVerified: !isStockSuspicious && rawStock != null && rawStock > 0,
-      availability: isStockSuspicious || rawStock == null
-        ? 'UNKNOWN'
-        : rawStock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+      stockKnown: false,
+      sourceStockVerified: false,
+      availability: 'UNKNOWN',
       status: sku.status || null,
       image: sku.skuImageUrl || sku.imageUrl || sku.image || '',
       attributes: variantAttrs,
@@ -723,8 +720,7 @@ async function mapAlibabaProductToDango(listItem = {}, detail = null, {
     config: pricingConfig,
     config: pricingConfig,
   });
-  const stockFromVariants = variants.reduce((sum, v) => sum + toNumber(v.stock, 0), 0);
-  const stock = stockFromVariants || stockAnalysis.verifiedStock || 0;
+  const stock = 0;
 
   const images = extractImages(source.raw || source).length
     ? extractImages(source.raw || source)

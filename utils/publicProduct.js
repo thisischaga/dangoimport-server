@@ -208,7 +208,16 @@ function toPublicProduct(product, pricingConfig) {
     } else {
       delete publicDoc.price;
     }
-    publicDoc.stock = resolveDropshipSellableStock(doc);
+    publicDoc.stock = 0;
+    if (Array.isArray(publicDoc.variants)) {
+      publicDoc.variants = publicDoc.variants.map((variant) => ({
+        ...variant,
+        stock: 0,
+        stockKnown: false,
+        sourceStockVerified: false,
+        availability: 'UNKNOWN',
+      }));
+    }
 
     // Résoudre le poids
     const resolvedWeight = resolveAlibabaWeightValue(doc);
@@ -712,7 +721,13 @@ async function toPublicProductDetail(product, pricingConfig) {
     // Variantes et SKUs
     publicDoc.alibabaSKUs = rawSkus;
     if (Array.isArray(doc.variants) && doc.variants.length > 0) {
-      publicDoc.variants = doc.variants;
+      publicDoc.variants = doc.variants.map((variant) => ({
+        ...variant,
+        stock: 0,
+        stockKnown: false,
+        sourceStockVerified: false,
+        availability: 'UNKNOWN',
+      }));
     } else if (Array.isArray(rawSkus) && rawSkus.length > 0) {
       publicDoc.variants = rawSkus.map((sku, idx) => {
         const tier = sku.ladder_price?.[0];
@@ -733,8 +748,6 @@ async function toPublicProductDetail(product, pricingConfig) {
           ?? sku.inventoryCount
           ?? sku.stock
           ?? null;
-        const knownStock = stockValue !== null && stockValue !== '' && Number.isFinite(Number(stockValue));
-        const stock = knownStock ? Math.max(0, Number(stockValue)) : null;
         return {
           skuId: sku.sku_id || sku.skuId || `sku-${idx}`,
           name: (sku.sku_attr_list || []).map((a) => a.attr_value_desc || a.value).filter(Boolean).join(' - ') || `Option ${idx + 1}`,
@@ -742,8 +755,9 @@ async function toPublicProductDetail(product, pricingConfig) {
           sourcePrice: sourcePrice > 0 ? sourcePrice : null,
           sourceCurrency: sourceCurrency || null,
           image: sku.image || (sku.sku_attr_list || []).find((a) => a.attr_value_image)?.attr_value_image || publicDoc.mainImage,
-          stock,
-          availability: !knownStock ? 'UNKNOWN' : stock > 0 ? 'AVAILABLE' : 'UNAVAILABLE',
+          stock: 0,
+          stockKnown: false,
+          availability: 'UNKNOWN',
           attributes: (sku.sku_attr_list || []).map((a) => ({
           name: a.attr_name_desc || a.attr_name || a.name || 'Option',
           value: a.attr_value_desc || a.attr_value || a.value || '',
