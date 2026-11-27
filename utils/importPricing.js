@@ -277,27 +277,60 @@ function lightProductMoqFromWeight(weightKg, thresholdKg = 1) {
 function resolveMoqRules(product = {}, config = {}) {
   const safeProduct = product && typeof product === 'object' ? product : {};
   const cfg = mergeImportPricingConfig(config || {});
+  const rawMoqCandidates = [safeProduct.rawAlibabaData, safeProduct.rawPayload]
+    .filter((raw) => raw && typeof raw === 'object')
+    .flatMap((raw) => {
+      const rawResult = raw.result_data || raw;
+      const rawTrade = rawResult.trade_info || raw.trade_info || {};
+      const rawWholesale = rawResult.wholesale_trade || rawResult.wholesaleTrade
+        || raw.wholesale_trade || raw.wholesaleTrade || {};
+      return [
+        rawTrade.min_order_quantity,
+        rawTrade.minOrderQuantity,
+        rawWholesale.min_order_quantity,
+        rawWholesale.minOrderQuantity,
+        rawResult.min_order_quantity,
+        rawResult.minOrderQuantity,
+      ];
+    });
+  const moqCandidates = [
+    ...rawMoqCandidates,
+    safeProduct.sourceMinimumOrderQuantity,
+    safeProduct.wholesaleTrade?.min_order_quantity,
+    safeProduct.wholesaleTrade?.minOrderQuantity,
+    safeProduct.wholesale?.min_order_quantity,
+    safeProduct.wholesale?.minOrderQuantity,
+    safeProduct.supplier?.wholesaleTrade?.min_order_quantity,
+    safeProduct.supplier?.wholesaleTrade?.minOrderQuantity,
+    safeProduct.minimumOrderQuantity,
+    safeProduct.minOrderQuantity,
+    safeProduct.moq,
+    safeProduct.normalized?.minimumOrderQuantity,
+    safeProduct.pricing?.minOrderQuantity,
+  ];
+  const explicitMoqValue = moqCandidates.find((value) => {
+    const number = Number(value);
+    return value != null && value !== '' && Number.isFinite(number) && number >= 1;
+  });
   const explicitMoq = Math.max(
     1,
-    Math.round(toNumber(safeProduct.minimumOrderQuantity, cfg.defaultMinimumOrderQuantity)),
+    Math.round(toNumber(explicitMoqValue, cfg.defaultMinimumOrderQuantity)),
   );
+  const isAlibaba = isAlibabaManagedProduct(safeProduct);
   const converted = convertSupplierPriceFcfa(safeProduct);
   const multiplier = Math.max(1, toNumber(safeProduct.productMarkupMultiplier, cfg.productMarkupMultiplier));
   const unitPrice = applyProductMarkup(converted, multiplier, 0);
   const weight = parseProductWeightKg(safeProduct);
   const underWeight = weight > 0 && weight < cfg.lightProductMaxWeightKg;
   const underPrice = unitPrice > 0 && unitPrice < cfg.lightProductMaxPrice;
-  const autoMoq = (underWeight && underPrice)
+  const autoMoq = !isAlibaba && underWeight && underPrice
     ? lightProductMoqFromWeight(weight, cfg.lightProductMaxWeightKg)
     : 1;
   const moq = Math.max(explicitMoq, autoMoq);
   const hasExplicitIncrement = product.quantityIncrement != null && product.quantityIncrement !== '';
-  const explicitIncrement = hasExplicitIncrement
-    ? Math.max(1, Math.round(toNumber(product.quantityIncrement, moq)))
-    : null;
-  const increment = explicitIncrement && explicitIncrement !== explicitMoq
-    ? explicitIncrement
-    : moq;
+  const increment = hasExplicitIncrement
+    ? Math.max(1, Math.round(toNumber(product.quantityIncrement, 1)))
+    : isAlibaba ? 1 : moq;
   return {
     minimumOrderQuantity: moq,
     quantityIncrement: increment,

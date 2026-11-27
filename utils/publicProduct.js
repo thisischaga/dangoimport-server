@@ -1,5 +1,5 @@
 const { isDropshippingProduct, PLATFORM_VENDOR_NAME } = require('./dropshippingCalculations');
-const { calculateImportPricing } = require('./importPricing');
+const { calculateImportPricing, resolveMoqRules } = require('./importPricing');
 const { getImportPricingConfigSync } = require('../services/importPricingService');
 const {
   getAlibabaConfig,
@@ -198,11 +198,10 @@ function toPublicProduct(product, pricingConfig) {
       doc.normalized?.pricing?.sellingPrice,
     ].map(Number).find((price) => Number.isFinite(price) && price > 0);
     const publicPriceTiers = computePublicPriceTiers(doc, pricingConfig);
-    const moq = doc.minimumOrderQuantity
-      ?? doc.normalized?.minimumOrderQuantity
-      ?? doc.pricing?.minOrderQuantity
-      ?? doc.normalized?.pricing?.minOrderQuantity
-      ?? 1;
+    const moqRules = resolveMoqRules(doc, pricingConfig);
+    const moq = moqRules.minimumOrderQuantity;
+    publicDoc.minimumOrderQuantity = moq;
+    publicDoc.quantityIncrement = moqRules.quantityIncrement;
     const moqPriceTier = selectPublicPriceTier(publicPriceTiers, moq);
     if (moqPriceTier) publicDoc.publicPriceTiers = publicPriceTiers;
     else delete publicDoc.publicPriceTiers;
@@ -603,16 +602,15 @@ async function toPublicProductDetail(product, pricingConfig) {
     ? rawSkus.some((sku) => Number(sku.price ?? sku.ladder_price?.[0]?.price) > 0)
     : false;
   const activePricingConfig = pricingConfig || ((hasSourceTiers || hasRawSkuPrices) ? await getAlibabaConfig() : null);
+  const moqRules = resolveMoqRules(doc, activePricingConfig || {});
+  publicDoc.minimumOrderQuantity = moqRules.minimumOrderQuantity;
+  publicDoc.quantityIncrement = moqRules.quantityIncrement;
 
   // 1. Paliers de prix en devise Dango, calculés avec la configuration du serveur.
   const priceTiers = computePublicPriceTiers(doc, activePricingConfig);
   if (priceTiers.length > 0) {
     publicDoc.publicPriceTiers = priceTiers;
-    const moq = doc.minimumOrderQuantity
-      ?? doc.normalized?.minimumOrderQuantity
-      ?? doc.pricing?.minOrderQuantity
-      ?? doc.normalized?.pricing?.minOrderQuantity
-      ?? 1;
+    const moq = moqRules.minimumOrderQuantity;
     const moqPriceTier = selectPublicPriceTier(priceTiers, moq);
     if (moqPriceTier) publicDoc.price = moqPriceTier.unitPrice;
     else delete publicDoc.price;
@@ -645,7 +643,7 @@ async function toPublicProductDetail(product, pricingConfig) {
   };
 
   publicDoc.wholesale = {
-    minOrderQuantity: Number(doc.minimumOrderQuantity || wt.min_order_quantity || wt.minOrderQuantity || 1),
+    minOrderQuantity: moqRules.minimumOrderQuantity,
     unitType: doc.unit || wt.unit_type || wt.unitType || 'Pièce',
     handlingTimeDays: Number(wt.handling_time || wt.handlingTime || 0) || null,
     deliverPeriods: Array.isArray(wt.deliver_periods || wt.deliverPeriods)

@@ -24,6 +24,7 @@ const { sendNotification } = require('../utils/socket');
 const { createLocalTransaction, findTransactionByProviderId, markTransactionFailed, markTransactionApproved } = require('../services/paymentService');
 const { retrieveTransaction, getTransactionStatus, normalizeFedapayNetwork, sendMobileMoneyPush } = require('../services/fedapayService');
 const { calculateDeliveryForItems } = require('../services/deliveryService');
+const { decrementStockForOrder } = require('../services/orderService');
 const { alertIntrusion } = require('../utils/securityAlerts');
 const { validatePromotion } = require('../utils/promoValidation');
 const {
@@ -756,12 +757,7 @@ const handleFedapayWebhook = async (req, res) => {
         createdOrder.qrCodeIds = (qrDocs || []).map((q) => q._id);
         await createdOrder.save({ session });
 
-        // Décrémenter les stocks
-        for (const item of createdOrder.items) {
-          await Product.findByIdAndUpdate(item.productId, {
-            $inc: { stock: -item.quantity, totalSales: item.quantity },
-          }, { session });
-        }
+        await decrementStockForOrder({ order: createdOrder, session });
 
         // Vider le panier du client
         // FIX: mongoose.Types.ObjectId doit être appelé avec `new` depuis Mongoose 6+/driver bson récent,

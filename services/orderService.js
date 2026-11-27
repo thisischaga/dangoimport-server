@@ -5,6 +5,7 @@ const VendorOrder = require('../Models/VendorOrder');
 const Store = require('../Models/Store');
 const User = require('../Models/User');
 const OrderHistory = require('../Models/OrderHistory');
+const { isAlibabaManagedProduct } = require('../utils/importPricing');
 
 const generateOrderNumber = () => {
   const timestamp = Date.now().toString();
@@ -86,7 +87,7 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
     if (!product) {
       throw new Error(`Produit introuvable : ${item.productId}`);
     }
-    if (product.stock < item.quantity) {
+    if (!isAlibabaManagedProduct(product) && product.stock < item.quantity) {
       throw new Error(`Stock insuffisant pour le produit ${product.name}`);
     }
     orderItems.push({
@@ -131,8 +132,15 @@ const createOrderFromTransaction = async ({ transaction, session }) => {
 
 const decrementStockForOrder = async ({ order, session }) => {
   for (const item of order.items) {
+    const product = await Product.findById(item.productId)
+      .select('isAlibaba source importSourceType fulfillmentPlatform supplier externalSourceKey')
+      .session(session);
+    const increments = { totalSales: item.quantity };
+    if (!product || !isAlibabaManagedProduct(product)) {
+      increments.stock = -item.quantity;
+    }
     await Product.findByIdAndUpdate(item.productId, {
-      $inc: { stock: -item.quantity, totalSales: item.quantity },
+      $inc: increments,
     }, { session });
   }
 };

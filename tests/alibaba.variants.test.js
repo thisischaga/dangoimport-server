@@ -262,6 +262,22 @@ test('public Alibaba list serialization exposes tiers stored only in raw SKU dat
   assert.deepEqual(publicDoc.publicPriceTiers.map((tier) => tier.unitPrice), [1800, 1200]);
 });
 
+test('public Alibaba serialization keeps the supplier MOQ and allows single-unit increments', () => {
+  const publicDoc = toPublicProduct({
+    source: 'ALIBABA',
+    isAlibaba: true,
+    price: 1800,
+    rawPayload: {
+      result_data: {
+        wholesale_trade: { min_order_quantity: 6 },
+      },
+    },
+  }, DEFAULT_ALIBABA_CONFIG);
+
+  assert.equal(publicDoc.minimumOrderQuantity, 6);
+  assert.equal(publicDoc.quantityIncrement, 1);
+});
+
 test('public Alibaba serialization preserves explicit unpublished status', () => {
   const publicDoc = toPublicProduct({
     isAlibaba: true,

@@ -67,6 +67,27 @@ test('produit < 1 kg et < 2000 F : MOQ auto (100 g → 10)', () => {
   assert.equal(pricing.packPrice, 15600);
 });
 
+test('Alibaba applique le MOQ fournisseur sans le remplacer par un MOQ automatique', () => {
+  const product = {
+    name: 'Produit Alibaba léger',
+    source: 'ALIBABA',
+    isAlibaba: true,
+    price: 100,
+    weight: 0.1,
+    quantityIncrement: 1,
+    rawPayload: {
+      result_data: {
+        wholesale_trade: { min_order_quantity: 6 },
+      },
+    },
+  };
+  const pricing = calculateImportPricing(product);
+
+  assert.equal(pricing.minimumOrderQuantity, 6);
+  assert.equal(pricing.quantityIncrement, 1);
+  assert.equal(pricing.soldAsLot, false);
+});
+
 test('produit < 1 kg mais ≥ 2000 F : pas de MOQ auto', () => {
   const pricing = calculateImportPricing({
     convertedSupplierPriceFCFA: 2000,
