@@ -83,7 +83,7 @@ function buildShopOrderItem(product, { quantity = 1, selectedOptions = {}, unitP
   return item;
 }
 
-function resolveProductPurchasablePrice(product, quantity = 1) {
+function resolveProductPurchasablePrice(product, quantity = 1, config = getImportPricingConfigSync()) {
   if (!product) return 0;
   const direct = toNumber(product.price || product.salePrice || product.unitPrice, 0);
   if (direct > 0) return direct;
@@ -91,7 +91,7 @@ function resolveProductPurchasablePrice(product, quantity = 1) {
   try {
     const importPricing = calculateImportPricing(product, {
       quantity: Math.max(1, toNumber(quantity, 1)),
-      config: getImportPricingConfigSync(),
+      config,
     });
     if (importPricing && importPricing.productPrice > 0) {
       return importPricing.productPrice;
@@ -108,12 +108,12 @@ function resolveProductPurchasablePrice(product, quantity = 1) {
   return 0;
 }
 
-function assertProductPurchasable(product, quantity = 1) {
+function assertProductPurchasable(product, quantity = 1, config = getImportPricingConfigSync()) {
   if (!product) {
     throw new Error('Produit introuvable.');
   }
 
-  const validPrice = resolveProductPurchasablePrice(product, quantity);
+  const validPrice = resolveProductPurchasablePrice(product, quantity, config);
   if (validPrice <= 0) {
     throw new Error(`Le produit "${product.name}" n'a pas un prix valide.`);
   }
@@ -136,7 +136,7 @@ function assertProductPurchasable(product, quantity = 1) {
 
   const qty = Math.max(1, toNumber(quantity, 1));
   if (product.sourceType === 'DROPSHIPPING') {
-    assertValidOrderQuantity(product, qty);
+    assertValidOrderQuantity(product, qty, config);
   }
   const isImport = isDropshippingProduct(product);
   const available = isImport

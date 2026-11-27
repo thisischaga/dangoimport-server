@@ -36,7 +36,8 @@ function normalizeCountryCode(value) {
   return String(value || '').trim().toUpperCase().slice(0, 2);
 }
 
-async function loadCheckoutProducts(items = []) {
+async function loadCheckoutProducts(items = [], config) {
+  const pricingConfig = config || await getImportPricingConfig();
   const normalized = items.map((item) => ({
     productId: item.productId || item._id || item.id,
     quantity: Math.max(1, toNumber(item.quantity, 1)),
@@ -55,8 +56,8 @@ async function loadCheckoutProducts(items = []) {
     if (!product) {
       throw new Error('Produit introuvable dans le catalogue.');
     }
-    assertProductPurchasable({ ...product, stock: resolveDropshipSellableStock(product) }, row.quantity);
-    assertValidOrderQuantity(product, row.quantity);
+    assertProductPurchasable({ ...product, stock: resolveDropshipSellableStock(product) }, row.quantity, pricingConfig);
+    assertValidOrderQuantity(product, row.quantity, pricingConfig);
     lines.push({ product, quantity: row.quantity, selectedOptions: row.selectedOptions });
   }
 
@@ -116,8 +117,8 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
     throw err;
   }
 
-  const lines = await loadCheckoutProducts(items);
   const config = await getImportPricingConfig();
+  const lines = await loadCheckoutProducts(items, config);
   const quote = calculateImportQuote(lines, config);
   const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
   let freightConfig = null;
@@ -198,7 +199,8 @@ async function getImportShippingQuote({ items = [], destination = {}, transportM
 
 async function getAvailableTransportOptions({ items = [], countryCode } = {}) {
   const normalizedCountryCode = normalizeCountryCode(countryCode);
-  const lines = await loadCheckoutProducts(items);
+  const pricingConfig = await getImportPricingConfig();
+  const lines = await loadCheckoutProducts(items, pricingConfig);
   const alibabaLines = lines.filter((line) => isAlibabaManagedProduct(line.product));
   if (!alibabaLines.length) {
     return { requiresSelection: false, options: [] };
@@ -363,8 +365,8 @@ async function validateDropshippingCheckoutPayload({
     throw err;
   }
 
-  const lines = await loadCheckoutProducts(items);
   const config = quoteSnapshot?.pricingConfig || await getImportPricingConfig();
+  const lines = await loadCheckoutProducts(items, config);
   let subtotal = 0;
   const orderItems = [];
   const itemSnapshots = quoteSnapshot?.items || [];

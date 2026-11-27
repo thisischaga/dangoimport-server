@@ -131,3 +131,30 @@ test('inactive non-Alibaba dropshipping products remain unavailable', () => {
     stock: 100,
   }, 1), /n'est pas disponible/);
 });
+
+test('checkout validates dropshipping MOQ with the active pricing configuration', () => {
+  const product = {
+    name: 'Produit léger importé',
+    sourceType: 'DROPSHIPPING',
+    isDropshippingActive: true,
+    isPublished: true,
+    price: 1000,
+    stock: 100,
+    minimumOrderQuantity: 1,
+    quantityIncrement: 1,
+    convertedSupplierPriceFCFA: 1000,
+    weight: 0.5,
+  };
+
+  assert.throws(
+    () => assertProductPurchasable(product, 1, {
+      lightProductMaxWeightKg: 1,
+      lightProductMaxPrice: 2000,
+    }),
+    /Quantité minimale/,
+  );
+  assert.doesNotThrow(() => assertProductPurchasable(product, 1, {
+    lightProductMaxWeightKg: 0.1,
+    lightProductMaxPrice: 2000,
+  }));
+});

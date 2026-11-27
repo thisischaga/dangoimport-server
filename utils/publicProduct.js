@@ -602,7 +602,7 @@ async function toPublicProductDetail(product, pricingConfig) {
     ? rawSkus.some((sku) => Number(sku.price ?? sku.ladder_price?.[0]?.price) > 0)
     : false;
   const activePricingConfig = pricingConfig || ((hasSourceTiers || hasRawSkuPrices) ? await getAlibabaConfig() : null);
-  const moqRules = resolveMoqRules(doc, activePricingConfig || {});
+  const moqRules = resolveMoqRules(doc, getImportPricingConfigSync());
   publicDoc.minimumOrderQuantity = moqRules.minimumOrderQuantity;
   publicDoc.quantityIncrement = moqRules.quantityIncrement;
 

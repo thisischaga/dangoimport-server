@@ -88,6 +88,43 @@ test('Alibaba applique le MOQ fournisseur sans le remplacer par un MOQ automatiq
   assert.equal(pricing.soldAsLot, false);
 });
 
+test('le catalogue public transmet le MOQ et l’incrément sans les modifier', () => {
+  const publicProduct = toPublicProduct({
+    _id: '64abc12345678901234567891',
+    name: 'Produit léger importé',
+    sourceType: 'DROPSHIPPING',
+    minimumOrderQuantity: 6,
+    quantityIncrement: 1,
+    convertedSupplierPriceFCFA: 1000,
+    weight: 0.5,
+  });
+
+  assert.equal(publicProduct.minimumOrderQuantity, 6);
+  assert.equal(publicProduct.quantityIncrement, 1);
+});
+
+test('le MOQ public garde la règle serveur même si le MOQ brut fournisseur est inférieur', () => {
+  const product = {
+    name: 'Produit léger importé',
+    sourceType: 'DROPSHIPPING',
+    minimumOrderQuantity: 1,
+    quantityIncrement: 1,
+    convertedSupplierPriceFCFA: 1000,
+    weight: 0.5,
+    rawPayload: {
+      result_data: {
+        wholesale_trade: { min_order_quantity: 1 },
+      },
+    },
+  };
+  const config = require('../services/importPricingService').getImportPricingConfigSync();
+  const pricing = calculateImportPricing(product, { config });
+  const publicProduct = toPublicProduct(product);
+
+  assert.equal(publicProduct.minimumOrderQuantity, pricing.minimumOrderQuantity);
+  assert.equal(publicProduct.quantityIncrement, pricing.quantityIncrement);
+});
+
 test('produit < 1 kg mais ≥ 2000 F : pas de MOQ auto', () => {
   const pricing = calculateImportPricing({
     convertedSupplierPriceFCFA: 2000,
